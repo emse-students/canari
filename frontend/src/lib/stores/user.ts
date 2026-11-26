@@ -297,6 +297,14 @@ const profileCache = new Map<string, { promise: Promise<UserProfile>; expiresAt:
  */
 const PROFILE_BATCH_MAX = 100;
 
+/**
+ * Ids this session has already had a profile answer for. Read only by the batch's log line, which
+ * says how many ids of a request are ASKED AGAIN (the cache expired) rather than asked for the first
+ * time - the two causes of a restore's `users/batch` chatter call for different fixes (a window bound
+ * to the restore, or a longer-lived answer), and only this count tells them apart.
+ */
+const profileIdsAnswered = new Set<string>();
+
 /** Callers waiting on the batch being assembled for the next microtask, keyed by id. */
 let pendingProfileBatch: Map<
   string,
@@ -322,6 +330,10 @@ async function flushProfileBatch(
   // In parallel: a second chunk is a second request, never a second round trip waiting on the first.
   await Promise.all(
     chunks.map(async (chunk) => {
+      const again = chunk.filter((id) => profileIdsAnswered.has(id)).length;
+      console.debug(
+        `[USER] profile batch: ${chunk.length} id(s), ${again} asked again after the cache expired`
+      );
       try {
         const res = await apiFetch(
           `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
@@ -346,6 +358,7 @@ async function flushProfileBatch(
         const byId = new Map(users.map((u) => [u.id, u]));
         for (const id of chunk) {
           const profile = byId.get(id);
+          if (profile) profileIdsAnswered.add(id);
           for (const waiter of batch.get(id) ?? []) {
             if (profile) waiter.resolve(profile);
             else if (deletedIds.has(id)) waiter.reject(new DeletedAccountError());

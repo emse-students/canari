@@ -1,8 +1,8 @@
 ## P2 - a new device's restore is paced by one member device adding it group by group
 
-target: 1.8.2
+target: 1.8.3
 
-_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped. 2026-11-26: moved to 1.8.3 - the instruments below are built, the levers wait on the log they produce._
 
 **Measured 2026-11-24** (a new web device, prod `1.7.3`, 153 conversations, log of 13:44:11 to
 13:46:34 local): history was still arriving when the log was exported.
@@ -48,3 +48,38 @@ from the code, not from a log):
 **The reading that closes it:** the same restore (a new browser on an account of 150+ conversations)
 on dev, logged: Welcomes for all groups within 30 s of sign-in, checkpoint time under 10 % of the
 restore, and fewer `users/batch` calls than conversations.
+
+**Built 2026-11-26 - the three lines that decide the three levers** (nothing changes behaviour; each
+line is what the dev log was missing):
+
+- **(1) The answering device's Adds.** Every accepted commit now writes
+  `[COMMIT] <group>... accepted at epoch N - waited W ms for the MLS mutex, held H ms (checkpoint C ms,
+  request R ms, A attempts)` (`commitHoldTiming.ts`, wired in `BaseMlsService.runCommitTransaction`).
+  **What the code already says, read 2026-11-26:** each Add runs ALONE under the global MLS mutex -
+  the stage, a checkpoint of the device's WHOLE state before the first request
+  (`checkpointStageBeforeSend`, O(groups)), the request (the mutex is lent only to other groups'
+  FRAMES, never to another commit - [mls-protocol](../protocols/mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)),
+  the merge. So 153 asks are 153 holds in a row, and ~2 Welcomes a second is one hold of ~0.5 s.
+  The line splits that hold: W growing down the restore is the queue, C the part that grows with the
+  number of groups, R the network. **The lever it points at** is ONE transaction for the Adds of one
+  device into K groups: K stages, ONE checkpoint covering every stage before any request leaves, the K
+  requests, K merges - each group keeping its own settle, unknown and rebuild semantics exactly as
+  one commit has them today, and a group refused or unknown leaving the others untouched. That
+  changes the "one commit per hold" invariant of the mutex, so it is built only once C (and not R)
+  is shown to dominate H, and it is reviewed adversarially as an MLS-core change.
+- **(2) The checkpoints.** The checkpoint line now names who asked for it:
+  `[MLS] Encrypted state checkpoint persisted. (83 ms) Asked by: applied x3, replay x1.` - `applied`
+  is `persistNow` (a Welcome or commit applied), `replay` a history replay or restore window closing,
+  `drain` a live drain closing, `flush` an explicit flush (`mlsStatePersister.ts`). The Welcome
+  checkpoints and the replay ones are separated by reading that clause over the restore.
+- **(3) The profile lookups.** Each `GET /api/users/batch` writes
+  `[USER] profile batch: N id(s), R asked again after the cache expired` (`stores/user.ts`): N of 1-2
+  with R = 0 is the one-turn window (the fix is a window bound to the restore), R close to N is the
+  30 s TTL (the fix is a longer-lived answer).
+
+**The dev measurement was attempted the same day and did not run:** the owner test account on dev is at
+the per-user device cap (15/15), and the rig's purge (`purge-devices.mjs`) stopped on the scratch
+profile's locked security card. Purge the abandoned mints by hand on that profile first, then
+`bun newdevice.mjs --device W3 --keep-open` with a watcher on W1 (`bun logs.mjs --device W1 --raw`;
+W1 has several tabs open, so close the extra ones first or the watcher refuses).
+
