@@ -554,11 +554,19 @@
   // conversations are all drawn, from the leader tab only (a follower neither creates nor posts on
   // its own), and again when "Mes notes" itself appears here - the one fact a run waiting for it was
   // waiting on. A run in flight is never doubled: the second trigger joins it.
+  //
+  // THE KEY, NOT THE MAP: iterating the conversations subscribes to EVERY row's change, so a run that
+  // ended owing the move (queued, waiting, unanswered) was started again - a notepad read, a key read
+  // and a decrypt - by every message landing anywhere. Derived to the self row's key, the effect
+  // re-runs only when "Mes notes" appears, goes or changes key.
   let notepadRun: Promise<unknown> | null = null;
+  const selfConversationKey = $derived(
+    findSelfConversation(globalConvs.conversations)?.[0] ?? null
+  );
   $effect(() => {
     const accountId = globalSession.userId;
     if (!globalSession.isLoggedIn || !accountId || !globalConvs.conversationSourcesSettled) return;
-    void findSelfConversation(globalConvs.conversations)?.[0];
+    void selfConversationKey;
     untrack(() => {
       if (getTabLeadership() === 'follower' || notepadRun) return;
       notepadRun = runNotepadMigration({
