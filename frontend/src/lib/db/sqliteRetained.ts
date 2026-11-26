@@ -52,6 +52,29 @@ export function retainTableStatements(table: string, indexes: readonly string[])
   ];
 }
 
+/** The trigger that makes a kept copy follow the user's deletions; dropped with the copy. */
+function followDeletesTrigger(table: string): string {
+  return `retained_follows_deletes_${table}`;
+}
+
+/**
+ * The trigger a migration creates, INSIDE its own transaction right after the table that replaces
+ * `table` exists: a row the user (or a wipe) deletes from the live table is deleted from the set-aside
+ * copy too. Without it a copy that survives a session - a release that failed - would have its rows
+ * RESTORED at the next open as "missing", resurrecting what the user deleted. A deletion is the only
+ * way a row legitimately leaves the live table, so following it keeps "missing" meaning "lost by a
+ * defect". Dropped by the release, before the copy: a trigger naming a dropped table fails every delete.
+ *
+ * @param key the live table's primary key columns.
+ */
+export function retainedFollowsDeletesStatement(table: string, key: readonly string[]): string {
+  const match = key.map((c) => `${c} IS old.${c}`).join(' AND ');
+  return (
+    `CREATE TRIGGER IF NOT EXISTS main.${followDeletesTrigger(table)} AFTER DELETE ON ${table} ` +
+    `BEGIN DELETE FROM ${retainedName(table)} WHERE ${match}; END`
+  );
+}
+
 /** NULL-safe match of a retained row `r` with a live row `t` on `key`. */
 function keyMatch(key: readonly string[]): string {
   return key.map((c) => `t.${c} IS r.${c}`).join(' AND ');
@@ -83,6 +106,7 @@ function retainedReleaseStatement(table: string, key: readonly string[]): string
     'BEGIN IMMEDIATE',
     `INSERT OR ROLLBACK INTO temp.${RETAINED_GUARD} (proven) SELECT NOT EXISTS (SELECT 1 FROM main.${retainedName(table)} r ` +
       `WHERE NOT EXISTS (SELECT 1 FROM main.${table} t WHERE ${keyMatch(key)}))`,
+    `DROP TRIGGER IF EXISTS main.${followDeletesTrigger(table)}`,
     `DROP TABLE main.${retainedName(table)}`,
     `DELETE FROM temp.${RETAINED_GUARD}`,
     'COMMIT',
@@ -93,6 +117,33 @@ function retainedReleaseStatement(table: string, key: readonly string[]): string
 export interface RetainedDb {
   select(sql: string, params?: unknown[]): Promise<any[]>;
   execute(sql: string, params?: unknown[]): Promise<unknown>;
+  close?(): Promise<unknown>;
+}
+
+/**
+ * Runs a script that holds its own raw `BEGIN`, and ENDS THE CONNECTION POOL when it fails.
+ *
+ * sqlx does not track a transaction raw SQL opened, so a failure that is not a guard's `CHECK` (I/O,
+ * a full disk) leaves the transaction open on one pooled connection, which would answer the session's
+ * next writes with "database is locked". Closing the pool closes that connection and SQLite rolls the
+ * open transaction back; the caller's failed open is retried with a fresh `Database.load`. A guard's
+ * `CHECK ... OR ROLLBACK` has already ended its transaction, but the failure cannot tell the two apart
+ * and a closed pool is cheap - so the rule is the same for both.
+ */
+export async function executeOwnTransaction(db: RetainedDb, script: string): Promise<void> {
+  try {
+    await db.execute(script);
+  } catch (e) {
+    // The caller says the failure (once); this says only what it did about the connection.
+    try {
+      await db.close?.();
+    } catch (closeError) {
+      console.warn(
+        `[SQLite] the pool could not be closed after the failed script: ${String(closeError)}`
+      );
+    }
+    throw e;
+  }
 }
 
 /** What {@link settleRetainedTables} did with one copy. */
@@ -156,7 +207,7 @@ async function settleOne(db: RetainedDb, table: string): Promise<RetainedOutcome
     const shared = liveInfo.map((c) => String(c.name)).filter((c) => copyColumns.has(c));
     await db.execute(retainedRestoreStatement(table, shared));
   }
-  await db.execute(retainedReleaseStatement(table, key));
+  await executeOwnTransaction(db, retainedReleaseStatement(table, key));
   const after = await count(`SELECT COUNT(*) AS n FROM main.${table}`);
   console.info(
     `[SQLite] the copy of ${table} is released: ${retained} row(s) set aside, all held (${after} now${missing > 0 ? `, ${missing} restored` : ''})`

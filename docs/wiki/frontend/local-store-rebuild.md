@@ -91,11 +91,12 @@ moment it runs.** No timer, no retry.
   guards do NOT cover** (review of #4155): a failure AFTER them that is not a constraint - an I/O
   error, a full disk - is not guaranteed to end the transaction (measured with `bun:sqlite`: a failed
   `ALTER TABLE` leaves it open), and sqlx does not check a pooled connection for a transaction raw SQL
-  opened. Nothing is committed, so nothing is lost; the open fails, and the next open's
-  `Database.load` builds a new pool (`tauri-plugin-sql` 2.6 `load` inserts a fresh one per call)
-  and drops the old one - read in the source, NOT measured: whether that closes the stuck connection
-  at once depends on sqlx's pool teardown, and until it does, writes on the other connections wait
-  out `busy_timeout`. An app restart always ends it.
+  opened. Nothing is committed, so nothing is lost. **Closed in 1.8.3:** both scripts that hold their
+  own `BEGIN` (the swap and the release) run through `executeOwnTransaction` (`sqliteRetained.ts`),
+  which CLOSES THE POOL on any failure - a closed connection rolls its open transaction back, and the
+  failed open's retry loads a fresh pool - so no transaction outlives the failure on a connection the
+  session keeps writing through. Pinned by "a script that fails inside its own transaction ends the
+  pool"; not measured against a real I/O failure (none can be provoked on a device).
 
 ## The essential is never lost: a migration sets a table aside, it never drops it (decided 2026-11-26)
 
@@ -118,6 +119,17 @@ asked for a guarantee that a FUTURE migration defect costs a re-open, not a user
   columns, which adds every missing row and replaces none - then proved and released;
 - a copy that still cannot be proved is KEPT for the next open, and the v23 swap refuses while a copy
   of `messages` is set aside, so no migration ever runs without its copy.
+- **A kept copy follows the user's deletions (1.8.3).** The swap creates, right after the new table
+  exists, an `AFTER DELETE` trigger (`retainedFollowsDeletesStatement`) that deletes the same key from
+  the copy; the release drops it before the copy. Without it a copy that survived a session (a release
+  that failed) would have the rows the user deleted RESTORED at the next open as "missing". With it,
+  "missing" means "lost by a defect". Pinned by "a copy that survives a session follows the user
+  deletions". A copy a pre-1.8.3 build left has no trigger; a migration that reuses the helper must
+  create it inside its own transaction.
+- **A close never overlaps an open of the same file (1.8.3).** The plugin shares one pool per file, so
+  `closeCachedStore` used to be able to close the pool of a store opened meanwhile (the wipe path).
+  `db.ts` keeps the close in flight per user (`closingStores`): `getStorage` waits for it, a second
+  close joins it. Pinned by "an open never starts while a close of the same file is still in flight".
 
 Pinned by "A COPY THAT IS NOT WHOLE IN THE NEW TABLE IS RESTORED FROM AT THE NEXT OPEN" (three rows
 deleted from the new table, the copy kept beside it: the next open restores all three, says

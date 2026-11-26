@@ -12,7 +12,7 @@ import { IndexedDbStorage } from './indexeddb';
 import { SqliteStorage } from './sqlite';
 import { messageRekeySteps, MESSAGES_REKEY_STAGING, SCHEMA_VERSION } from './sqliteMigrations';
 import type { IStorage, StoredMessage } from './types';
-import { retainedName } from './sqliteRetained';
+import { executeOwnTransaction, retainedName, settleRetainedTables } from './sqliteRetained';
 import { encryptData } from '../encryption';
 import { toMessagePayload } from './messagePayload';
 import { resealDeviceKeyStores } from '$lib/utils/chat/pinChange';
@@ -771,6 +771,58 @@ describe('SQLite v22 -> v23 on a pool of connections, opened concurrently', () =
     await expect(db.execute(steps.swap!)).rejects.toThrow(/CHECK constraint failed/);
     expect(count(probe, 'messages')).toBe(10);
     expect(count(probe, MESSAGES_REKEY_STAGING)).toBe(10);
+  });
+
+  it('a copy that survives a session follows the user deletions, so it never resurrects them', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(10);
+    const steps = messageRekeySteps({
+      keyed: false,
+      staging: false,
+      columns: [
+        'id',
+        'conversation_id',
+        'timestamp',
+        'iv',
+        'cipher_text',
+        'order_at',
+        'order_pending',
+        'rev',
+      ],
+      indexes: [],
+    });
+    for (const statement of steps.copy) probe.exec(statement);
+    await db.execute(steps.swap!);
+    expect(count(probe, retainedName('messages'))).toBe(10);
+    // The release did not happen; the user deletes two messages in the session that follows.
+    probe.exec("DELETE FROM messages WHERE id IN ('m1', 'm2')");
+    expect(count(probe, retainedName('messages'))).toBe(8);
+    // The next open settles: nothing is "missing", so nothing is restored.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await settleRetainedTables(db);
+    expect(count(probe, 'messages')).toBe(8);
+    expect(error).not.toHaveBeenCalled();
+    // The copy and its trigger are gone together: a later delete does not fail on a missing table.
+    expect(
+      probe.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'retained%'").all()
+    ).toEqual([]);
+    probe.exec("DELETE FROM messages WHERE id = 'm3'");
+    expect(count(probe, 'messages')).toBe(7);
+  });
+
+  it('a script that fails inside its own transaction ends the pool, so nothing stays open on it', async () => {
+    const closed = vi.fn(async () => undefined);
+    const db = {
+      select: async () => [],
+      execute: async () => {
+        throw new Error('disk I/O error');
+      },
+      close: closed,
+    };
+    await expect(executeOwnTransaction(db, 'BEGIN IMMEDIATE; SELECT 1')).rejects.toThrow(
+      'disk I/O error'
+    );
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 
   it('A COPY THAT IS NOT WHOLE IN THE NEW TABLE IS RESTORED FROM AT THE NEXT OPEN, THEN RELEASED', async () => {

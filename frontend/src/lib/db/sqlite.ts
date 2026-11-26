@@ -112,7 +112,7 @@ import {
   outboxServerErrorsStatement,
   outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
-import { settleRetainedTables } from './sqliteRetained';
+import { executeOwnTransaction, settleRetainedTables } from './sqliteRetained';
 import {
   newStoreIncarnation,
   STORE_INCARNATION_KEEP_STATEMENT,
@@ -823,7 +823,7 @@ export class SqliteStorage implements IStorage {
     // The swap re-proves both facts INSIDE its own transaction (`messageRekeySteps`): the count
     // above explains a refusal, the guards in the swap are what make the drop safe.
     try {
-      await this.db.execute(steps.swap);
+      await executeOwnTransaction(this.db, steps.swap);
     } catch (e) {
       console.error(
         `[SQLite] Migration v22->v23: the swap REFUSED or failed and rolled back - both tables are left as they were for the next open: ${String(e)}`

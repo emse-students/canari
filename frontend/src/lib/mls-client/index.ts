@@ -21,6 +21,7 @@ export {
   noPinOpensState,
   recoveryOfStateLoadFailure,
   isKeystoreKeyUnavailable,
+  isKeystorePromptDismissed,
   isMlsManagerAbsent,
   MlsSessionVacantError,
   VaultOwnerUnprovenError,
