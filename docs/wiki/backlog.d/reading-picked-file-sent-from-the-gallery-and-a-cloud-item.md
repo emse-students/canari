@@ -13,3 +13,5 @@ target: 1.8.2
 5. **No retry ladder.** No line `holds no bytes` and no `transient failure` for any of these entries.
 
 **What closes it**: 1 to 5 pass. A failure names the step: the native copy (`PickedFiles`), the pick's read (`ownPickedFile`), the send's proof, or the outbox's `empty-attachment`.
+
+**iPhone 12, `1.8.2-alpha.8` (2026-11-26, [sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-iphone-12-the-first-open-of-the-store-fix-tous-in-french-a-picked-photo-and-file)): the iOS side is unaffected, PASS.** A photo picked from the native Photos picker and a text export picked from Files (On My iPhone) were each staged in the composer and sent; the bubbles drew the image and the file at its real size (22 KB), "Message envoye". The reading above stays owed on the Mi 9T.
