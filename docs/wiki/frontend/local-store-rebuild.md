@@ -210,3 +210,11 @@ v22 store of 2768 rows upgraded with `install -r` was keyed, proved and released
 same 2768 rows in every conversation, no copy left set aside, no second rebuild after a cold start, and
 one sweep on the first connection only
 ([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-mi-9t-the-v22-store-upgraded-a-picked-file-sent-the-person-filter-tous-in-a-salon)).
+The Mi's ring carried the sweep's cause (`the local message store is not the one the last connection
+saw`) and its store holds `store_meta`, which answers the two gaps the iPhone 12 sitting of the same
+build left (the cause line missing from its pulled ring, the silent incarnation mint). The iPhone had
+no v22 store (it was already on v23), so it read only the open over a v23 store - no rebuild, rows
+identical, one pass, no second sweep
+([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-iphone-12-the-first-open-of-the-store-fix-tous-in-french-a-picked-photo-and-file)).
+The rebuild runs only on a v22 file, which the iPhone cannot produce without an older build, so the
+Mi 9T reading closes the entry.
