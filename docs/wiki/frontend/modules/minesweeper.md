@@ -157,7 +157,7 @@ locked while the challenge is awaited). **Owed:** the phone reading
 
 *"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
 mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
-les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications ... fais quelque chose de
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"* (the patterns became the annex, below), and *"un bouton d'indications ... fais quelque chose de
 vraiment explicatif, mais en montrant"* (owner). `/games/tutorial` is an ordinary page (it keeps the shell),
 reached from the Games page and from the game's settings sheet.
 
@@ -175,11 +175,11 @@ as the game's HUD does (the mines minus the flags), so the lessons can teach it.
 | 3 | Automatic flags | a number whose mines left equal its hidden neighbours: **one tap flags them all** (the engine's chord does this before it opens) | 3x3 |
 | 4 | Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
 | 5 | The mines counter | a column of three 1s: the middle cell is the mine; **the counter then reads 0, so every other hidden cell is safe, the ones no number touches included** | 4x3 |
-| 6 | 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
-| 7 | 1-2-1 | the middle is safe, both sides are mines | 3x2 |
-| 8 | 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
-| 9 | 1-3-1 at an OPEN corner | a 3 seeing five cells between two 1s: **the outermost corner cell is always a mine**, and the two cells at the ends of the arms are safe | 6x5, the right column hidden |
-| 10 | 2-2-2 at an OPEN corner | three 2s: **the outermost corner cell is always safe**, the two cells at the ends of the arms are mines, one mine in each pair | 6x5, the right column hidden |
+
+**The tutorial teaches the gestures and the rules, and NO pattern** (owner, 2026-11-26: *"les patterns specifiques ne
+devraient pas etre enseignes direct, mais plutot rester dans l'onglet patterns"*). The 1-1, 1-2-1, 1-2-2-1 and the
+two corners it first carried are the annex's: a lesson there is a reading of the board, and the tutorial's job is to
+make a player able to play one. Its header and its closing screen lead to the catalogue.
 
 **The highlights say what they are** (owner, 2026-11-26: *"surligne en rouge pour bombe sure, jaune pour groupe
 de bombes (avec un seul rectangle qui englobe plusieurs cases) et vert pour safe"*). A step of the "Indice"
@@ -207,19 +207,6 @@ strictly less). A red mark is a mine in every arrangement, a green mark is safe 
 mark holds exactly the mines its badge says and is outlined because a lit number touches it, and no mark hides an
 open cell. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
 
-**The corner lessons are OPEN, and a test holds them to it** (owner, 2026-11-26: *"la presence de bords permet de
-contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid whose edges made the ends of the arms
-trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
-6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
-lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
-0, or as many mines as hidden neighbours); **(2) the corner cell is forced WITH the corner number and unknown
-WITHOUT it**, the mines counter included - the far column is what keeps the counter from standing in for the
-reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
-exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
-**What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs
-shared with the corner number, C the outermost corner): 1-3-1 forces C a mine and X, Y safe; 2-2-2 forces C safe
-and X, Y mines, and both leave one mine in each pair for the other numbers to place. Neither needs the counter.
-
 **Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
 chord in either mode, the automatic flags, the counter, a mine ends the lesson, solved ONCE, one outline per
 rectangle and its colour and badge), `routes/games/tutorial/page.svelte.test.ts` (the lessons chain to a closing
@@ -234,22 +221,53 @@ introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. `/g
 tutorial's header and closing screen. It shares the tutorial's reader (`MinesweeperLessonRunner.svelte`, which
 the tutorial page also uses), with a jump list grouped by family.
 
-**The source, and what is ours.** The reference states what each pattern concludes and draws it as a picture.
-**The words are ours** (French and English, written from the statement, never copied) and **the boards are
-ours**: each one was found by an exhaustive or sampled search for a board where the stated numbers are present
-and the conclusion is true, then **proved** by `lessons.test.ts` like every lesson. Where the reference gives a
-name but not a shape (the holes H1-H3, the T pattern, the dependency chain, the three T variants), the board is
-our reading of its statement, and says so here.
+**The source: the reference's own diagrams** (owner, 2026-11-26: *"tes exemples sont insuffisants, utilise ceux de
+minesweeper.online tels quels en reprenant leurs explications, qui sont vraiment precises"*). The catalogue follows
+the reference page entry by entry, **in its order and its families**: each board keeps the shape of the reference
+diagram - which cells are open, which hidden, the flags, the cells the explanation groups - and each hint follows
+its steps ("look at the left 1", "it touches the yellow cells, so they hold one mine", ...), one hint per step.
+**The sentences are our own words** (French and English, from the statement of each step): the reference is a
+third party's page, and its text is not copied into a public repository. The page is credited on the catalogue's
+subtitle and here: <https://minesweeper.online/help/patterns>. The reference colours (yellow, purple, orange...) are
+ONE colour here, the group colour; a step that speaks of two groups says where they are.
 
-| Family | Entries (a name already taught in the tutorial is the SAME lesson, listed under its family) |
+**What had to change, and is said in `patterns.ts`.** The reference diagrams are CROPS of larger boards, and drawn by
+hand: a crop cuts the numbers at its edge (a 3 at the border of the picture sees cells that are not in it), and a
+few are not consistent even with their own neighbours (one H3 number cannot be reached by any arrangement). So **an
+entry keeps the reference's geometry and closes the crop's edges, and the numbers at a closed edge are recomputed from
+the board** - the board the test proves is a real one. Three entries are not the reference's drawing:
+the **introduction to reduction** (ours: the reference goes straight to the three reductions), and the **two
+corner patterns**, whose boards are the open ones proved before (the reference's own pictures cannot hold the
+numbers of their own explanation), turned to the reference's orientation (the 3 with a 1 on its left and a 1 below,
+the corner above and to its right). The two last entries are full boards with a mines counter (**mine counting**,
+**combinations**), as the reference draws them, and need it: the numbers alone force less.
+
+**A catalogue entry is a WINDOW and says so with `partial: true`**: its picture holds more than the pattern asks, so
+its goal is what the PATTERN concludes (the test holds it to be forced), not everything the neighbouring numbers
+force. A tutorial lesson is exact: its goal IS everything forced.
+
+**The corner patterns are OPEN, and a test holds them to it** (owner, 2026-11-26: *"la presence de bords permet de
+contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid whose edges made the ends of the arms
+trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
+6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
+lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
+0, or as many mines as hidden neighbours); **(2) the corner cell is forced WITH the corner number and unknown
+WITHOUT it**, the mines counter included - the far column is what keeps the counter from standing in for the
+reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
+exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
+**What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs
+shared with the corner number, C the outermost corner): 1-3-1 forces C a mine and X, Y safe; 2-2-2 forces C safe
+and X, Y mines, and both leave one mine in each pair for the other numbers to place. Neither needs the counter.
+
+
+| Family (the reference's) | Entries |
 | --- | --- |
-| Basics | B1 (the automatic flags), B2 (the chord), 1-1, 1-1+, 1-2, 1-2+, 1-2C, 1-2C+ |
-| Combined 1-2 patterns | 1-2-1, 1-2-2-1 |
-| Reduction | the introduction, 1-1R (3-4-3), 1-2R (2-3-3), 1-2-1R (2-3-2) |
+| Basic patterns | B1, B2, 1-1, 1-1+, 1-2, 1-2+, 1-2C, 1-2C+, 1-2-1, 1-2-2-1 |
+| Reduction | the introduction (ours), 1-1R, 1-2R, 1-2-1R |
 | Holes | H1, H2, H3 |
 | Triangles | T1, T2, T3, T4, T5 |
-| Complex patterns | 1-3-1 and 2-2-2 at an open corner, 1>2<1, the T pattern, the dependency chain |
-| Endgame | mine counting (the counter lesson), combinations |
+| High complexity patterns | 1-3-1 and 2-2-2 at an open corner, 1>2<1, the T pattern, the dependency chain |
+| Last turns | mine counting, combinations |
 
 **Reduction** (the owner's request): a number minus the flags it touches is what is left to find among the
 hidden cells WITHOUT a flag, so the classic pattern applies as it is (a 2 beside one flag is a 1, a 4 beside

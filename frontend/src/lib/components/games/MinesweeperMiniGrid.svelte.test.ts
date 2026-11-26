@@ -92,20 +92,23 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('rings the number a hint reads and outlines its group ONCE, with the mines it holds', async () => {
+  it('rings the numbers a hint reads and outlines its group ONCE, with the mines it holds', async () => {
     open('one_two_one', 0);
     await tick();
-    expect(cell(1).getAttribute('data-hint')).toBe('read');
-    expect(cell(1).getAttribute('aria-label')).toBe('Chiffre lu : 2');
-    // The three hidden cells are ONE yellow outline, not three rings; its badge says two mines.
-    expect(marks()).toHaveLength(1);
+    // The 1 and the 2 the step reads are ringed; the 1 on the right is not read.
+    expect(cell(6).getAttribute('data-hint')).toBe('read');
+    expect(cell(7).getAttribute('data-hint')).toBe('read');
+    expect(cell(7).getAttribute('aria-label')).toBe('Chiffre lu : 2');
+    expect(cell(8).getAttribute('data-hint')).toBeNull();
+    // The pair of cells is ONE yellow outline, not two rings; its badge says one mine. The mine it forces is red.
+    expect(marks()).toHaveLength(2);
     expect(marks('group')).toHaveLength(1);
-    expect(document.querySelector('[data-mark-count]')?.getAttribute('data-mark-count')).toBe('2');
-    expect(cell(3).getAttribute('data-hint')).toBeNull();
+    expect(marks('mine')).toHaveLength(1);
+    expect(document.querySelector('[data-mark-count]')?.getAttribute('data-mark-count')).toBe('1');
   });
 
   it('draws red for a certain mine, green for a certain safe cell, from the last step of a pattern', async () => {
-    open('one_two_one', 3);
+    open('one_two_one', 2);
     await tick();
     expect(marks('mine')).toHaveLength(2);
     expect(marks('safe')).toHaveLength(1);
@@ -113,7 +116,7 @@ describe('MinesweeperMiniGrid', () => {
   });
 
   it('outlines a mark of several rectangles as separate shapes with ONE badge', async () => {
-    open('angle_one_three_one', 0);
+    open('corner_one_three_one', 0);
     await tick();
     // The five cells a corner 3 sees are not a rectangle: two outlines, one yellow group, one badge.
     expect(marks('group')).toHaveLength(2);
@@ -169,14 +172,14 @@ describe('MinesweeperMiniGrid', () => {
     expect(
       document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
     ).toBe('Nombre de mines inconnu');
-    // Column 0 touches no number: it is the picture's continuation, and its (0,0) is a mine.
-    for (const i of [0, 3, 6, 9]) expect(cell(i).getAttribute('data-hint')).toBe('far');
+    // The top row touches no number: it is the picture's continuation.
+    for (const i of [0, 1, 2, 3]) expect(cell(i).getAttribute('data-hint')).toBe('far');
     cell(0).click();
     flushSync();
     expect(onLost).not.toHaveBeenCalled();
     expect(cell(0).getAttribute('data-hint')).toBe('far');
     // The cells next to a number are the pattern, and stay playable.
-    expect(cell(1).getAttribute('data-hint')).toBeNull();
+    expect(cell(5).getAttribute('data-hint')).toBeNull();
   });
 
   it('keeps a closed lesson closed: its counter is a number and every cell is playable', () => {

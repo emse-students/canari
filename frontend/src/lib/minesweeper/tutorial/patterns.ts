@@ -1,27 +1,29 @@
 import { m } from '$lib/paraglide/messages';
-import { LESSONS, group, mine, safe, type Lesson } from './lessons';
+import { group, mine, safe, type Lesson } from './lessons';
 
 /**
  * THE PATTERN CATALOGUE, the tutorial's ANNEX (owner, 2026-11-26: *"reprend leurs explications pour tous
- * les patterns dans un tutoriel annexe"*). Every named pattern of the reference catalogue
- * (minesweeper.online, "Patterns"), one playable board each, listed by family: the basics, the 1-2
- * combinations, the reduction of a number by its flags, the holes, the triangles, the complex patterns and
- * the endgame.
+ * les patterns dans un tutoriel annexe"*, then *"utilise ceux de minesweeper.online tels quels"*). Every
+ * pattern of the reference catalogue (minesweeper.online, "Patterns"), in the reference's own order and
+ * families, one playable board each: the basic patterns, the reduction of a number by its flags, the holes, the
+ * triangles, the high complexity patterns and the last turns.
  *
- * **The boards are OURS and the words are ours**: the reference draws its patterns as pictures, and states
- * what each concludes. Each board here was found by an exhaustive search (a board where the stated
- * numbers are present and the conclusion is true) and is PROVED by `lessons.test.ts`, like every lesson of
- * the tutorial: what it asks to open is safe, what it asks to flag is a mine, and every highlight is true
- * in every arrangement the numbers and the mines counter allow. Where the reference gives a name but not a
- * shape (the holes, the T pattern, the dependency chain), the board is our reading of its statement.
+ * **The pictures are the reference's**: each board keeps the shape of the reference diagram - which cells are
+ * open, which are hidden, where the flags are, which cells the explanation groups - and each hint follows the
+ * reference's own steps, in our own words (see the wiki page for the credit). Where a diagram is a crop of a larger
+ * board, its edges are closed so the picture is consistent, and the numbers at a closed edge are recomputed from
+ * the board: the reference's own are those of the board beyond the crop. Every board is PROVED by
+ * `lessons.test.ts` like a tutorial lesson - what it asks to open is safe, what it asks to flag is a mine, and every
+ * highlight is true in every arrangement the numbers allow. Two entries are ours: the introduction to reduction,
+ * and the two corner patterns, which the reference draws as pictures with numbers its own picture cannot hold -
+ * their boards are the open ones proved earlier, turned to the reference's orientation.
  *
- * A pattern the tutorial already teaches (B1, B2, 1-1, 1-2-1, 1-2-2-1, the corners, the counter) is the SAME
- * lesson, listed here under its family.
+ * `partial`: the picture is a window, so it holds more than the pattern asks - the goal is what the pattern
+ * concludes, which the test holds to be forced, not everything the neighbouring numbers force.
  */
 
 const SECTION = {
   basics: () => m.minesweeper_patterns_section_basics(),
-  pairs: () => m.minesweeper_patterns_section_pairs(),
   reduction: () => m.minesweeper_patterns_section_reduction(),
   holes: () => m.minesweeper_patterns_section_holes(),
   triangles: () => m.minesweeper_patterns_section_triangles(),
@@ -29,215 +31,368 @@ const SECTION = {
   endgame: () => m.minesweeper_patterns_section_endgame(),
 };
 
-/** A lesson of the tutorial, listed in the catalogue under its family. */
-function reuse(id: string, section: () => string): Lesson {
-  const lesson = LESSONS.find((l) => l.id === id);
-  if (!lesson) throw new Error(`pattern catalogue: no tutorial lesson '${id}'`);
-  return { ...lesson, section };
-}
-
 export const PATTERNS: readonly Lesson[] = [
-  reuse('autoflag', SECTION.basics),
-  reuse('chord', SECTION.basics),
-  reuse('one_one', SECTION.basics),
   {
-    id: 'one_one_plus',
+    id: 'basic_mines',
     section: SECTION.basics,
+    title: () => m.minesweeper_pattern_basic_mines_title(),
+    body: () => m.minesweeper_pattern_basic_mines_body(),
+    rows: ['001..', '002#.', '003#.', '112#.', '#....'],
     open: true,
-    title: () => m.minesweeper_pattern_one_one_plus_title(),
-    body: () => m.minesweeper_pattern_one_one_plus_body(),
-    rows: ['..1', '1#1', '..2', '##1'],
+    partial: true,
     goal: {
-      reveal: [
-        [0, 0],
-        [1, 0],
-        [0, 2],
-        [1, 2],
-      ],
+      reveal: [],
       flag: [
-        [1, 1],
-        [1, 3],
+        [3, 1],
+        [3, 2],
+        [3, 3],
       ],
     },
     hints: [
       {
-        numbers: [[2, 0]],
-        marks: [group(1, [1, 0, 1, 2])],
+        numbers: [[2, 2]],
+        marks: [group(3, [3, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_basic_mines_hint_1(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [mine([3, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_basic_mines_hint_2(),
+      },
+    ],
+  },
+  {
+    id: 'basic_flags',
+    section: SECTION.basics,
+    title: () => m.minesweeper_pattern_basic_flags_title(),
+    body: () => m.minesweeper_pattern_basic_flags_body(),
+    rows: ['002F.', '003F.', '112F.', '#....', '.....'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [
+        [1, 3],
+        [2, 3],
+        [3, 3],
+      ],
+      flag: [],
+    },
+    hints: [
+      {
+        numbers: [[2, 2]],
+        marks: [mine([3, 1, 1, 2])],
+        text: () => m.minesweeper_pattern_basic_flags_hint_1(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [safe([1, 3, 3, 1])],
+        text: () => m.minesweeper_pattern_basic_flags_hint_2(),
+      },
+    ],
+  },
+  {
+    id: 'one_one',
+    section: SECTION.basics,
+    title: () => m.minesweeper_pattern_one_one_title(),
+    body: () => m.minesweeper_pattern_one_one_body(),
+    rows: ['.....', '.#..#', '11111', '00000', '00000'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [[2, 1]],
+      flag: [],
+    },
+    hints: [
+      {
+        numbers: [[0, 2]],
+        marks: [],
+        text: () => m.minesweeper_pattern_one_one_hint_1(),
+      },
+      {
+        numbers: [[0, 2]],
+        marks: [group(1, [0, 1, 2, 1])],
+        text: () => m.minesweeper_pattern_one_one_hint_2(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [],
+        text: () => m.minesweeper_pattern_one_one_hint_3(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [group(1, [0, 1, 2, 1]), safe([2, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_one_hint_4(),
+      },
+    ],
+  },
+  {
+    id: 'one_one_plus',
+    section: SECTION.basics,
+    title: () => m.minesweeper_pattern_one_one_plus_title(),
+    body: () => m.minesweeper_pattern_one_one_plus_body(),
+    rows: ['....', '.#..', '11..', '01..', '01#.'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [
+        [2, 1],
+        [2, 2],
+        [2, 3],
+      ],
+      flag: [],
+    },
+    hints: [
+      {
+        numbers: [[0, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_one_plus_hint_1(),
       },
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [0, 0, 2, 1], [1, 1, 1, 1], [0, 2, 2, 1])],
+        numbers: [[0, 2]],
+        marks: [group(1, [0, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_one_plus_hint_2(),
       },
       {
-        numbers: [
-          [2, 0],
-          [0, 1],
-        ],
-        marks: [safe([0, 0, 1, 1], [0, 2, 2, 1])],
+        numbers: [[1, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_one_plus_hint_3(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [group(1, [0, 1, 2, 1]), safe([2, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_one_one_plus_hint_4(),
       },
     ],
   },
   {
     id: 'one_two',
     section: SECTION.basics,
-    open: true,
     title: () => m.minesweeper_pattern_one_two_title(),
     body: () => m.minesweeper_pattern_one_two_body(),
-    rows: ['#.1', '.#2', '.#2', '..1'],
+    rows: ['....', '#.#.', '1211', '0000', '0000'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [
-        [1, 0],
-        [1, 3],
-      ],
-      flag: [
-        [1, 1],
-        [1, 2],
-      ],
+      reveal: [],
+      flag: [[2, 1]],
     },
     hints: [
       {
-        numbers: [[2, 0]],
-        marks: [group(1, [1, 0, 1, 2])],
+        numbers: [[0, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_hint_1(),
       },
       {
-        numbers: [[2, 1]],
-        marks: [group(2, [1, 0, 1, 3])],
+        numbers: [[0, 2]],
+        marks: [group(1, [0, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_hint_2(),
       },
       {
-        numbers: [
-          [2, 0],
-          [2, 1],
-        ],
-        marks: [mine([1, 2, 1, 1])],
+        numbers: [[1, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_hint_3(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [group(1, [0, 1, 2, 1]), mine([2, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_hint_4(),
       },
     ],
   },
   {
     id: 'one_two_plus',
     section: SECTION.basics,
-    open: true,
     title: () => m.minesweeper_pattern_one_two_plus_title(),
     body: () => m.minesweeper_pattern_one_two_plus_body(),
-    rows: ['1.#', '1##', '2.4', '1##'],
+    rows: ['....', '.##.', '14#.', '02#.', '01..'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [
-        [1, 0],
-        [1, 2],
-      ],
+      reveal: [],
       flag: [
-        [1, 1],
         [2, 1],
-        [1, 3],
+        [2, 2],
         [2, 3],
       ],
     },
     hints: [
       {
-        numbers: [[0, 3]],
-        marks: [group(1, [1, 2, 1, 2])],
+        numbers: [[0, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_plus_hint_1(),
       },
       {
-        numbers: [[2, 2]],
-        marks: [group(4, [1, 1, 2, 1], [1, 2, 1, 1], [1, 3, 2, 1])],
+        numbers: [[0, 2]],
+        marks: [group(1, [0, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_plus_hint_2(),
       },
       {
-        numbers: [
-          [0, 3],
-          [2, 2],
-        ],
-        marks: [mine([1, 1, 2, 1], [2, 3, 1, 1])],
+        numbers: [[1, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_plus_hint_3(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [group(1, [0, 1, 2, 1]), mine([2, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_one_two_plus_hint_4(),
       },
     ],
   },
   {
     id: 'one_two_c',
     section: SECTION.basics,
-    open: true,
     title: () => m.minesweeper_pattern_one_two_c_title(),
     body: () => m.minesweeper_pattern_one_two_c_body(),
-    rows: ['#.1', '.#1', '..2', '.#1'],
+    rows: ['......', '..#.#.', '#3123#', '#2002#'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [
-        [1, 0],
-        [1, 2],
-      ],
-      flag: [
-        [1, 1],
-        [1, 3],
-      ],
+      reveal: [],
+      flag: [[4, 1]],
     },
     hints: [
       {
-        numbers: [[2, 1]],
-        marks: [group(1, [1, 0, 1, 3])],
+        numbers: [[2, 2]],
+        marks: [group(undefined, [2, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_c_hint_1(),
       },
       {
         numbers: [[2, 2]],
-        marks: [group(2, [1, 1, 1, 3])],
+        marks: [group(undefined, [2, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_c_hint_2(),
       },
       {
-        numbers: [
-          [2, 1],
-          [2, 2],
-        ],
-        marks: [mine([1, 3, 1, 1])],
+        numbers: [[3, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_c_hint_3(),
+      },
+      {
+        numbers: [[3, 2]],
+        marks: [group(undefined, [2, 1, 2, 1]), mine([4, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_c_hint_4(),
       },
     ],
   },
   {
     id: 'one_two_c_plus',
     section: SECTION.basics,
-    open: true,
     title: () => m.minesweeper_pattern_one_two_c_plus_title(),
     body: () => m.minesweeper_pattern_one_two_c_plus_body(),
-    rows: ['1##', '2.4', '1##', '1.#'],
+    rows: ['.....', '.#.#.', '114#.', '002#.', '001..'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [
-        [1, 1],
-        [1, 3],
-      ],
+      reveal: [],
       flag: [
-        [1, 0],
-        [2, 0],
-        [1, 2],
-        [2, 2],
+        [3, 1],
+        [3, 2],
+        [3, 3],
       ],
     },
     hints: [
       {
-        numbers: [[0, 2]],
-        marks: [group(1, [1, 1, 1, 3])],
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_c_plus_hint_1(),
       },
       {
-        numbers: [[2, 1]],
-        marks: [group(4, [1, 0, 2, 1], [1, 1, 1, 1], [1, 2, 2, 1])],
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 1, 2, 1])],
         text: () => m.minesweeper_pattern_one_two_c_plus_hint_2(),
       },
       {
-        numbers: [
-          [0, 2],
-          [2, 1],
-        ],
-        marks: [mine([1, 0, 2, 1], [2, 2, 1, 1])],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_one_two_c_plus_hint_3(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 1, 2, 1]), mine([3, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_one_two_c_plus_hint_4(),
       },
     ],
   },
-  reuse('one_two_one', SECTION.pairs),
-  reuse('one_two_two_one', SECTION.pairs),
+  {
+    id: 'one_two_one',
+    section: SECTION.basics,
+    title: () => m.minesweeper_pattern_one_two_one_title(),
+    body: () => m.minesweeper_pattern_one_two_one_body(),
+    rows: ['...', '#.#', '121', '000', '000'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [[1, 1]],
+      flag: [
+        [0, 1],
+        [2, 1],
+      ],
+    },
+    hints: [
+      {
+        numbers: [
+          [0, 2],
+          [1, 2],
+        ],
+        marks: [group(1, [0, 1, 2, 1]), mine([2, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_one_hint_1(),
+      },
+      {
+        numbers: [
+          [1, 2],
+          [2, 2],
+        ],
+        marks: [group(1, [1, 1, 2, 1]), mine([0, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_one_hint_2(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [mine([0, 1, 1, 1], [2, 1, 1, 1]), safe([1, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_one_hint_3(),
+      },
+    ],
+  },
+  {
+    id: 'one_two_two_one',
+    section: SECTION.basics,
+    title: () => m.minesweeper_pattern_one_two_two_one_title(),
+    body: () => m.minesweeper_pattern_one_two_two_one_body(),
+    rows: ['....', '.##.', '1221', '0000', '0000'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [
+        [0, 1],
+        [3, 1],
+      ],
+      flag: [
+        [1, 1],
+        [2, 1],
+      ],
+    },
+    hints: [
+      {
+        numbers: [
+          [0, 2],
+          [1, 2],
+        ],
+        marks: [group(1, [0, 1, 2, 1]), mine([2, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_two_one_hint_1(),
+      },
+      {
+        numbers: [
+          [2, 2],
+          [3, 2],
+        ],
+        marks: [group(1, [2, 1, 2, 1]), mine([1, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_two_one_hint_2(),
+      },
+      {
+        numbers: [],
+        marks: [mine([1, 1, 2, 1]), safe([0, 1, 1, 1], [3, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_one_two_two_one_hint_3(),
+      },
+    ],
+  },
   {
     id: 'reduction_intro',
     section: SECTION.reduction,
@@ -273,44 +428,37 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.reduction,
     title: () => m.minesweeper_pattern_reduced_one_one_title(),
     body: () => m.minesweeper_pattern_reduced_one_one_body(),
-    rows: ['FFF', '343', '.#.'],
+    rows: ['01#..', '12...', 'F2...', '34#..', 'FF22#'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [
-        [0, 2],
-        [2, 2],
-      ],
-      flag: [[1, 2]],
+      reveal: [[2, 1]],
+      flag: [],
     },
     hints: [
       {
-        numbers: [
-          [0, 1],
-          [1, 1],
-        ],
-        marks: [mine([0, 0, 3, 1])],
-        reduced: [
-          { cell: [0, 1], value: 1 },
-          { cell: [1, 1], value: 1 },
-        ],
+        numbers: [[1, 2]],
+        marks: [],
+        reduced: [{ cell: [1, 2], value: 1 }],
         text: () => m.minesweeper_pattern_reduced_one_one_hint_1(),
       },
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [0, 2, 2, 1])],
+        numbers: [[1, 3]],
+        marks: [],
+        reduced: [{ cell: [1, 3], value: 1 }],
         text: () => m.minesweeper_pattern_reduced_one_one_hint_2(),
       },
       {
-        numbers: [[1, 1]],
-        marks: [group(1, [0, 2, 3, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_one_hint_3(),
-      },
-      {
         numbers: [
-          [0, 1],
-          [1, 1],
+          [1, 2],
+          [1, 3],
         ],
-        marks: [safe([2, 2, 1, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_one_hint_4(),
+        marks: [group(1, [2, 2, 1, 2]), safe([2, 1, 1, 1])],
+        reduced: [
+          { cell: [1, 2], value: 1 },
+          { cell: [1, 3], value: 1 },
+        ],
+        text: () => m.minesweeper_pattern_reduced_one_one_hint_3(),
       },
     ],
   },
@@ -319,44 +467,37 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.reduction,
     title: () => m.minesweeper_pattern_reduced_one_two_title(),
     body: () => m.minesweeper_pattern_reduced_one_two_body(),
-    rows: ['1F1', '233', '.##'],
+    rows: ['FF11F', '#4233', '#..##', '.....'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [[0, 2]],
-      flag: [
-        [1, 2],
-        [2, 2],
-      ],
+      reveal: [],
+      flag: [[4, 2]],
     },
     hints: [
       {
-        numbers: [
-          [0, 1],
-          [1, 1],
-        ],
-        marks: [mine([1, 0, 1, 1])],
-        reduced: [
-          { cell: [0, 1], value: 1 },
-          { cell: [1, 1], value: 2 },
-        ],
+        numbers: [[2, 1]],
+        marks: [],
+        reduced: [{ cell: [2, 1], value: 1 }],
         text: () => m.minesweeper_pattern_reduced_one_two_hint_1(),
       },
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [0, 2, 2, 1])],
+        numbers: [[3, 1]],
+        marks: [],
+        reduced: [{ cell: [3, 1], value: 2 }],
         text: () => m.minesweeper_pattern_reduced_one_two_hint_2(),
       },
       {
-        numbers: [[1, 1]],
-        marks: [group(2, [0, 2, 3, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_two_hint_3(),
-      },
-      {
         numbers: [
-          [0, 1],
-          [1, 1],
+          [2, 1],
+          [3, 1],
         ],
-        marks: [mine([2, 2, 1, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_two_hint_4(),
+        marks: [group(undefined, [2, 2, 2, 1]), mine([4, 2, 1, 1])],
+        reduced: [
+          { cell: [2, 1], value: 1 },
+          { cell: [3, 1], value: 2 },
+        ],
+        text: () => m.minesweeper_pattern_reduced_one_two_hint_3(),
       },
     ],
   },
@@ -365,444 +506,575 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.reduction,
     title: () => m.minesweeper_pattern_reduced_one_two_one_title(),
     body: () => m.minesweeper_pattern_reduced_one_two_one_body(),
-    rows: ['1F1', '232', '#.#'],
+    rows: ['.....', '.#.#.', '12321', '01F10', '01110'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [[1, 2]],
+      reveal: [[2, 1]],
       flag: [
-        [0, 2],
-        [2, 2],
+        [1, 1],
+        [3, 1],
       ],
     },
     hints: [
       {
         numbers: [
-          [0, 1],
-          [1, 1],
-          [2, 1],
+          [1, 2],
+          [2, 2],
+          [3, 2],
         ],
-        marks: [mine([1, 0, 1, 1])],
+        marks: [mine([1, 1, 1, 1], [3, 1, 1, 1]), safe([2, 1, 1, 1])],
         reduced: [
-          { cell: [0, 1], value: 1 },
-          { cell: [1, 1], value: 2 },
-          { cell: [2, 1], value: 1 },
+          { cell: [1, 2], value: 1 },
+          { cell: [2, 2], value: 2 },
+          { cell: [3, 2], value: 1 },
         ],
         text: () => m.minesweeper_pattern_reduced_one_two_one_hint_1(),
-      },
-      {
-        numbers: [[1, 1]],
-        marks: [group(2, [0, 2, 3, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_two_one_hint_2(),
-      },
-      {
-        numbers: [
-          [0, 1],
-          [2, 1],
-        ],
-        marks: [group(1, [0, 2, 2, 1]), group(1, [1, 2, 2, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_two_one_hint_3(),
-      },
-      {
-        numbers: [[1, 1]],
-        marks: [mine([0, 2, 1, 1], [2, 2, 1, 1]), safe([1, 2, 1, 1])],
-        text: () => m.minesweeper_pattern_reduced_one_two_one_hint_4(),
       },
     ],
   },
   {
     id: 'hole_1',
     section: SECTION.holes,
-    open: true,
     title: () => m.minesweeper_pattern_hole_1_title(),
     body: () => m.minesweeper_pattern_hole_1_body(),
-    rows: ['1##', '1..', '1..', '1#.'],
+    rows: ['.....', '.....', '.#1.#', '11111', '00000'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
         [1, 1],
-        [1, 2],
+        [2, 1],
+        [3, 1],
       ],
-      flag: [
-        [1, 0],
-        [1, 3],
-      ],
+      flag: [],
     },
     hints: [
       {
-        numbers: [[0, 0]],
-        marks: [group(1, [1, 0, 1, 2])],
+        numbers: [[2, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_1_hint_1(),
       },
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [1, 0, 1, 3])],
+        numbers: [[2, 3]],
+        marks: [group(1, [1, 2, 1, 1], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_hole_1_hint_2(),
       },
       {
-        numbers: [
-          [0, 0],
-          [0, 1],
-        ],
-        marks: [safe([1, 2, 1, 1])],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_1_hint_3(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 2, 1, 1], [3, 2, 1, 1]), safe([1, 1, 3, 1])],
+        text: () => m.minesweeper_pattern_hole_1_hint_4(),
       },
     ],
   },
   {
     id: 'hole_2',
     section: SECTION.holes,
-    open: true,
     title: () => m.minesweeper_pattern_hole_2_title(),
     body: () => m.minesweeper_pattern_hole_2_body(),
-    rows: ['1.#', '1#.', '2..', '1#.'],
+    rows: ['....#', '#213#', '.#1.#', '11111', '00000'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
         [1, 0],
-        [1, 2],
+        [2, 0],
+        [3, 0],
       ],
-      flag: [
-        [1, 1],
-        [1, 3],
-      ],
+      flag: [],
     },
     hints: [
       {
-        numbers: [[0, 0]],
-        marks: [group(1, [1, 0, 1, 2])],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_2_hint_1(),
       },
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [1, 0, 1, 3])],
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 2, 1, 1], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_hole_2_hint_2(),
       },
       {
-        numbers: [
-          [0, 0],
-          [0, 1],
-        ],
-        marks: [safe([1, 2, 1, 1])],
+        numbers: [[2, 1]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_2_hint_3(),
+      },
+      {
+        numbers: [[2, 1]],
+        marks: [group(1, [1, 2, 1, 1], [3, 2, 1, 1]), safe([1, 0, 3, 1])],
+        text: () => m.minesweeper_pattern_hole_2_hint_4(),
       },
     ],
   },
   {
     id: 'hole_3',
     section: SECTION.holes,
-    open: true,
     title: () => m.minesweeper_pattern_hole_3_title(),
     body: () => m.minesweeper_pattern_hole_3_body(),
-    rows: ['##1', '..1', '..1', '.#1'],
+    rows: ['.#...', '.221.', '.#1.#', '11111', '00000'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
-        [1, 1],
-        [1, 2],
+        [2, 0],
+        [3, 0],
+        [4, 0],
+        [4, 1],
       ],
-      flag: [
-        [1, 0],
-        [1, 3],
-      ],
+      flag: [],
     },
     hints: [
       {
-        numbers: [[2, 0]],
-        marks: [group(1, [1, 0, 1, 2])],
+        numbers: [[3, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_3_hint_1(),
       },
       {
-        numbers: [[2, 1]],
-        marks: [group(1, [1, 0, 1, 3])],
+        numbers: [[3, 3]],
+        marks: [group(1, [3, 2, 2, 1])],
         text: () => m.minesweeper_pattern_hole_3_hint_2(),
       },
       {
-        numbers: [
-          [2, 0],
-          [2, 1],
-        ],
-        marks: [safe([1, 2, 1, 1])],
+        numbers: [[3, 1]],
+        marks: [],
         text: () => m.minesweeper_pattern_hole_3_hint_3(),
+      },
+      {
+        numbers: [[3, 1]],
+        marks: [group(1, [3, 2, 2, 1]), safe([2, 0, 3, 1], [4, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_hole_3_hint_4(),
       },
     ],
   },
   {
     id: 'triangle_1',
     section: SECTION.triangles,
-    open: true,
     title: () => m.minesweeper_pattern_triangle_1_title(),
     body: () => m.minesweeper_pattern_triangle_1_body(),
-    rows: ['1##', '1..', '1.1', '1#.'],
+    rows: ['.....', '.....', '..1.#', '.#111', '#2100'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
         [1, 1],
         [2, 1],
-        [1, 2],
-        [2, 3],
+        [3, 1],
       ],
-      flag: [
-        [1, 0],
-        [1, 3],
-      ],
+      flag: [],
     },
     hints: [
       {
-        numbers: [[0, 2]],
-        marks: [group(1, [1, 1, 1, 3])],
+        numbers: [[2, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_1_hint_1(),
       },
       {
-        numbers: [[2, 2]],
-        marks: [group(1, [1, 1, 2, 1], [1, 2, 1, 1], [1, 3, 2, 1])],
+        numbers: [[2, 3]],
+        marks: [group(1, [1, 2, 1, 2], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_1_hint_2(),
       },
       {
-        numbers: [
-          [0, 2],
-          [2, 2],
-        ],
-        marks: [safe([2, 1, 1, 1], [2, 3, 1, 1])],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_1_hint_3(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 2, 1, 2], [3, 2, 1, 1]), safe([1, 1, 3, 1])],
+        text: () => m.minesweeper_pattern_triangle_1_hint_4(),
       },
     ],
   },
   {
     id: 'triangle_2',
     section: SECTION.triangles,
-    open: true,
     title: () => m.minesweeper_pattern_triangle_2_title(),
     body: () => m.minesweeper_pattern_triangle_2_body(),
-    rows: ['1.#', '1#.', '2..', '1#.'],
+    rows: ['.....', '.....', '.#1.#', '..211', '.#100'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
-        [1, 0],
-        [1, 2],
-      ],
-      flag: [
         [1, 1],
-        [1, 3],
+        [2, 1],
+        [3, 1],
       ],
+      flag: [[1, 4]],
     },
     hints: [
       {
-        numbers: [[0, 1]],
-        marks: [group(1, [1, 0, 1, 3])],
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_2_hint_1(),
       },
       {
-        numbers: [[0, 2]],
-        marks: [group(2, [1, 1, 1, 3])],
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_2_hint_2(),
       },
       {
-        numbers: [
-          [0, 1],
-          [0, 2],
-        ],
-        marks: [mine([1, 3, 1, 1])],
+        numbers: [[2, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_2_hint_3(),
+      },
+      {
+        numbers: [[2, 3]],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1]), mine([1, 4, 1, 1])],
+        text: () => m.minesweeper_pattern_triangle_2_hint_4(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 2, 1, 2], [3, 2, 1, 1]), safe([1, 1, 3, 1])],
+        text: () => m.minesweeper_pattern_triangle_2_hint_5(),
       },
     ],
   },
   {
     id: 'triangle_3',
     section: SECTION.triangles,
-    open: true,
     title: () => m.minesweeper_pattern_triangle_3_title(),
     body: () => m.minesweeper_pattern_triangle_3_body(),
-    rows: ['#.10', '.#10', '2.31', '.##1'],
+    rows: ['.....', '.....', '.#2.#', '.#311', '.#200'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
-        [1, 0],
-        [0, 1],
-        [1, 2],
-        [0, 3],
-      ],
-      flag: [
         [1, 1],
-        [1, 3],
-        [2, 3],
+        [2, 1],
+        [3, 1],
       ],
+      flag: [[1, 4]],
     },
     hints: [
       {
-        numbers: [[0, 2]],
-        marks: [group(2, [0, 1, 2, 1], [1, 2, 1, 1], [0, 3, 2, 1])],
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_3_hint_1(),
       },
       {
         numbers: [[2, 2]],
-        marks: [group(3, [1, 1, 1, 2], [1, 3, 2, 1])],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_3_hint_2(),
       },
       {
-        numbers: [
-          [0, 2],
-          [2, 2],
-        ],
-        marks: [mine([2, 3, 1, 1])],
+        numbers: [[2, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_3_hint_3(),
+      },
+      {
+        numbers: [[2, 3]],
+        marks: [group(undefined, [1, 2, 1, 2], [3, 2, 1, 1]), mine([1, 4, 1, 1])],
+        text: () => m.minesweeper_pattern_triangle_3_hint_4(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(2, [1, 2, 1, 2], [3, 2, 1, 1]), safe([1, 1, 3, 1])],
+        text: () => m.minesweeper_pattern_triangle_3_hint_5(),
       },
     ],
   },
   {
     id: 'triangle_4',
     section: SECTION.triangles,
-    open: true,
     title: () => m.minesweeper_pattern_triangle_4_title(),
     body: () => m.minesweeper_pattern_triangle_4_body(),
-    rows: ['..#', '2#4', '2##', '1.#'],
+    rows: ['.....', '.###.', '.243.', '..1#.', '..111'],
+    open: true,
+    partial: true,
     goal: {
-      reveal: [[0, 0]],
+      reveal: [
+        [0, 1],
+        [0, 2],
+        [0, 3],
+      ],
       flag: [
-        [2, 0],
-        [1, 1],
-        [2, 2],
+        [3, 1],
+        [3, 3],
       ],
     },
     hints: [
       {
-        numbers: [[0, 1]],
-        marks: [group(2, [0, 0, 2, 1], [1, 1, 1, 2])],
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 1, 2, 1], [1, 3, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_4_hint_1(),
       },
       {
-        numbers: [[2, 1]],
-        marks: [group(4, [1, 0, 2, 1], [1, 1, 1, 1], [1, 2, 2, 1])],
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 1, 2, 1], [1, 3, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_4_hint_2(),
       },
       {
-        numbers: [
-          [0, 1],
-          [2, 1],
-        ],
-        marks: [mine([2, 0, 1, 1], [2, 2, 1, 1])],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_4_hint_3(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 1, 2, 1], [1, 3, 1, 1]), mine([3, 1, 1, 1], [3, 3, 1, 1])],
+        text: () => m.minesweeper_pattern_triangle_4_hint_4(),
+      },
+      {
+        numbers: [[1, 2]],
+        marks: [group(2, [1, 1, 2, 1], [1, 3, 1, 1]), safe([0, 1, 1, 3])],
+        text: () => m.minesweeper_pattern_triangle_4_hint_5(),
       },
     ],
   },
   {
     id: 'triangle_5',
     section: SECTION.triangles,
-    open: true,
     title: () => m.minesweeper_pattern_triangle_5_title(),
     body: () => m.minesweeper_pattern_triangle_5_body(),
-    rows: ['##1', '..2', '.#1', '..1'],
+    rows: ['.....', '#....', '#312#', '.#2.#', '.#211'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
         [1, 1],
-        [1, 3],
+        [2, 1],
+        [3, 1],
       ],
-      flag: [
-        [1, 0],
-        [1, 2],
-      ],
+      flag: [[1, 4]],
     },
     hints: [
       {
         numbers: [[2, 2]],
-        marks: [group(1, [1, 1, 1, 3])],
+        marks: [group(undefined, [1, 3, 1, 1], [3, 3, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_5_hint_1(),
       },
       {
-        numbers: [[2, 1]],
-        marks: [group(2, [1, 0, 1, 3])],
+        numbers: [[2, 2]],
+        marks: [group(undefined, [1, 3, 1, 1], [3, 3, 1, 1])],
         text: () => m.minesweeper_pattern_triangle_5_hint_2(),
       },
       {
-        numbers: [
-          [2, 2],
-          [2, 1],
-        ],
-        marks: [mine([1, 0, 1, 1])],
+        numbers: [[2, 3]],
+        marks: [],
         text: () => m.minesweeper_pattern_triangle_5_hint_3(),
+      },
+      {
+        numbers: [[2, 3]],
+        marks: [group(undefined, [1, 3, 1, 1], [3, 3, 1, 1]), mine([1, 4, 1, 1])],
+        text: () => m.minesweeper_pattern_triangle_5_hint_4(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 3, 1, 1], [3, 3, 1, 1]), safe([1, 1, 3, 1])],
+        text: () => m.minesweeper_pattern_triangle_5_hint_5(),
       },
     ],
   },
-  reuse('angle_one_three_one', SECTION.complex),
-  reuse('angle_two_two_two', SECTION.complex),
   {
-    id: 'gt_two_lt',
+    id: 'corner_one_three_one',
     section: SECTION.complex,
+    title: () => m.minesweeper_pattern_corner_one_three_one_title(),
+    body: () => m.minesweeper_pattern_corner_one_three_one_body(),
+    rows: ['#..##.', '1113#.', '0001..', '0001..', '0001##'],
     open: true,
-    title: () => m.minesweeper_pattern_gt_two_lt_title(),
-    body: () => m.minesweeper_pattern_gt_two_lt_body(),
-    rows: ['112.1', '.#.#.', '....#'],
+    corner: { number: [3, 1], cell: [4, 0] },
     goal: {
       reveal: [
-        [0, 1],
-        [2, 1],
-        [4, 1],
+        [4, 3],
+        [4, 2],
+        [1, 0],
+        [2, 0],
       ],
-      flag: [[1, 1]],
+      flag: [
+        [4, 4],
+        [4, 1],
+        [0, 0],
+        [3, 0],
+        [4, 0],
+      ],
     },
     hints: [
       {
-        numbers: [[1, 0]],
-        marks: [group(1, [0, 1, 3, 1])],
+        numbers: [[3, 1]],
+        marks: [group(3, [4, 0, 1, 3], [2, 0, 2, 1])],
+        text: () => m.minesweeper_pattern_corner_one_three_one_hint_1(),
+      },
+      {
+        numbers: [
+          [3, 2],
+          [2, 1],
+        ],
+        marks: [group(1, [4, 1, 1, 3]), group(1, [1, 0, 3, 1])],
+        text: () => m.minesweeper_pattern_corner_one_three_one_hint_2(),
+      },
+      {
+        numbers: [[3, 1]],
+        marks: [mine([4, 0, 1, 1]), safe([4, 3, 1, 1], [1, 0, 1, 1])],
+        text: () => m.minesweeper_pattern_corner_one_three_one_hint_3(),
+      },
+      {
+        numbers: [],
+        marks: [
+          mine([4, 4, 1, 1], [4, 1, 1, 1], [0, 0, 1, 1], [3, 0, 1, 1], [4, 0, 1, 1]),
+          safe([4, 2, 1, 2], [1, 0, 2, 1]),
+        ],
+        text: () => m.minesweeper_pattern_corner_one_three_one_hint_4(),
+      },
+    ],
+  },
+  {
+    id: 'corner_two_two_two',
+    section: SECTION.complex,
+    title: () => m.minesweeper_pattern_corner_two_two_two_title(),
+    body: () => m.minesweeper_pattern_corner_two_two_two_body(),
+    rows: ['.#.#..', '1122#.', '0002..', '0001#.', '0001.#'],
+    open: true,
+    corner: { number: [3, 1], cell: [4, 0] },
+    goal: {
+      reveal: [
+        [4, 4],
+        [4, 2],
+        [0, 0],
+        [2, 0],
+        [4, 0],
+      ],
+      flag: [
+        [4, 3],
+        [4, 1],
+        [1, 0],
+        [3, 0],
+      ],
+    },
+    hints: [
+      {
+        numbers: [
+          [3, 2],
+          [2, 1],
+        ],
+        marks: [group(2, [4, 1, 1, 3]), group(2, [1, 0, 3, 1])],
+        text: () => m.minesweeper_pattern_corner_two_two_two_hint_1(),
+      },
+      {
+        numbers: [[3, 1]],
+        marks: [group(2, [4, 0, 1, 3], [2, 0, 2, 1])],
+        text: () => m.minesweeper_pattern_corner_two_two_two_hint_2(),
+      },
+      {
+        numbers: [
+          [3, 2],
+          [2, 1],
+        ],
+        marks: [group(undefined, [4, 1, 1, 2]), group(undefined, [2, 0, 2, 1])],
+        text: () => m.minesweeper_pattern_corner_two_two_two_hint_3(),
+      },
+      {
+        numbers: [[3, 1]],
+        marks: [safe([4, 0, 1, 1]), mine([4, 3, 1, 1], [1, 0, 1, 1])],
+        text: () => m.minesweeper_pattern_corner_two_two_two_hint_4(),
+      },
+      {
+        numbers: [],
+        marks: [
+          mine([4, 3, 1, 1], [4, 1, 1, 1], [1, 0, 1, 1], [3, 0, 1, 1]),
+          safe([4, 4, 1, 1], [4, 2, 1, 1], [0, 0, 1, 1], [2, 0, 1, 1], [4, 0, 1, 1]),
+        ],
+        text: () => m.minesweeper_pattern_corner_two_two_two_hint_5(),
+      },
+    ],
+  },
+  {
+    id: 'gt_two_lt',
+    section: SECTION.complex,
+    title: () => m.minesweeper_pattern_gt_two_lt_title(),
+    body: () => m.minesweeper_pattern_gt_two_lt_body(),
+    rows: ['.#..', '11..', '11..', '1#..', '12..', '01#.', '01..'],
+    open: true,
+    partial: true,
+    goal: {
+      reveal: [
+        [2, 1],
+        [2, 2],
+        [2, 6],
+      ],
+      flag: [],
+    },
+    hints: [
+      {
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 3, 2, 1])],
         text: () => m.minesweeper_pattern_gt_two_lt_hint_1(),
       },
       {
-        numbers: [[4, 0]],
-        marks: [group(1, [3, 0, 1, 1], [3, 1, 2, 1])],
+        numbers: [[1, 2]],
+        marks: [group(undefined, [1, 3, 2, 1])],
         text: () => m.minesweeper_pattern_gt_two_lt_hint_2(),
       },
       {
-        numbers: [[2, 0]],
-        marks: [group(2, [3, 0, 1, 1], [1, 1, 3, 1])],
+        numbers: [[1, 5]],
+        marks: [group(undefined, [2, 4, 1, 2])],
         text: () => m.minesweeper_pattern_gt_two_lt_hint_3(),
       },
       {
-        numbers: [[2, 0]],
-        marks: [group(1, [1, 1, 2, 1]), group(1, [3, 0, 1, 2]), safe([0, 1, 1, 1], [4, 1, 1, 1])],
+        numbers: [[1, 5]],
+        marks: [group(undefined, [2, 4, 1, 2])],
         text: () => m.minesweeper_pattern_gt_two_lt_hint_4(),
+      },
+      {
+        numbers: [[1, 4]],
+        marks: [],
+        text: () => m.minesweeper_pattern_gt_two_lt_hint_5(),
+      },
+      {
+        numbers: [[1, 4]],
+        marks: [group(1, [1, 3, 2, 1]), group(1, [2, 4, 1, 2]), safe([2, 1, 1, 2], [2, 6, 1, 1])],
+        text: () => m.minesweeper_pattern_gt_two_lt_hint_6(),
       },
     ],
   },
   {
     id: 't_pattern',
     section: SECTION.complex,
-    open: true,
     title: () => m.minesweeper_pattern_t_pattern_title(),
     body: () => m.minesweeper_pattern_t_pattern_body(),
-    rows: ['0001##', '0002..', '0001#.', '1213..', '#.#.#.'],
+    rows: ['.....', '.##..', '#432.', '.#1.#', '11111', '00000'],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
         [4, 1],
-        [4, 3],
-        [1, 4],
-        [3, 4],
-      ],
-      flag: [
-        [4, 0],
         [4, 2],
-        [0, 4],
-        [2, 4],
-        [4, 4],
       ],
+      flag: [[1, 1]],
     },
     hints: [
       {
-        numbers: [[3, 3]],
-        marks: [group(3, [4, 2, 1, 2], [2, 4, 3, 1])],
+        numbers: [[2, 4]],
+        marks: [group(1, [1, 3, 1, 1], [3, 3, 1, 1])],
         text: () => m.minesweeper_pattern_t_pattern_hint_1(),
       },
       {
-        numbers: [
-          [3, 2],
-          [2, 3],
-        ],
-        marks: [group(1, [4, 1, 1, 3]), group(1, [1, 4, 3, 1])],
+        numbers: [[3, 4]],
+        marks: [group(1, [3, 3, 2, 1])],
         text: () => m.minesweeper_pattern_t_pattern_hint_2(),
       },
       {
-        numbers: [[3, 3]],
-        marks: [mine([4, 4, 1, 1]), safe([4, 1, 1, 1], [1, 4, 1, 1])],
+        numbers: [[3, 2]],
+        marks: [group(1, [2, 1, 3, 1], [4, 2, 1, 1])],
         text: () => m.minesweeper_pattern_t_pattern_hint_3(),
       },
       {
-        numbers: [],
-        marks: [
-          mine([4, 0, 1, 1], [4, 2, 1, 1], [0, 4, 1, 1], [2, 4, 1, 1], [4, 4, 1, 1]),
-          safe([4, 1, 1, 1], [4, 3, 1, 1], [1, 4, 1, 1], [3, 4, 1, 1]),
-        ],
+        numbers: [[2, 2]],
+        marks: [],
         text: () => m.minesweeper_pattern_t_pattern_hint_4(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [1, 3, 1, 1], [3, 3, 1, 1]), mine([1, 1, 1, 1])],
+        text: () => m.minesweeper_pattern_t_pattern_hint_5(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [group(1, [2, 1, 2, 1]), safe([4, 1, 1, 1], [4, 2, 1, 1])],
+        text: () => m.minesweeper_pattern_t_pattern_hint_6(),
       },
     ],
   },
@@ -811,91 +1083,162 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.complex,
     title: () => m.minesweeper_pattern_chain_title(),
     body: () => m.minesweeper_pattern_chain_body(),
-    rows: ['11212121', '.#.#.#.#'],
+    rows: [
+      'F3#..',
+      '2.#..',
+      '1#2..',
+      '112..',
+      '1.2#.',
+      '1#2..',
+      '112..',
+      '2.2#.',
+      'F#...',
+      'FF21#',
+    ],
+    open: true,
+    partial: true,
     goal: {
       reveal: [
-        [0, 1],
-        [2, 1],
-        [4, 1],
-        [6, 1],
-      ],
-      flag: [
-        [1, 1],
         [3, 1],
-        [5, 1],
-        [7, 1],
+        [3, 3],
       ],
+      flag: [],
     },
     hints: [
       {
-        numbers: [
-          [0, 0],
-          [1, 0],
-        ],
-        marks: [group(1, [0, 1, 2, 1]), safe([2, 1, 1, 1])],
+        numbers: [[1, 0]],
+        marks: [],
         text: () => m.minesweeper_pattern_chain_hint_1(),
       },
       {
-        numbers: [[2, 0]],
-        marks: [mine([1, 1, 1, 1], [3, 1, 1, 1])],
+        numbers: [[1, 0]],
+        marks: [group(1, [1, 1, 2, 1])],
         text: () => m.minesweeper_pattern_chain_hint_2(),
       },
       {
-        numbers: [
-          [6, 0],
-          [7, 0],
-        ],
-        marks: [group(1, [6, 1, 2, 1]), mine([5, 1, 1, 1])],
+        numbers: [[2, 7]],
+        marks: [group(1, [1, 8, 3, 1])],
         text: () => m.minesweeper_pattern_chain_hint_3(),
       },
       {
-        numbers: [],
-        marks: [
-          mine([1, 1, 1, 1], [3, 1, 1, 1], [5, 1, 1, 1], [7, 1, 1, 1]),
-          safe([0, 1, 1, 1], [2, 1, 1, 1], [4, 1, 1, 1], [6, 1, 1, 1]),
-        ],
+        numbers: [[2, 7]],
+        marks: [group(1, [1, 7, 1, 1], [3, 7, 1, 1])],
         text: () => m.minesweeper_pattern_chain_hint_4(),
+      },
+      {
+        numbers: [[2, 5]],
+        marks: [group(1, [1, 5, 1, 1], [3, 5, 1, 1])],
+        text: () => m.minesweeper_pattern_chain_hint_5(),
+      },
+      {
+        numbers: [[2, 3]],
+        marks: [group(1, [1, 4, 1, 1], [3, 4, 1, 1])],
+        text: () => m.minesweeper_pattern_chain_hint_6(),
+      },
+      {
+        numbers: [[2, 3]],
+        marks: [group(1, [1, 2, 1, 1], [3, 2, 1, 1])],
+        text: () => m.minesweeper_pattern_chain_hint_7(),
+      },
+      {
+        numbers: [[2, 2]],
+        marks: [
+          group(1, [1, 1, 2, 1]),
+          group(1, [1, 2, 1, 1], [3, 2, 1, 1]),
+          safe([3, 1, 1, 1], [3, 3, 1, 1]),
+        ],
+        text: () => m.minesweeper_pattern_chain_hint_8(),
       },
     ],
   },
-  reuse('counter', SECTION.endgame),
+  {
+    id: 'mine_counting',
+    section: SECTION.endgame,
+    title: () => m.minesweeper_pattern_mine_counting_title(),
+    body: () => m.minesweeper_pattern_mine_counting_body(),
+    rows: [
+      '..F..',
+      '1334#',
+      '#3F#.',
+      '.4F31',
+      '2F210',
+      '#2100',
+      '.1000',
+      '12121',
+      '#3F3F',
+      '..#..',
+    ],
+    partial: true,
+    goal: {
+      reveal: [
+        [0, 9],
+        [1, 9],
+      ],
+      flag: [],
+    },
+    hints: [
+      {
+        numbers: [[3, 1]],
+        marks: [group(2, [3, 0, 2, 1], [4, 1, 1, 1], [3, 2, 2, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_1(),
+      },
+      {
+        numbers: [[1, 1]],
+        marks: [group(1, [0, 0, 2, 1], [0, 2, 1, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_2(),
+      },
+      {
+        numbers: [[0, 4]],
+        marks: [group(1, [0, 3, 1, 1], [0, 5, 1, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_3(),
+      },
+      {
+        numbers: [[1, 7]],
+        marks: [group(1, [0, 6, 1, 1], [0, 8, 1, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_4(),
+      },
+      {
+        numbers: [[3, 8]],
+        marks: [group(1, [2, 9, 3, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_5(),
+      },
+      {
+        numbers: [],
+        marks: [safe([0, 9, 2, 1])],
+        text: () => m.minesweeper_pattern_mine_counting_hint_6(),
+      },
+    ],
+  },
   {
     id: 'combinations',
     section: SECTION.endgame,
     title: () => m.minesweeper_pattern_combinations_title(),
     body: () => m.minesweeper_pattern_combinations_body(),
-    rows: ['112..', '.#.#.'],
+    rows: ['F4F3.1', 'F.#.#2', 'F#.22F', 'F32.21', '2..#31', '1#3FF1'],
+    partial: true,
     goal: {
-      reveal: [
-        [4, 0],
-        [0, 1],
-        [2, 1],
-        [4, 1],
-      ],
-      flag: [[1, 1]],
+      reveal: [[1, 1]],
+      flag: [],
     },
     hints: [
       {
-        numbers: [[0, 0]],
-        marks: [group(1, [0, 1, 2, 1])],
+        numbers: [[1, 0]],
+        marks: [group(undefined, [1, 1, 1, 1])],
         text: () => m.minesweeper_pattern_combinations_hint_1(),
       },
       {
-        numbers: [[2, 0]],
-        marks: [group(2, [3, 0, 1, 1], [1, 1, 3, 1])],
+        numbers: [[1, 0]],
+        marks: [group(undefined, [1, 1, 1, 1])],
         text: () => m.minesweeper_pattern_combinations_hint_2(),
       },
       {
-        numbers: [
-          [0, 0],
-          [2, 0],
-        ],
-        marks: [group(undefined, [0, 1, 1, 1])],
+        numbers: [[1, 0]],
+        marks: [group(undefined, [1, 1, 1, 1])],
         text: () => m.minesweeper_pattern_combinations_hint_3(),
       },
       {
-        numbers: [],
-        marks: [mine([1, 1, 1, 1]), safe([4, 0, 1, 2], [0, 1, 1, 1], [2, 1, 1, 1])],
+        numbers: [[1, 0]],
+        marks: [safe([1, 1, 1, 1])],
         text: () => m.minesweeper_pattern_combinations_hint_4(),
       },
     ],

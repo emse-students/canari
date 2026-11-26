@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * THE MINESWEEPER TUTORIAL, `/games/tutorial` (owner, 2026-11-25: the barrier to entry was too high). One
-   * lesson at a time on a playable mini-grid: the gestures (open, flag, chord, the counter), then the
-   * patterns the regulars read at a glance. The "Indice" button walks through the reasoning of the lesson,
+   * lesson at a time on a playable mini-grid: the gestures and the rules (open, flag, the automatic flags,
+   * chord, the counter) and NO pattern (owner, 2026-11-26). The "Indice" button walks through the reasoning of the lesson,
    * ringing the numbers it reads and outlining what they conclude. The pattern CATALOGUE is its annex
    * (`/games/tutorial/patterns`). docs/wiki/frontend/modules/minesweeper.md
    */
