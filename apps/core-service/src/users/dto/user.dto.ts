@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -116,6 +117,16 @@ export class UpdateNotesDto {
   @MaxLength(100000)
   @IsOptional()
   ciphertext?: string;
+}
+
+/**
+ * Payload of `POST /users/me/notes/moved`: the SHA-256 (64 hex characters) of the notepad the caller
+ * read and posted into "Mes notes" - only that notepad is deleted (`UsersService.moveNotes`).
+ */
+export class MoveNotesDto {
+  @IsString()
+  @Matches(/^[0-9a-f]{64}$/)
+  digest!: string;
 }
 
 /** Public-facing projection of a user - omits sensitive or internal fields. */

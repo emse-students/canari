@@ -29,6 +29,7 @@ import {
   CreateUserDto,
   UpdateUserDto,
   UpdateNotesDto,
+  MoveNotesDto,
   DirectoryQueryDto,
   BlockUserDto,
   SetAdminDto,
@@ -511,7 +512,8 @@ export class UsersController {
 
   /**
    * Returns the caller's notepad ciphertext, and the legacy plaintext when the
-   * note predates encryption. The server never sees the decrypted content.
+   * note predates encryption. The server never sees the decrypted content. 410 `NOTEPAD_MOVED` once
+   * none is held: the notepad has moved into "Mes notes" (`users/notepad.ts`).
    */
   @UseGuards(NginxAuthGuard)
   @Get('me/notes')
@@ -524,7 +526,8 @@ export class UsersController {
    *
    * A missing `ciphertext` is refused rather than treated as an empty notepad:
    * during a deploy a still-cached client sends the old `{ notes }` body, and
-   * coercing that to `''` would wipe the note it was trying to save.
+   * coercing that to `''` would wipe the note it was trying to save. Only over a notepad still held
+   * (an older build editing one not moved yet); otherwise 410 `NOTEPAD_MOVED`.
    */
   @UseGuards(NginxAuthGuard)
   @Put('me/notes')
@@ -534,6 +537,19 @@ export class UsersController {
     }
     await this.usersService.setNotes(userId, dto.ciphertext);
     return { ok: true };
+  }
+
+  /**
+   * Deletes the caller's notepad once a client has posted it into "Mes notes" - only the notepad
+   * whose digest the body names (`UsersService.moveNotes`): 410 `NOTEPAD_MOVED` when none is held,
+   * 409 `NOTEPAD_CHANGED` when another one is.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('me/notes/moved')
+  @HttpCode(200)
+  async moveMyNotes(@Headers('x-user-id') userId: string, @Body() dto: MoveNotesDto) {
+    await this.usersService.moveNotes(userId, dto.digest);
+    return { status: 'moved' };
   }
 
   /**

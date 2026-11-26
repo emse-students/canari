@@ -238,8 +238,13 @@ export async function deleteGroupAndBroadcast(params: {
   userId: string;
   deviceKeyB64: string;
   log?: (msg: string) => void;
+  /**
+   * `self` for "Mes notes": the server deletes a self group only for a request that says it knows
+   * the kind (`?kind=self`, `SELF_CONVERSATION_KIND_UNSTATED` otherwise).
+   */
+  kind?: 'self';
 }): Promise<void> {
-  const { mlsService, groupId, userId, log } = params;
+  const { mlsService, groupId, userId, log, kind } = params;
 
   // 1. Notify peers via MLS BEFORE server deletion, and AWAIT ITS ACCEPTANCE (`sendMessage` resolves
   // on the delivery service's answer, not on a queue write). Encryption requires WASM state (group
@@ -262,7 +267,8 @@ export async function deleteGroupAndBroadcast(params: {
   // than a sentinel value, because "no failure" and "a falsy error" must not be the same state.
   let serverExitFailure: { error: unknown } | null = null;
   try {
-    await mlsService.deleteGroupOnServer(groupId);
+    if (kind === 'self') await mlsService.deleteGroupOnServer(groupId, 'self');
+    else await mlsService.deleteGroupOnServer(groupId);
   } catch (e) {
     serverExitFailure = { error: e };
   }

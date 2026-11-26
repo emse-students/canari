@@ -15,7 +15,6 @@ import { currentUserId as signedInUserId } from '$lib/stores/userState.svelte';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
 // than copied - one envelope, one place to get right.
-import { encryptVaultNote, decryptVaultNote } from '$lib/associations/vaultCrypto';
 
 export {
   currentUserId,
@@ -453,66 +452,6 @@ export async function updateMyProfile(data: {
   invalidateMyProfile(profile);
   noteReaderSpaces(profile);
   return profile;
-}
-
-/** Fetches the caller's private personal notepad (markdown). Returns "" when unset. */
-/**
- * Fetches the caller's notepad key, generated server-side on first use. Cached
- * for the session: it is stable, and every save would otherwise pay a round trip.
- */
-let notesKeyPromise: Promise<string> | null = null;
-
-async function getMyNotesKey(): Promise<string> {
-  if (!notesKeyPromise) {
-    notesKeyPromise = (async () => {
-      const res = await apiFetch(`${coreUrl()}/api/users/me/notes-key`);
-      if (!res.ok) throw new Error(`Failed to fetch notes key (${res.status})`);
-      const data = (await res.json()) as { key: string };
-      if (!data.key) throw new Error('Notes key is empty');
-      return data.key;
-    })().catch((err) => {
-      // Never cache a failure: the next attempt must be able to succeed.
-      notesKeyPromise = null;
-      throw err;
-    });
-  }
-  return notesKeyPromise;
-}
-
-/**
- * Loads and decrypts the caller's personal notepad.
- *
- * A note written before the notepad was encrypted comes back as `legacyNotes`;
- * it is re-saved encrypted straight away, which is what clears the plaintext
- * column server-side. That one-shot conversion is why the previous format still
- * has a reader here.
- */
-export async function fetchMyNotes(): Promise<string> {
-  const res = await apiFetch(`${coreUrl()}/api/users/me/notes`);
-  if (!res.ok) throw new Error(`Failed to fetch notes (${res.status})`);
-  const data = (await res.json()) as { ciphertext?: string; legacyNotes?: string };
-
-  if (data.ciphertext) {
-    return decryptVaultNote(await getMyNotesKey(), data.ciphertext);
-  }
-
-  const legacy = data.legacyNotes ?? '';
-  if (legacy) {
-    console.log('[notes] converting a plaintext notepad to its encrypted form');
-    await saveMyNotes(legacy);
-  }
-  return legacy;
-}
-
-/** Encrypts and persists the caller's private personal notepad. */
-export async function saveMyNotes(notes: string): Promise<void> {
-  const ciphertext = notes ? await encryptVaultNote(await getMyNotesKey(), notes) : '';
-  const res = await apiFetch(`${coreUrl()}/api/users/me/notes`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ciphertext }),
-  });
-  if (!res.ok) throw new Error(`Failed to save notes (${res.status})`);
 }
 
 /**

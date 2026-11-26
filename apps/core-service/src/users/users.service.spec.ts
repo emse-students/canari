@@ -5,6 +5,13 @@ import { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
 import { UserRowGoneError } from './user-write';
+import {
+  HELD_NOTEPAD_SQL,
+  NotepadChangedException,
+  NotepadMovedException,
+  heldNotepad,
+  notepadDigest,
+} from './notepad';
 import { REVIEW_COHORT_BOUNDARY, ReviewCohortBoundaryException } from '../review-cohort';
 
 /**
@@ -57,37 +64,47 @@ describe('UsersService.search type guard', () => {
 });
 
 /**
- * The notepad is stored as opaque ciphertext under a per-user key. These cover
- * the two things that would silently defeat that: leaking the legacy plaintext
- * once an encrypted copy exists, and regenerating the key on every read.
+ * The notepad is stored as opaque ciphertext under a per-user key, and is RETIRED into "Mes notes"
+ * (`notepad.ts`). These cover what would silently defeat either: leaking the legacy plaintext once
+ * an encrypted copy exists, regenerating the key on every read, writing or minting for a notepad
+ * that has moved, and deleting a notepad other than the one the mover read.
  */
 describe('UsersService notepad', () => {
   /**
-   * One stored row: `update` writes the columns it names into it (0 rows once `gone`), and `query`
-   * plays the key's `COALESCE` statement in PostgreSQL's `[rows, count]` shape.
+   * One stored row. `query` plays the three statements the service writes in PostgreSQL's
+   * `[rows, count]` shape - the key's `COALESCE`, the conditional save and the conditional move -
+   * against that row, with `HELD_NOTEPAD_SQL`'s rule (ciphertext, else legacy plaintext, '' = none).
    */
   function makeService(user: Partial<User>) {
     const stored = { id: 'u1', ...user } as User;
     let gone = false;
     const save = jest.fn();
-    const update = jest.fn(async (_where: { id: string }, patch: Partial<User>) => {
-      if (gone) return { affected: 0 };
-      Object.assign(stored, patch);
-      return { affected: 1 };
-    });
-    const query = jest.fn(async (_sql: string, [, minted]: [string, string]) => {
+    const held = () => (gone ? '' : heldNotepad(stored));
+    const query = jest.fn(async (sql: string, params: string[]) => {
       if (gone) return [[], 0];
-      stored.notesKey = stored.notesKey ?? minted;
-      return [[{ notesKey: stored.notesKey }], 1];
+      if (sql.includes('COALESCE("notesKey"')) {
+        stored.notesKey = stored.notesKey ?? params[1];
+        return [[{ notesKey: stored.notesKey }], 1];
+      }
+      if (sql.includes('SET "notesCiphertext" = $2')) {
+        if (!held()) return [[], 0];
+        stored.notesCiphertext = params[1];
+        stored.notes = null;
+        return [[{ id: 'u1' }], 1];
+      }
+      if (sql.includes('"notesKey" = NULL')) {
+        if (held() !== params[1]) return [[], 0];
+        stored.notes = null;
+        stored.notesCiphertext = null;
+        stored.notesKey = null;
+        return [[{ id: 'u1' }], 1];
+      }
+      throw new Error(`unexpected statement: ${sql}`);
     });
-    const userRepository = {
-      findOne: jest.fn(async () => ({ ...stored })),
-      save,
-      update,
-      query,
-    } as unknown as Repository<User>;
+    const findOne = jest.fn(async () => (gone ? null : { ...stored }));
+    const userRepository = { findOne, save, query } as unknown as Repository<User>;
     const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, stored, save, update, query, erase: () => (gone = true) };
+    return { service, stored, save, query, findOne, erase: () => (gone = true) };
   }
 
   it('returns the ciphertext and hides the legacy plaintext once one exists', async () => {
@@ -106,18 +123,36 @@ describe('UsersService notepad', () => {
     });
   });
 
-  it('drops the plaintext when a ciphertext is saved - keeping it defeats the change', async () => {
-    const { service, stored, update, save } = makeService({ notes: 'my bank pin', admin: false });
+  it('answers NOTEPAD_MOVED to a read when no notepad is held', async () => {
+    const { service } = makeService({ notesCiphertext: '', notes: null });
+    await expect(service.getNotes('u1')).rejects.toBeInstanceOf(NotepadMovedException);
+    await expect(service.getNotes('u1')).rejects.toMatchObject({
+      response: { code: 'NOTEPAD_MOVED' },
+      status: 410,
+    });
+  });
+
+  it('drops the plaintext when a ciphertext is saved over a held notepad', async () => {
+    const { service, stored, query, save } = makeService({ notes: 'my bank pin', admin: false });
     await service.setNotes('u1', 'BBBB');
     expect(stored.notesCiphertext).toBe('BBBB');
     expect(stored.notes).toBeNull();
-    // The two notepad columns and nothing else: no other column can ride a notepad write.
-    expect(update).toHaveBeenCalledWith({ id: 'u1' }, { notesCiphertext: 'BBBB', notes: null });
+    // ONE statement, conditioned on a notepad still held, naming the two notepad columns only.
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain(`AND ${HELD_NOTEPAD_SQL} IS NOT NULL`);
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('creates no notepad: a save with none held is NOTEPAD_MOVED and writes nothing', async () => {
+    const { service, stored } = makeService({});
+    await expect(service.setNotes('u1', 'BBBB')).rejects.toBeInstanceOf(NotepadMovedException);
+    expect(stored.notesCiphertext).toBeUndefined();
+  });
+
   it('refuses a notepad write to a row that is gone, and writes nothing', async () => {
-    const { service, erase, save } = makeService({});
+    const { service, erase, findOne, save } = makeService({ notesCiphertext: 'AAAA' });
+    // Read before the erasure, written after it.
+    findOne.mockImplementationOnce(async () => ({ id: 'u1', notesCiphertext: 'AAAA' }) as User);
     erase();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     await expect(service.setNotes('u1', 'BBBB')).rejects.toBeInstanceOf(UserRowGoneError);
@@ -125,8 +160,8 @@ describe('UsersService notepad', () => {
     warn.mockRestore();
   });
 
-  it('generates a 32-byte hex key once, then returns the same one', async () => {
-    const { service, query, save } = makeService({});
+  it('generates a 32-byte hex key once for a held notepad, then returns the same one', async () => {
+    const { service, query, save } = makeService({ notes: 'legacy' });
     const key = await service.getOrCreateNotesKey('u1');
     expect(key).toMatch(/^[0-9a-f]{64}$/);
     expect(query).toHaveBeenCalledTimes(1);
@@ -138,12 +173,14 @@ describe('UsersService notepad', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('serves and mints no key when no notepad is held', async () => {
+    const { service, query } = makeService({ notesKey: 'k'.repeat(64) });
+    await expect(service.getOrCreateNotesKey('u1')).rejects.toBeInstanceOf(NotepadMovedException);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('answers the key another first call stored, not the one it minted', async () => {
-    const { service, stored } = makeService({});
-    const findOne = jest.spyOn(
-      (service as unknown as { userRepository: Repository<User> }).userRepository,
-      'findOne'
-    );
+    const { service, stored, findOne } = makeService({ notes: 'legacy' });
     // This call read the row before the other call's key landed.
     findOne.mockImplementationOnce(async () => {
       const answer = { ...stored };
@@ -155,11 +192,66 @@ describe('UsersService notepad', () => {
   });
 
   it('mints no key for a row that is gone', async () => {
-    const { service, erase } = makeService({});
+    const { service, erase, findOne } = makeService({ notes: 'legacy' });
+    findOne.mockImplementationOnce(async () => ({ id: 'u1', notes: 'legacy' }) as User);
     erase();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     await expect(service.getOrCreateNotesKey('u1')).rejects.toBeInstanceOf(UserRowGoneError);
     warn.mockRestore();
+  });
+
+  describe('the move into "Mes notes"', () => {
+    it('deletes the notepad, its legacy plaintext and its key when the digest names it', async () => {
+      const { service, stored } = makeService({ notesCiphertext: 'AAAA', notesKey: 'k' });
+      await service.moveNotes('u1', notepadDigest('AAAA'));
+      expect(stored.notesCiphertext).toBeNull();
+      expect(stored.notes).toBeNull();
+      expect(stored.notesKey).toBeNull();
+      // Every route has retired for this account now.
+      await expect(service.getNotes('u1')).rejects.toBeInstanceOf(NotepadMovedException);
+    });
+
+    it('moves a legacy plaintext notepad by the digest of the plaintext served', async () => {
+      const { service, stored } = makeService({ notes: 'written before encryption' });
+      await service.moveNotes('u1', notepadDigest('written before encryption'));
+      expect(stored.notes).toBeNull();
+    });
+
+    it('deletes nothing when the digest names another notepad (saved since its read)', async () => {
+      const { service, stored, query } = makeService({ notesCiphertext: 'NEWER' });
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await expect(service.moveNotes('u1', notepadDigest('OLDER'))).rejects.toMatchObject({
+        response: { code: 'NOTEPAD_CHANGED' },
+        status: 409,
+      });
+      expect(stored.notesCiphertext).toBe('NEWER');
+      expect(query).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('deletes nothing when a save lands between the read and the conditional delete', async () => {
+      const { service, stored, findOne } = makeService({ notesCiphertext: 'AAAA' });
+      // The mover's read sees AAAA; an older build's save lands before its statement runs.
+      findOne.mockImplementationOnce(async () => {
+        const answer = { ...stored };
+        stored.notesCiphertext = 'SAVED';
+        return answer;
+      });
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await expect(service.moveNotes('u1', notepadDigest('AAAA'))).rejects.toBeInstanceOf(
+        NotepadChangedException
+      );
+      expect(stored.notesCiphertext).toBe('SAVED');
+      warn.mockRestore();
+    });
+
+    it('answers NOTEPAD_MOVED to a second mover: another device moved it first', async () => {
+      const { service } = makeService({ notesCiphertext: 'AAAA' });
+      await service.moveNotes('u1', notepadDigest('AAAA'));
+      await expect(service.moveNotes('u1', notepadDigest('AAAA'))).rejects.toBeInstanceOf(
+        NotepadMovedException
+      );
+    });
   });
 });
 

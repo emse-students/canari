@@ -34,7 +34,7 @@ import type {
   PendingMutationReseal,
   PendingMutationWrite,
 } from './types';
-import { FeedPageUnreadableError, StoreWriteRefusedError } from './types';
+import { FeedPageUnreadableError, StoreWriteRefusedError, isPendingGroupExitKind } from './types';
 import {
   joinPendingMutation,
   pendingMessageTag,
@@ -2549,7 +2549,12 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction('pendingGroupExits', 'readonly');
       const req = tx.objectStore('pendingGroupExits').getAll();
       req.onsuccess = () =>
-        resolve((req.result as PendingGroupExit[]).sort((a, b) => a.requestedAt - b.requestedAt));
+        // Narrowed as SQLite narrows it (`isPendingGroupExitKind`): an unknown verb is kept, unrun.
+        resolve(
+          (req.result as PendingGroupExit[])
+            .filter((e) => isPendingGroupExitKind(e.kind))
+            .sort((a, b) => a.requestedAt - b.requestedAt)
+        );
       req.onerror = () => reject(req.error);
     });
   }
