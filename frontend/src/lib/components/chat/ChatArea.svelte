@@ -1537,9 +1537,14 @@
       readerInput?.declare();
       // Instant, never smooth: see `scrollMessageIntoList` for the anchor write that cancelled it.
       scrollMessageIntoList(chatContainer, targetElement);
-      targetElement.classList.add('chat-message-jump-highlight');
+      // The outline follows the BUBBLE's own corners, never the row (header, quote chip and
+      // reactions would be boxed in a rectangle). A row with no bubble - a system notice, a channel
+      // invite card - is its own shape, so it carries the outline itself.
+      const outlined =
+        targetElement.querySelector<HTMLElement>('[data-message-bubble]') ?? targetElement;
+      outlined.classList.add('chat-message-jump-highlight');
       setTimeout(() => {
-        targetElement.classList.remove('chat-message-jump-highlight');
+        outlined.classList.remove('chat-message-jump-highlight');
       }, 1800);
     }
   }

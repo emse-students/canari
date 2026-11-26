@@ -8318,3 +8318,17 @@ of the notepad entry point, and a way to delete the conversation.
 Tests: `selfConversation.test.ts`, `mlsDeliveryApi.selfKind.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
 `tabCommitDelegation.test.ts`. **Owed: a reading on both phones** - open "Mes notes" on one device,
 write, add a photo and a voice note, then read them on the account's second device.
+
+### The jump outline follows the bubble (2026-11-26)
+
+Owner, web desktop: a replied-to message reached by a jump was boxed in a pale accent RECTANGLE
+covering the "vous a repondu" header, the quoted chip and the bubble - *"le vrai contour, pas un
+rectangle moche"*. The cause: `navigateToMessage` put `chat-message-jump-highlight` (a `box-shadow`
+pulse, `app.css`) on the `msg-<id>` row, which wraps all of them. It is now put on the element marked
+`data-message-bubble` inside the row, so the shadow follows that element's own radius, the grouped
+corner variants of `getBubbleShapeClass` included. This is the ONE mechanism: jump to a reply, the
+pinned banner, the poll shortcut and a search hit all go through `navigateToMessage`. Decisions:
+the quoted chip is a second, separate bubble (`MessageReplyQuote`) and is not outlined; a bubble with no
+fill of its own (media alone, link card, poll, emoji) carries `rounded-bubble` so the shadow still has
+a corner; a row with no bubble (system notice, channel invite card) is its own shape and carries the
+class itself. The old `isHighlighted` ring prop of `MessageBubble` has no caller and was left alone.
