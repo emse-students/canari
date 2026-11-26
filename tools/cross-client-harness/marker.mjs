@@ -15,10 +15,12 @@
 const SUFFIX_VALUES = 36 ** 3;
 
 /**
- * The suffix counter of THIS process. It starts at a random value, so two processes minting in the same millisecond
- * land far apart, and it only ever moves forward, so two marks of one process never share a suffix until
- * `SUFFIX_VALUES` have been minted - which no millisecond holds. That is a guarantee, not a probability: the old
+ * The suffix counter of THIS process. It only ever moves forward, so two marks of one process never share a suffix
+ * until `SUFFIX_VALUES` have been minted - which no millisecond holds. That is a guarantee, not a probability: the old
  * `Math.random()` suffix collided on a same-millisecond pair once in 46656, and failed a CI gate for it.
+ * ACROSS processes it is still a probability, the same as before: each starts at an independent random value, so two
+ * processes minting the same id in the same millisecond share a suffix about once in 46656 (pairs per millisecond).
+ * The format leaves no room for a process tag (`markerStamp` strips exactly three characters).
  */
 let suffixCounter = crypto.getRandomValues(new Uint32Array(1))[0] % SUFFIX_VALUES;
 
