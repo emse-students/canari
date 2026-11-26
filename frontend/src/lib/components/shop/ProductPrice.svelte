@@ -34,10 +34,12 @@
     !gridRefuses(product) && (product.amountCents !== null || preferential !== null)
   );
   /** Why the reduced price applies: the linked sibling tier's name, or the plain cotisant wording. */
-  const reasonText = $derived(() => {
-    const tier = linkedTierName(product, siblings);
-    return tier ? m.shop_tier_upgrade_price_suffix({ tier }) : m.shop_member_price_suffix();
-  });
+  const linkedTier = $derived(linkedTierName(product, siblings));
+  const reasonText = $derived(
+    linkedTier
+      ? m.shop_tier_upgrade_price_suffix({ tier: linkedTier })
+      : m.shop_member_price_suffix()
+  );
 </script>
 
 <p class="flex flex-wrap items-baseline gap-x-2" data-product-price>
@@ -48,7 +50,7 @@
     >
     {#if preferential !== null}
       <span class="text-text-muted text-xs tabular-nums line-through" data-struck>{full}</span>
-      <span class="text-text-muted block text-xs" data-preferential-reason>{reasonText()}</span>
+      <span class="text-text-muted block text-xs" data-preferential-reason>{reasonText}</span>
     {:else if memberOffer !== null}
       <span class="text-text-muted block text-xs tabular-nums" data-member-offer>{memberOffer}</span
       >

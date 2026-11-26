@@ -70,6 +70,24 @@ export function formatAmountCents(
   }).format(cents / 100);
 }
 
+/**
+ * Maps a physical key to a keypad key, or `null` for any other key (Tab, Enter and the modified
+ * shortcuts stay the browser's). Both `,` and `.` are the decimal separator, a desktop keyboard
+ * having one or the other.
+ */
+export function amountKeyFromKeyboard(event: {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+}): AmountKey | null {
+  if (event.ctrlKey || event.metaKey || event.altKey) return null;
+  if (/^[0-9]$/.test(event.key)) return event.key as AmountKey;
+  if (event.key === ',' || event.key === '.') return ',';
+  if (event.key === 'Backspace') return 'back';
+  return null;
+}
+
 /** The currency's symbol in a locale (`EUR` is the euro sign), shown after the typed digits. */
 export function currencySymbol(currency: string, locale: string): string {
   return (
