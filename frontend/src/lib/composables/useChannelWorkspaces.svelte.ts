@@ -242,6 +242,9 @@ export type WorkspacePurgeContext = Pick<
 /** What may list the communities again after a listing gave up (`retryFailedListing`). */
 export type ListingRetryTrigger = 'reconnect' | 'foreground';
 
+/** The salon row fields a live event can change, and so the ones a listing must not overwrite with an older answer. */
+const HEARD_CHANNEL_FIELDS = ['name', 'canWrite', 'writePolicy'] as const;
+
 /** What started a listing: a direct call (post-login, a join), or a retry trigger. */
 type ListingOrigin = 'direct' | ListingRetryTrigger;
 
@@ -450,7 +453,7 @@ export function useChannelWorkspaces() {
       // predates it; drawing it back would resurrect what the member just saw go.
       const slug = workspaceSlugOf(workspace);
       if (slug !== null && removedSinceRequest(ctx, 'community', slug, epochAtRequest)) continue;
-      const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
+      const sidebarWorkspace = upsertWorkspaceFromDto(workspace, epochAtRequest);
       const workspaceId = sidebarWorkspace.workspaceDbId;
       if (!workspaceId) continue;
       validWorkspaceSlugs.add(sidebarWorkspace.id);
@@ -600,14 +603,18 @@ export function useChannelWorkspaces() {
         validChannelConversationIds.push(channelConversationId);
       }
       // THE LISTING'S OWN WRITE, not a live fact: it goes past the ledger.
-      upsertChannelRow(sidebarWorkspace.id, {
-        id: channelConversationId,
-        name: channel.name,
-        isPrivate,
-        hasAccess: viewerHasAccess,
-        canWrite: channel.viewerCanWrite !== false,
-        ...writeFieldsOf(channel),
-      });
+      upsertChannelRow(
+        sidebarWorkspace.id,
+        {
+          id: channelConversationId,
+          name: channel.name,
+          isPrivate,
+          hasAccess: viewerHasAccess,
+          canWrite: channel.viewerCanWrite !== false,
+          ...writeFieldsOf(channel),
+        },
+        epochAtRequest
+      );
 
       // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
       // every read path keys off, and this viewer may not read it. The sidebar row exists so the
@@ -1042,7 +1049,10 @@ export function useChannelWorkspaces() {
   }
 
   /** Inserts a new workspace sidebar entry or updates the matching one if it already exists. Returns the sidebar entry. */
-  function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
+  function upsertWorkspaceFromDto(
+    workspace: WorkspaceDto,
+    askedAt?: number
+  ): ChannelSidebarWorkspace {
     const workspaceId = workspace.id ?? workspace._id;
     const workspaceSlug =
       workspaceSlugOf(workspace) ?? `workspace-${crypto.randomUUID().slice(0, 8)}`;
@@ -1066,14 +1076,19 @@ export function useChannelWorkspaces() {
       if (!existing.avatarUserId) {
         existing.avatarUserId = workspace.name || workspaceSlug;
       }
-      if (workspace.imageMediaId !== undefined) existing.imageMediaId = workspace.imageMediaId;
-      if (workspace.viewerCanManage !== undefined)
+      // A FIELD HEARD LIVE AFTER THE LISTING WAS ASKED IS NEWER THAN THE LISTING'S ROW (a role change,
+      // a cover or history change): the answer predates it, so that field keeps the live value.
+      const heardAfter = (field: string) =>
+        askedAt !== undefined && ledger.fieldHeardSince(workspaceId, field, askedAt);
+      if (workspace.imageMediaId !== undefined && !heardAfter('imageMediaId'))
+        existing.imageMediaId = workspace.imageMediaId;
+      if (workspace.viewerCanManage !== undefined && !heardAfter('viewerCanManage'))
         existing.viewerCanManage = workspace.viewerCanManage;
-      if (workspace.viewerCanModerate !== undefined)
+      if (workspace.viewerCanModerate !== undefined && !heardAfter('viewerCanModerate'))
         existing.viewerCanModerate = workspace.viewerCanModerate;
-      if (workspace.viewerCanManageChannels !== undefined)
+      if (workspace.viewerCanManageChannels !== undefined && !heardAfter('viewerCanManageChannels'))
         existing.viewerCanManageChannels = workspace.viewerCanManageChannels;
-      if (workspace.historyVisibility !== undefined) {
+      if (workspace.historyVisibility !== undefined && !heardAfter('historyVisibility')) {
         existing.historyVisibility = adoptHistoryVisibility(
           workspaceId,
           workspace.historyVisibility
@@ -1123,15 +1138,28 @@ export function useChannelWorkspaces() {
    * This is the LISTING's write. Anything else that draws a salon - a creation here, an event heard
    * on the socket - goes through {@link addChannelToWorkspace}, which also dates it for the prune.
    */
-  function upsertChannelRow(workspaceSlug: string, channel: ChannelSidebarItem) {
+  function upsertChannelRow(workspaceSlug: string, channel: ChannelSidebarItem, askedAt?: number) {
     const idx = channelWorkspaces.findIndex((item) => item.id === workspaceSlug);
     if (idx === -1) return;
     const workspace = channelWorkspaces[idx];
     const at = workspace.channels.findIndex((item) => item.id === channel.id);
+    // A FIELD HEARD LIVE AFTER THE LISTING WAS ASKED (a rename, a write verdict) is newer than the
+    // listing's row: it is left out of the merge, so the older answer cannot overwrite it.
+    const answered: Partial<ChannelSidebarItem> = { ...channel };
+    if (at !== -1 && askedAt !== undefined) {
+      for (const field of HEARD_CHANNEL_FIELDS) {
+        if (ledger.fieldHeardSince(channel.id, field, askedAt)) {
+          delete answered[field];
+          console.info(
+            `[WORKSPACE-LOAD] kept ${field} of ${channel.id}: heard live after the listing was asked (tick ${askedAt})`
+          );
+        }
+      }
+    }
     const channels =
       at === -1
         ? [...workspace.channels, channel]
-        : workspace.channels.map((item, i) => (i === at ? { ...item, ...channel } : item));
+        : workspace.channels.map((item, i) => (i === at ? { ...item, ...answered } : item));
 
     channelWorkspaces = [
       ...channelWorkspaces.slice(0, idx),
@@ -2747,6 +2775,20 @@ export function useChannelWorkspaces() {
     permissions: string[];
   }) {
     const verdicts = event.canWriteByPolicy;
+    // DATED PER FIELD: a listing asked before this event carries the old role, and must not give a
+    // demoted administrator their controls back.
+    ledger.fieldHeard(event.workspaceId, 'viewerCanManage');
+    if (event.canManageChannels !== undefined)
+      ledger.fieldHeard(event.workspaceId, 'viewerCanManageChannels');
+    if (event.canModerate !== undefined) ledger.fieldHeard(event.workspaceId, 'viewerCanModerate');
+    if (verdicts) {
+      for (const ws of channelWorkspaces) {
+        if (ws.workspaceDbId !== event.workspaceId) continue;
+        for (const ch of ws.channels) {
+          if (ch.writePolicy) ledger.fieldHeard(ch.id, 'canWrite');
+        }
+      }
+    }
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {
@@ -2773,6 +2815,38 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Applies a `channel.updated` event to the sidebar row: a rename, a write verdict, a write policy,
+   * each only when the event carried it. Dated per field so a listing already in flight cannot
+   * overwrite it with its older answer.
+   */
+  function handleChannelUpdated(event: {
+    channelId: string;
+    name?: string;
+    viewerCanWrite?: boolean;
+    writePolicy?: ChannelWritePolicy;
+  }) {
+    const id = `channel_${event.channelId}`;
+    if (event.name) ledger.fieldHeard(id, 'name');
+    if (typeof event.viewerCanWrite === 'boolean') ledger.fieldHeard(id, 'canWrite');
+    if (event.writePolicy) ledger.fieldHeard(id, 'writePolicy');
+    channelWorkspaces = channelWorkspaces.map((ws) => ({
+      ...ws,
+      channels: ws.channels.map((ch) =>
+        ch.id === id
+          ? {
+              ...ch,
+              ...(event.name ? { name: event.name } : {}),
+              ...(typeof event.viewerCanWrite === 'boolean'
+                ? { canWrite: event.viewerCanWrite }
+                : {}),
+              ...(event.writePolicy ? { writePolicy: event.writePolicy } : {}),
+            }
+          : ch
+      ),
+    }));
+  }
+
+  /**
    * The server refused a post in this salon by its write policy: the row's `canWrite` was stale.
    * The refusal IS the server's verdict for this viewer, so the composer goes, replaced by the line
    * saying who may write - instead of offering again a control the next post would be refused by.
@@ -2781,6 +2855,8 @@ export function useChannelWorkspaces() {
     channelConversationId: string,
     policy: Exclude<ChannelWritePolicy, 'everyone'>
   ) {
+    ledger.fieldHeard(channelConversationId, 'canWrite');
+    ledger.fieldHeard(channelConversationId, 'writePolicy');
     channelWorkspaces = channelWorkspaces.map((ws) => ({
       ...ws,
       channels: ws.channels.map((ch) =>
@@ -2873,6 +2949,8 @@ export function useChannelWorkspaces() {
         )
       );
     }
+    if (event.imageMediaId !== undefined) ledger.fieldHeard(event.workspaceId, 'imageMediaId');
+    if (visibility !== undefined) ledger.fieldHeard(event.workspaceId, 'historyVisibility');
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {
@@ -2989,6 +3067,7 @@ export function useChannelWorkspaces() {
     setRoleLabel,
 
     handleWorkspaceUpdated,
+    handleChannelUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */
     handleWorkspaceDeleted,
     /** Applies an incoming real-time removal of THIS user from a community (admin kick). */

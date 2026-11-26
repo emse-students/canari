@@ -234,16 +234,15 @@ describe('the push half', () => {
     // The composition files a reaction on its own channel, without the message actions.
     const composer = kotlin.slice(kotlin.indexOf('internal fun Context.showReactionNotification('));
     expect(composer.slice(0, composer.indexOf('\n        }\n'))).toMatch(
-      /channel = CHANNEL_REACTIONS,\s*quickActions = false,\s*sentAt = reactionAt,\s*suppressInForeground = suppressInForeground,/
+      /channel = CHANNEL_REACTIONS,\s*quickActions = false,\s*sentAt = reactionAt,\s*senderId = actorId,\s*suppressInForeground = suppressInForeground,/
     );
   });
 
   it("Android: both triggers stamp the line with the reaction's own instant, so the second adds none", () => {
     // `alreadyPosted` matches a line by its stamp and only when it is > 0: a reaction stamped 0 on
     // either path would add a second line and alert twice (review of #3792).
-    expect(kotlin).toContain(
-      'val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }'
-    );
+    expect(kotlin).toContain('val alreadyPosted = sentAt > 0 && style.messages.any {');
+    expect(kotlin).toContain('it.timestamp == stamp && AlertedMessage.sameSender(');
     // The push: the `at` the server forwards from the reactor (`notify-reaction`).
     expect(kotlin).toContain('val reactionAt = data["at"]?.toLongOrNull() ?: 0L');
     // The frame: the `at` of its own `ReactionMsg`, handed down as `sentAt`.

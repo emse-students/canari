@@ -40,6 +40,14 @@ export interface ListingLedger {
    * which case the listing's answer is the truth about it.
    */
   learnedSince(key: string, askedAt: number): LiveFact | null;
+  /**
+   * Records that one FIELD of the row `key` was changed by a fact heard live (a rename, a role
+   * change, a cover or history change). Existence is a whole-row fact; this is the same ledger keyed
+   * per (row, field), so a listing answer older than the change cannot overwrite just that field.
+   */
+  fieldHeard(key: string, field: string): void;
+  /** Whether `field` of `key` was heard changed after a listing asked at `askedAt`. */
+  fieldHeardSince(key: string, field: string, askedAt: number): boolean;
 }
 
 /** Creates an empty ledger at tick 0. */
@@ -47,6 +55,7 @@ export function createListingLedger(): ListingLedger {
   let tick = 0;
   // A plain Map, never reactive: nothing draws it, and only the prune reads it.
   const facts = new Map<string, { fact: LiveFact; tick: number }>();
+  const fieldFacts = new Map<string, number>();
   const record = (key: string, fact: LiveFact) => {
     tick += 1;
     facts.set(key, { fact, tick });
@@ -60,6 +69,14 @@ export function createListingLedger(): ListingLedger {
     learnedSince(key, askedAt) {
       const entry = facts.get(key);
       return entry !== undefined && entry.tick > askedAt ? entry.fact : null;
+    },
+    fieldHeard(key, field) {
+      tick += 1;
+      fieldFacts.set(`${key}|${field}`, tick);
+    },
+    fieldHeardSince(key, field, askedAt) {
+      const at = fieldFacts.get(`${key}|${field}`);
+      return at !== undefined && at > askedAt;
     },
   };
 }

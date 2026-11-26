@@ -38,7 +38,7 @@
 
 use std::path::Path;
 
-use crate::native_cache::{exclude_from_backup, open_file, seal_file, CacheKey, Opened, Purpose};
+use crate::native_cache::{open_file, seal_file, CacheKey, Opened, Purpose};
 
 /// The ledger file in the App Group store.
 pub const ANNOUNCED_FILE: &str = "announced_messages.json";
@@ -264,8 +264,6 @@ pub fn with_ledger<R>(
         let tmp = dir.join(format!("{ANNOUNCED_FILE}.tmp"));
         std::fs::write(&tmp, sealed).map_err(|e| format!("write {ANNOUNCED_FILE}.tmp: {e}"))?;
         std::fs::rename(&tmp, &path).map_err(|e| format!("rename over {ANNOUNCED_FILE}: {e}"))?;
-        // A new inode: the backup exclusion does not travel with the name.
-        exclude_from_backup(&path);
     }
     // `lock` is released when it drops here, after the rename.
     drop(lock);

@@ -49,6 +49,8 @@ async function open() {
   await tick();
 }
 
+const pill = () =>
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Mode de la partie"]')!;
 const bulb = () => document.querySelector<HTMLButtonElement>('button[aria-label="Indice"]');
 const cell = (i: number) => document.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)!;
 const lit = () => [...document.querySelectorAll<HTMLElement>('[data-hint]')];
@@ -76,6 +78,7 @@ describe('MinesweeperModal - the bulb', () => {
       seed: '8601e326fcef5ef936a1c69d6ab6ac41',
       generatorVersion: 2,
     });
+    localStorage.setItem('canari.minesweeper.unranked', '0');
     await open();
     expect(bulb()).toBeNull();
     await firstDig();
@@ -84,11 +87,13 @@ describe('MinesweeperModal - the bulb', () => {
     expect(findHint).not.toHaveBeenCalled();
   });
 
-  it('offers the bulb unranked once dug (the level picker holds its place before), then lights the numbers it names', async () => {
+  it('offers the bulb unranked, dimmed until there is a board to read, then lights the numbers it names', async () => {
     localStorage.setItem('canari.minesweeper.unranked', '1');
     await open();
-    expect(bulb()).toBeNull();
+    // Beside the mode pastille from the start, but with nothing to read before the first dig.
+    expect(bulb()!.disabled).toBe(true);
     await firstDig();
+    expect(bulb()!.disabled).toBe(false);
     findHint.mockReturnValue({ kind: 'numbers', tier: 'single', cells: [0] });
     bulb()!.click();
     flushSync();
@@ -124,22 +129,22 @@ describe('MinesweeperModal - the bulb', () => {
     expect(status.textContent).toContain("Aucun coup sûr n'a été trouvé.");
   });
 
-  it('locks the ranked/Libre toggle while the first dig waits for its challenge', async () => {
+  it('locks the mode pastille while the first dig waits for its challenge', async () => {
     let answer: (value: unknown) => void = () => {};
     startChallenge.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    localStorage.setItem('canari.minesweeper.unranked', '0');
     await open();
-    const toggle = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-      (b) => b.textContent?.trim() === 'Classé'
-    )!;
-    expect(toggle.disabled).toBe(false);
+    expect(pill().disabled).toBe(false);
     cell(0).click();
     flushSync();
     await tick();
     expect(startChallenge).toHaveBeenCalledOnce();
-    expect(toggle.disabled).toBe(true);
-    toggle.click();
+    expect(pill().disabled).toBe(true);
+    pill().click();
     flushSync();
-    expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
+    // The sheet did not open and nothing was written: the mode is being decided.
+    expect(document.querySelectorAll('[data-mode]')).toHaveLength(0);
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('0');
     answer({ challengeId: 'c1', seed: '8601e326fcef5ef936a1c69d6ab6ac41', generatorVersion: 2 });
     await firstDig();
   });

@@ -25,12 +25,8 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   Interim decision owed after the stable: show the unverified mark on system rows
   (`ChatMessageGroups.svelte` system branch) or not. Do not lower the log level; split the count
   into notices and messages.
-- **Two flaky unit tests** (they pass alone, fail in the full parallel run, with or without recent
-  changes): `ChatArea.entryWindow.svelte.test.ts` ("never mounts more than the 20-row entry frame")
-  and `outbox.reelResume` ("KILL MID-UPLOAD"). Find the shared-state or ordering cause; a flaky gate is
-  a gate nobody believes.
 - **The rig's volume lines and its own probes** (JOIN_*, WELCOME_REQ, DISCOVERY, 409/400/403 probes,
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
-**Plan (batch 13, 2026-11-11) - four separate pieces, none a one-line fix.** (a) The past-epoch WARN (`mls-core/src/messaging.rs`): log at INFO, once, when the frame's epoch is below the epoch this member joined at - needs that join epoch kept in the group state, so native and WASM work with its Rust tests. (b) The unverified restored notices belong to the Graine v2 authorship item (P2) and the device-local rows entry; nothing to do here beyond those. (c) The two flaky tests (`ChatArea.entryWindow.svelte.test.ts`, `outbox.reelResume.test.ts`, both still present): reproduce in the full parallel run and find the shared state - small once reproduced. (d) The rig allowlist of its own probe lines: one harness PR. (c) and (d) can be done in the queue; (a) needs an agent.
+**Plan (batch 13, 2026-11-11) - four separate pieces, none a one-line fix.** (a) The past-epoch WARN (`mls-core/src/messaging.rs`): log at INFO, once, when the frame's epoch is below the epoch this member joined at - needs that join epoch kept in the group state, so native and WASM work with its Rust tests. (b) The unverified restored notices belong to the Graine v2 authorship item (P2) and the device-local rows entry; nothing to do here beyond those. (c) The two flaky tests: done (`outbox.reelResume` on 2026-11-02, `ChatArea.entryWindow` on 2026-11-26, both the load class of [test-suite-reform](../test-suite-reform.md)). (d) The rig allowlist of its own probe lines: one harness PR. (d) can be done in the queue; (a) needs an agent.

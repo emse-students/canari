@@ -688,9 +688,7 @@ final class ShareCapture {
             return false
         }
         if rename(staging.path, target) == 0 {
-            // Per file and after every write: the rename is a new inode, which does not carry the
-            // flag. The manifest holds the shared text, and the App Group is backed up.
-            excludeFromBackup(URL(fileURLWithPath: target))
+            // No per-file flag: the manifest lands in the flagged App Group store (`storeDir`).
             return true
         }
         log.error("[CanariShare] the share manifest could not be renamed into place: errno \(errno)")
@@ -707,9 +705,8 @@ final class ShareCapture {
         }
     }
 
-    /// Keeps a share file or the inbox out of iCloud and computer backups - the NSE's
-    /// `excludeFromBackup`, the same three calls - and the App Group store when this extension is
-    /// the one that creates it (`storeDir`); the app reads that flag back at every launch
+    /// Keeps the inbox directory and the App Group store out of iCloud and computer backups, the
+    /// store when this extension is the one that creates it (`storeDir`); the app reads that flag back at every launch
     /// (`backup_exclusion.rs`, since 1.7.2). A failure is said with its error's domain and code,
     /// never its text, and changes nothing else.
     private func excludeFromBackup(_ url: URL) {

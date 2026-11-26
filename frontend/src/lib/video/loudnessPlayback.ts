@@ -3,7 +3,8 @@
  * measurement the author's device made at send (`loudnessMeter.ts`, `MediaRef.loudness`).
  *
  * THE LAW ({@link loudnessGainDb}), toward {@link LOUDNESS_TARGET_LUFS} (-14 LUFS, YouTube's and
- * Spotify's reference):
+ * Spotify's reference). A VOICE NOTE HAS ITS OWN ({@link VOICE_NOTE_LOUDNESS_LAW}: -16 LUFS, a
+ * raise of at most +12 dB, owner 2026-11-22), the same shape with two other numbers:
  *
  * - a loud video is LOWERED by what it is over the target, without floor;
  * - a quiet one is RAISED, by at most {@link MAX_BOOST_DB} (+6 dB), and never so far that its
@@ -70,6 +71,30 @@ import { isMediaLoudness, type MediaLoudness } from './loudnessMeter';
 export const LOUDNESS_TARGET_LUFS = -14;
 /** The most a quiet video is raised. */
 export const MAX_BOOST_DB = 6;
+
+/** One playback law's two numbers: where it aims, and the most it ever raises. */
+export interface LoudnessLaw {
+  /** The integrated loudness the law brings a measured source toward. */
+  readonly targetLufs: number;
+  /** The most a quiet source is raised, in dB. */
+  readonly maxBoostDb: number;
+}
+
+/** The law of every video: -14 LUFS, a raise of at most +6 dB (owner, 2026-11-11). */
+export const VIDEO_LOUDNESS_LAW: LoudnessLaw = {
+  targetLufs: LOUDNESS_TARGET_LUFS,
+  maxBoostDb: MAX_BOOST_DB,
+};
+
+/**
+ * THE LAW OF A VOICE NOTE: -16 LUFS, a raise of at most +12 dB (owner, 2026-11-22,
+ * docs/wiki/decisions/owner-decisions-of-2026-11-22.md item 6; charter principle 2, a heard message
+ * is never lost). A note is one voice, often quiet, played beside music and video at another level:
+ * a whisper is lifted twice as far as a video may be, and never turned into noise - the cap and the
+ * peak clamp both hold. The measurement it reads is the one made at the recording
+ * (`recordingLoudness.ts`) and carried in `MediaRef.loudness`; nothing is measured at play.
+ */
+export const VOICE_NOTE_LOUDNESS_LAW: LoudnessLaw = { targetLufs: -16, maxBoostDb: 12 };
 /** Where a raise stops, measured against the video's sample peak. */
 export const PEAK_CEILING_DBFS = -1;
 /** A gain this close to 0 dB is not applied: no audible difference, no graph. */
@@ -79,12 +104,15 @@ export const GAIN_DEADBAND_DB = 0.5;
  * The gain, in dB, that brings `loudness` to the target under the law above; 0 for no measurement
  * (an old video), for a measurement a reader cannot trust, and inside the dead band.
  */
-export function loudnessGainDb(loudness: MediaLoudness | null | undefined): number {
+export function loudnessGainDb(
+  loudness: MediaLoudness | null | undefined,
+  law: LoudnessLaw = VIDEO_LOUDNESS_LAW
+): number {
   if (!isMediaLoudness(loudness)) return 0;
-  let gain = LOUDNESS_TARGET_LUFS - loudness.integratedLufs;
+  let gain = law.targetLufs - loudness.integratedLufs;
   if (gain > 0) {
     const headroom = Math.max(0, PEAK_CEILING_DBFS - loudness.samplePeakDbfs);
-    gain = Math.min(gain, MAX_BOOST_DB, headroom);
+    gain = Math.min(gain, law.maxBoostDb, headroom);
   }
   return Math.abs(gain) < GAIN_DEADBAND_DB ? 0 : gain;
 }
@@ -113,6 +141,14 @@ export interface LoudnessEnvironment {
    * unmute over an unmeasured reel, a refused `play()`) would otherwise stay running for ever.
    */
   onScreenChange(onChange: (onScreen: boolean) => void): () => void;
+}
+
+/** What an element's wiring is attached with. */
+export interface LoudnessAttachOptions {
+  /** Its source is a MediaSource. */
+  streamed: boolean;
+  /** The law its gain follows; a video's when absent. */
+  law?: LoudnessLaw;
 }
 
 /** A video's loudness wiring, for as long as its element is mounted. */
@@ -176,8 +212,13 @@ export class LoudnessAudio {
   constructor(readonly env: LoudnessEnvironment) {}
 
   /** Starts the wiring of `video`; `streamed` says its source is a MediaSource. */
-  attach(video: HTMLMediaElement, options: { streamed: boolean }): LoudnessHandle {
-    return new RouteHandle(this, video, options.streamed && this.env.isWebKit());
+  attach(video: HTMLMediaElement, options: LoudnessAttachOptions): LoudnessHandle {
+    return new RouteHandle(
+      this,
+      video,
+      options.streamed && this.env.isWebKit(),
+      options.law ?? VIDEO_LOUDNESS_LAW
+    );
   }
 
   /** The unmute gesture, for every handle that wants a route: the context resumed INSIDE it. */
@@ -340,7 +381,9 @@ class RouteHandle implements LoudnessHandle {
     readonly audio: LoudnessAudio,
     readonly video: HTMLMediaElement,
     /** A MediaSource element on WebKit: never routed (see the module comment). */
-    readonly webkitStream: boolean
+    readonly webkitStream: boolean,
+    /** The law this element's gain follows. */
+    readonly law: LoudnessLaw
   ) {
     video.addEventListener('volumechange', this.#ensure);
     video.addEventListener('play', this.#onPlay);
@@ -350,7 +393,7 @@ class RouteHandle implements LoudnessHandle {
 
   setLoudness(loudness: MediaLoudness | null | undefined): void {
     if (this.#disposed) return;
-    this.#gainDb = loudnessGainDb(loudness);
+    this.#gainDb = loudnessGainDb(loudness, this.law);
     this.#measured = isMediaLoudness(loudness);
     const factor = dbToGain(this.#gainDb);
     if (this.#gainNode) {

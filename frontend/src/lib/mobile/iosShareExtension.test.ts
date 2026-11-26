@@ -332,12 +332,10 @@ describe('a waiting share at rest and in the logs', () => {
     return source.slice(from, source.indexOf(end, from + start.length));
   }
 
-  it('keeps both iOS manifests and the App Group inbox out of backups, and never flags the root', () => {
+  it('keeps the App Group inbox out of backups, flags no manifest file, and never flags the root', () => {
     const swiftWrite = body(swiftCapture, 'private func writePending(', 'private func deleteDir(');
-    // After the rename: the rename is a new inode, and the flag does not travel with the name.
-    expect(swiftWrite.indexOf('excludeFromBackup(URL(fileURLWithPath: target))')).toBeGreaterThan(
-      swiftWrite.indexOf('rename(staging.path, target) == 0')
-    );
+    // No per-file flag: the manifest lands in the flagged store, and a rename keeps the parent's.
+    expect(swiftWrite).not.toContain('excludeFromBackup');
     expect(swiftCapture).toContain('values.isExcludedFromBackup = true');
     const captureBody = body(swiftCapture, 'private func captureLocked(', 'static func isSafeId(');
     expect(captureBody).toContain('excludeFromBackup(inbox)');
@@ -350,9 +348,7 @@ describe('a waiting share at rest and in the logs', () => {
     expect(launchPass).toContain('label: APP_GROUP_LABEL,');
 
     const rustWrite = body(rustGroup, 'fn write_pending(', 'fn delete_share_dir(');
-    expect(rustWrite.indexOf('native_cache::exclude_from_backup(&target)')).toBeGreaterThan(
-      rustWrite.indexOf('std::fs::rename(&staging, &target)')
-    );
+    expect(rustWrite).not.toContain('exclude_from_backup');
   });
 
   it('bounds the text a share keeps, and counts what passes the bound as refused', () => {

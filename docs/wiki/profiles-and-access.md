@@ -1506,8 +1506,13 @@ the republication kinds; `coorganise` has none, so its next lock is the proposal
   missing source reopens the cycle for its rows. `FOR NO KEY UPDATE` conflicts with the delete's
   `FOR UPDATE`, is the lock the `createdBy` update takes anyway, and does not block a decision's
   `KEY SHARE`. Id order keeps two erasures apart too.
-- Two deletes of associations that co-organise each other's events can still deadlock. This is
-  older than both fixes and is a P3 in [backlog](backlog.md).
+- Two deletes of associations that co-organise each other's events used to deadlock: each held
+  only its own row while its events' trigger and its row's cascade reached the other's co-owner
+  rows. `AssociationsService.remove` now locks the association AND every association its
+  co-organisation reaches (co-owner rows and `coorganise` proposals, both directions) `FOR UPDATE`
+  in id order, in one statement (`association-delete-lock.ts`), so two such deletes queue. A
+  witness case in `coorganisation.integration.spec.ts` shows the single-row lock crossing (`40P01`)
+  and the ordered lock completing both.
 - A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit. The key is
   the primary key AND every unique column, so a write of `slug` (unique) waits behind an in-flight
   decision, as a delete does.

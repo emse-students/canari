@@ -131,11 +131,9 @@ describe('iOS: one notification per message, whichever process draws it', () => 
       'let _background = crate::app_group::BackgroundTime::begin(c"canari-announced-ledger");'
     );
     expect(writer.indexOf('BackgroundTime::begin')).toBeLessThan(writer.indexOf('lock_exclusive'));
-    // Review of #3968, S4: sealed through native_cache, and re-excluded after its atomic write.
+    // Review of #3968, S4: sealed through native_cache; no per-file backup flag (the directory's).
     expect(writer).toContain('seal_file(key, Purpose::AnnouncedLedger, &plain)');
-    expect(writer).toMatch(
-      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*exclude_from_backup\(&path\);/
-    );
+    expect(writer).not.toContain('exclude_from_backup');
     expect(announcedRs).not.toMatch(/serde_json::from_slice\(&bytes\)/);
   });
 

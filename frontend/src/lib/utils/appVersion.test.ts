@@ -7,9 +7,8 @@ vi.mock('$lib/utils/openExternal', () => ({
 }));
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => nativeRuntime.os }));
 
+import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/mobile/storeUrls';
 import {
-  APP_STORE_URL,
-  PLAY_STORE_URL,
   buildAppVersionCheckResult,
   buildUpdateTarget,
   compareSemver,

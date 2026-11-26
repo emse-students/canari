@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  amountKeyFromKeyboard,
   applyAmountKey,
   bufferToCents,
   centsToBuffer,
@@ -64,5 +65,20 @@ describe('formatting', () => {
     expect(formatBuffer('12,5', 'en')).toBe('12.5');
     expect(formatBuffer('', 'fr')).toBe('0');
     expect(decimalSeparator('fr')).toBe(',');
+  });
+});
+
+describe('amountKeyFromKeyboard', () => {
+  it('maps digits, both separators and Backspace', () => {
+    expect(amountKeyFromKeyboard({ key: '7' })).toBe('7');
+    expect(amountKeyFromKeyboard({ key: ',' })).toBe(',');
+    expect(amountKeyFromKeyboard({ key: '.' })).toBe(',');
+    expect(amountKeyFromKeyboard({ key: 'Backspace' })).toBe('back');
+  });
+  it('leaves every other key and every shortcut to the browser', () => {
+    expect(amountKeyFromKeyboard({ key: 'Tab' })).toBeNull();
+    expect(amountKeyFromKeyboard({ key: 'a' })).toBeNull();
+    expect(amountKeyFromKeyboard({ key: '1', ctrlKey: true })).toBeNull();
+    expect(amountKeyFromKeyboard({ key: '1', metaKey: true })).toBeNull();
   });
 });

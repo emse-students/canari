@@ -218,6 +218,43 @@ describe('one salon, one page in flight', () => {
   });
 });
 
+describe('a declaration for another salon does not split a load', () => {
+  it('a second load of this salon still joins when a NEIGHBOUR was declared stale meanwhile', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const ctx = makeCtx();
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx, { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    convs.invalidateChannelHistoryCache('channel_other');
+    const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    release([{ id: 'm1' }]);
+    await Promise.all([first, second]);
+
+    expect(listMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('negative control: a declaration for THIS salon after the request left is not joined', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const ctx = makeCtx();
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    convs.invalidateChannelHistoryCache(SALON);
+    const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
+    release([{ id: 'old' }]);
+    await Promise.all([first, second]);
+
+    expect(listMessages).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('a press joining a load started in the background', () => {
   it('still shows the skeleton, and lowers it when the joined page is in', async () => {
     const convs = useConversations();

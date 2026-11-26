@@ -105,3 +105,21 @@ export function arrivalVerdictNow(
     seen: canSeeArrivalNow(conversationKey, selectedConversationKey),
   };
 }
+
+/**
+ * Whether the "read" trill is owed for a read mark that just advanced in `conversationKey`: only
+ * when ANOTHER user read my message AND this device is READING that conversation now
+ * ({@link isReadingConversationNow}, the predicate behind "read on arrival"). The read avatar is
+ * drawn under a message in the thread, so a list that merely shows the row is not enough, and the
+ * bare selection is not a screen: it stays set after the reader leaves the chat route, so asking
+ * it alone chirped over a feed or a profile.
+ */
+export function readToneOwed(
+  readerId: string,
+  myUserId: string | null | undefined,
+  conversationKey: string,
+  selectedConversationKey: string | null | undefined
+): boolean {
+  if (readerId === myUserId) return false;
+  return isReadingConversationNow(conversationKey, selectedConversationKey);
+}

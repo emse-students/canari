@@ -1,4 +1,5 @@
 import { AssociationsService } from './associations.service';
+import { LOCK_ASSOCIATIONS_REACHED_BY_COORGANISATION_SQL } from './association-delete-lock';
 import { Association } from './entities/association.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
 import { AssociationMember } from './entities/association-member.entity';
@@ -114,13 +115,13 @@ describe('AssociationsService.remove - the forms go with the association', () =>
     expect(retireForms).toHaveBeenCalledWith(manager, { associationId: 'asso-1' });
   });
 
-  it('locks the association FOR UPDATE before it deletes anything (the proposals lock order)', async () => {
+  it('locks the association and every one its co-organisation reaches FOR UPDATE, in id order, before it deletes anything', async () => {
     const { service, manager } = makeService();
 
     await service.remove('asso-1', 'admin-1', true);
 
-    const lock = manager.query.mock.calls.findIndex(([sql]) =>
-      sql.endsWith('FROM associations WHERE id = $1 FOR UPDATE')
+    const lock = manager.query.mock.calls.findIndex(
+      ([sql]) => sql === LOCK_ASSOCIATIONS_REACHED_BY_COORGANISATION_SQL
     );
     expect(lock).toBeGreaterThan(-1);
     expect(manager.query.mock.calls[lock][1]).toEqual(['asso-1']);
