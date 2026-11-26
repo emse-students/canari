@@ -918,9 +918,9 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   when held), and m1 is never shown again.
 - **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
   the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
-  watermark. Answering is reading, so the peer lines its watermark covers go and the reaction goes - but a line of
-  ANOTHER reply still queued stays, the banner rebuilt silently with only those (round-10 review,
-  principle 2: answering r2 never erases r0's "not sent yet"). `handleReply` runs it when THIS reply
+  watermark. Answering is reading, so the peer lines its watermark covers are READ and the reaction goes - but a line of
+  ANOTHER reply still queued keeps the banner up (round-10 review, principle 2: answering r2 never
+  erases r0's "not sent yet"), and a banner that stays keeps its history (below). `handleReply` runs it when THIS reply
   went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart on a Mi
   9T). The reply is AWAITED before its entry is queued (`AwaitedReplies`, its own leaf lock), and a
   drain records the delivery AT THE SEND, still holding the outbox lock - so every drain taking that
@@ -995,10 +995,19 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
     is cancelled; still held, it is re-posted empty and recorded under its conversation.
 
-  What the answer shows (round-12, S-b) is posted the standard way: the lines that stay (newer than
-  the watermark, or another reply still queued), then the answer as this account's own line
-  (`answerLine`, `LINE_OWN`). Every read covers that line. The record holds exactly what is shown. A
-  held banner with nothing else left shows the answer alone and is `KEPT_UNTIL_READ`. A swipe of it
+  What the answer shows (round-12, S-b) is posted the standard way: **the conversation's history -
+  the message answered included, read or not - then the answer as this account's own line**
+  (`answerLine`, `LINE_OWN`), bounded to `MAX_NOTIF_MESSAGES`, the newest kept. Only this reply's own
+  pending line goes (the answer stands for it). Every read covers the answer, and the watermark covers
+  the lines answered, so they never keep the banner up: whether it stays is decided by an unread line
+  (newer than the watermark, or another reply still queued) or the platform's hold. The record holds
+  exactly what is shown. A held banner with nothing unread is `KEPT_UNTIL_READ` and shows the
+  messages answered with "Vous" under them. **Until 2026-11-26 it showed the answer ALONE** - "Vous"
+  over nothing, the message answered gone from the notification (owner, Android 16): every messaging
+  app keeps the line above the reply. Pinned by `ReadElsewhereMarksTest` (the held banner keeps the
+  messages above the answer, the bound, and a dismissed banner resurrecting nothing). A reply to a
+  banner already dismissed or removed by this process draws nothing - no history comes back for a
+  conversation the user put away - and its watermark is still recorded. A swipe of it
   forgets it, so the next peer message alerts with only that message. A banner whose remaining
   lines are all own answers counts as empty wherever lines are weighed (round 13). A delivery of r0
   next to "Vous: r2" removes the banner instead of leaving the answer alone.

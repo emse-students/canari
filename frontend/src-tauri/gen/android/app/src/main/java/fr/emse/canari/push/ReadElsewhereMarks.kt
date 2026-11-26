@@ -379,18 +379,26 @@ class ReadElsewhereMarks<M>(
     /**
      * Quick reply [messageId] was ANSWERED - delivered while its handler ran: the user answered from
      * the banner, and answering is reading UP TO WHAT THE BANNER SHOWED. [watermark] - the instants
-     * the reply's own read watermark announces - is recorded as a mark, and a peer line goes only
-     * when that mark covers it: a message that arrived while the reply was being sent is newer than
-     * the watermark and stays (round-11 review, principle 2). This reply's own pending line and any
-     * earlier answer go; ANOTHER reply's pending line - one still queued - stays.
+     * the reply's own read watermark announces - is recorded as a mark, so every peer line it covers
+     * is READ from now on (a later read weighs it as covered); a message that arrived while the reply
+     * was being sent is newer than the watermark and stays unread (round-11 review, principle 2).
      *
-     * What the banner then shows is posted the standard way, silently ([repost]): the lines that
-     * stay, then the answer as this account's own line ([ownLine], covered by any read) - and the
-     * record holds exactly that. With no line staying, the banner is cancelled instead - unless the
-     * platform [holds] it (Android 15+, answered inline: a cancel would be dropped, see the class
-     * comment), when the update with the answer alone is what ends the hold and it stays recorded
-     * ([Delivery.KEPT_UNTIL_READ]) for the next event. With no banner known, [stableId] is
-     * cancelled. All in one critical section with the record.
+     * THE CONVERSATION KEEPS ITS HISTORY (owner, 2026-11-26): a banner that stays shows the lines it
+     * showed - the message answered included, read or not - then the answer as this account's own
+     * line ([ownLine], covered by any read), like every messaging app. Only this reply's own pending
+     * line goes (the answer stands for it); an earlier answer, and ANOTHER reply's pending line still
+     * queued, stay. At most [maxLines] lines are drawn, the newest - the bound every post applies.
+     * Re-posting the answer ALONE, which is what this did until then, showed "Vous" over nothing on
+     * the Android 15+ banner the platform holds after an inline answer: the message answered was gone.
+     *
+     * What stays is posted the standard way, silently ([repost]), and the record holds exactly that.
+     * With nothing UNREAD left (every peer line covered, no other reply pending) the banner is
+     * cancelled instead - unless the platform [holds] it (Android 15+, answered inline: a cancel would
+     * be dropped, see the class comment), when the update with the history and the answer is what
+     * ends the hold and it stays recorded ([Delivery.KEPT_UNTIL_READ]) for the next event. With no
+     * banner known - dismissed, or removed by this process - nothing is drawn: no history is
+     * resurrected for a conversation the user put away, and [stableId] is cancelled. All in one
+     * critical section with the record.
      */
     fun answerReply(
         conversationId: String,
@@ -402,6 +410,7 @@ class ReadElsewhereMarks<M>(
         ownLine: (held: Banner<M>) -> M?,
         repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
+        maxLines: Int,
     ): Delivery = synchronized(lock) {
         watermark.forEach { recordLocked(conversationId, it) }
         val banner = bannerOfLocked(conversationId, shade)
@@ -409,21 +418,20 @@ class ReadElsewhereMarks<M>(
             if (stableId != null) cancelUnlessHeldUnknownLocked(stableId, holds, cancel)
             return@synchronized Delivery.NONE
         }
-        val kept = banner.messages.filter {
+        // The history the banner showed, without this reply's own pending line: the answer replaces it.
+        val history = banner.messages.filterNot { lineOf(it).pendingReplyId == messageId }
+        // What keeps the banner up: a peer line the watermark does not cover, or another reply queued.
+        val unread = history.any {
             val line = lineOf(it)
-            when {
-                line.own -> false
-                line.pendingReply -> line.pendingReplyId != messageId
-                else -> !coversLocked(conversationId, line.sentAt, line.serverAt)
-            }
+            !line.own && (line.pendingReply || !coversLocked(conversationId, line.sentAt, line.serverAt))
         }
         val held = holds(banner.notifId)
-        if (onlyOwnLocked(kept) && !held) {
+        if (!unread && !held) {
             cancel(banner.notifId)
             withdrawnLocked(conversationId)
             return@synchronized Delivery.CANCELLED
         }
-        val shown = kept + listOfNotNull(ownLine(banner))
+        val shown = (history + listOfNotNull(ownLine(banner))).takeLast(maxLines)
         if (shown.isEmpty()) {
             // Held (an unheld one was cancelled above), and nothing to show: re-posted EMPTY, kept.
             // The `held` already read decides - the platform is not asked twice.
