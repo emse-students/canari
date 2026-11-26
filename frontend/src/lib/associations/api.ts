@@ -2846,7 +2846,7 @@ export interface WebhookDelivery {
   lastName: string | null;
   amountCents: number;
   paymentIntentId: string;
-  status: 'pending' | 'delivered' | 'failed';
+  status: 'pending' | 'delivered' | 'parked' | 'failed';
   /** Total sends, across the initial dispatch and every retry since. */
   attemptCount: number;
   autoRetryCount: number;

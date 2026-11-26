@@ -26,6 +26,7 @@
   import { holdRestoredText } from '$lib/utils/chat/editSession.svelte';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppActive, onAppActiveChange, onAppScreenChange } from '$lib/utils/appForeground';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     ATTENTION_WINDOW_MS,
@@ -832,7 +833,9 @@
     // the app coming back to the foreground on an open conversation runs this effect again and marks
     // what landed while it was away - read as a bare global, nothing re-ran it (owner, 2026-11-02).
     // AND A PERSON AT THE WINDOW (owner, 2026-11-11): see `windowReadVerdict` and the `idle` branch
-    // below, where a withheld mark is reported.
+    // below, where a withheld mark is reported. On a phone the two document terms are not asked at
+    // all: the iPhone's WebView answers `hasFocus()` false until a touch, which withheld the read of
+    // a conversation landed from a banner tap (`windowReadVerdict`).
     const verdict = windowReadVerdict({
       focused: isWindowFocused,
       visible: isTabVisible,
@@ -840,6 +843,7 @@
       // re-runs this effect - the global read would leave it stale until something else ran it.
       foreground: appForeground.current && appActive,
       attentive: windowAttention.attentive,
+      nativeMobile: isMobileTauriRuntime(),
     });
     if (verdict === 'away') {
       openedDismissal.reset();
