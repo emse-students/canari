@@ -1329,11 +1329,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /**
          * THE BANNER SIDE OF A QUICK REPLY'S SUCCESS ([ReadElsewhereMarks.answerReply]): the user
-         * answered from it, so what the watermark ([notifiedAt], [notifiedServerAt]) covers goes -
-         * but a line newer than it, or of ANOTHER reply still queued, stays. What stays is posted
-         * silently the standard way, with the answer ([replyText]) as this account's own line -
-         * and that alone when the platform holds the banner after the inline answer, which the
-         * update releases ([holdsDirectReply]); it stays recorded for the next read. Its reaction
+         * answered from it, so what the watermark ([notifiedAt], [notifiedServerAt]) covers is read -
+         * and a line newer than it, or of ANOTHER reply still queued, stays unread. A banner that
+         * stays keeps its history, the message answered included, with the answer ([replyText])
+         * appended as this account's own line, posted silently the standard way and bounded to
+         * [MAX_NOTIF_MESSAGES] lines - which is what the platform-held banner after the inline
+         * answer shows, the update releasing the hold ([holdsDirectReply]); it stays recorded for
+         * the next read. With nothing unread and no hold, the banner goes. Its reaction
          * notification goes with it: the reaction's alert follows the conversation, and the
          * reaction itself stays in it. Called by the receiver's success action, beside the watermark.
          */
@@ -1374,6 +1376,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         cancelledId = id
                         manager.cancel(id)
                     },
+                    maxLines = MAX_NOTIF_MESSAGES,
                 ).also { cancelReactionNotification(prefs, manager, groupId) }
             }
             context.recordShowOutcome(PushShowOutcome.of(outcome), groupId, null, manager, detail = "by=answer-reply")

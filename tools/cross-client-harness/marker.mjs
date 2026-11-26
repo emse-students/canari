@@ -11,8 +11,24 @@
  *
  * `results.mjs` re-exports every name here, so no call site changed.
  */
+/** Base-36 digits the suffix of a marker has: 36^3 values, which `markerStamp` strips as the last three characters. */
+const SUFFIX_VALUES = 36 ** 3;
+
+/**
+ * The suffix counter of THIS process. It only ever moves forward, so two marks of one process never share a suffix
+ * until `SUFFIX_VALUES` have been minted - which no millisecond holds. That is a guarantee, not a probability: the old
+ * `Math.random()` suffix collided on a same-millisecond pair once in 46656, and failed a CI gate for it.
+ * ACROSS processes it is still a probability, the same as before: each starts at an independent random value, so two
+ * processes minting the same id in the same millisecond share a suffix about once in 46656 (pairs per millisecond).
+ * The format leaves no room for a process tag (`markerStamp` strips exactly three characters).
+ */
+let suffixCounter = crypto.getRandomValues(new Uint32Array(1))[0] % SUFFIX_VALUES;
+
 /** A short unique marker, so two runs of the same check never collide in the history. */
-export const mark = (id) => `${id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+export const mark = (id) => {
+  suffixCounter = (suffixCounter + 1) % SUFFIX_VALUES;
+  return `${id}-${Date.now().toString(36)}${suffixCounter.toString(36).padStart(3, '0')}`;
+};
 
 /**
  * The same marker with a sequence number, for a check that sends a RUN of messages.

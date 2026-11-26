@@ -10,6 +10,7 @@
  */
 import { FLOOR1_BOUND_MS, FLOOR_ROWS, floor1Own, floor2Own, floor3Premise } from '../floorrows.mjs';
 import { ROW_GROUPS, commitsSince, composeVerdict, rowGroupName, rowMessageMark, rowStem } from '../rowkit.mjs';
+import { mark, markerStamp } from '../marker.mjs';
 
 let failures = 0;
 const ok = (label, cond) => {
@@ -40,6 +41,12 @@ ok('a lower-case id is refused', throws(() => rowStem('floor-1')));
 ok('every group of section 4.2 is a known prefix', ['FLOOR', 'CC', 'DUP', 'OFF', 'KILL', 'GAP', 'RM', 'ADM', 'DEV', 'BIG', 'TOK', 'NET'].every((g) => ROW_GROUPS.includes(g)));
 ok('a minted group name starts with its stem and a dash', /^FLOOR2-[0-9a-z]+$/.test(rowGroupName('FLOOR-2')));
 ok('two mints in one process differ', rowGroupName('CC-1') !== rowGroupName('CC-1'));
+{
+  // Far more mints than a millisecond holds, all in one tick: not one pair may collide, and every stamp must still decode.
+  const minted = Array.from({ length: 30000 }, () => mark('CC1'));
+  ok('30000 mints in one tick never collide', new Set(minted).size === minted.length);
+  ok('a minted marker still decodes to its stamp', minted.every((m) => markerStamp(m) !== null));
+}
 ok('a message marker is never a group shape', !/^(FLOOR|CC)\d+-/.test(rowMessageMark('FLOOR-1', 'A')) && !/^CC\d+-/.test(rowMessageMark('CC-3', 'B')));
 ok('a message marker names its row and tag', rowMessageMark('FLOOR-1', 'A').startsWith('MFL1A-') && rowMessageMark('CC-3', 'B').startsWith('MCC3B-'));
 
