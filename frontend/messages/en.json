@@ -3253,6 +3253,19 @@
   "form_responses_tab_totals": "Totals",
   "form_responses_tab_summary": "Summary",
   "form_responses_search": "Search",
+  "form_responses_group_button": "Create a group",
+  "form_responses_group_too_few": "A group needs at least two other people who answered with an account.",
+  "form_responses_group_error": "The respondents could not be listed. Try again.",
+  "form_responses_group_departed": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} respondent left Canari and is not in the group.",
+        "countPlural=other": "{count} respondents left Canari and are not in the group."
+      }
+    }
+  ],
   "form_responses_filters_label": "Filter by payment",
   "form_responses_filter_all": "All",
   "form_responses_filter_paid": "Paid",

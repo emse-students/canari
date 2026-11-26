@@ -19,6 +19,8 @@
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
 
   import SidebarNewChatModal from './SidebarNewChatModal.svelte';
+  import { groupDraft } from '$lib/stores/groupDraft.svelte';
+  import type { GroupDraftMember } from '$lib/forms/respondentGroup';
   import SidebarNewChannelModal from './SidebarNewChannelModal.svelte';
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
@@ -261,6 +263,8 @@
   }: Props = $props();
 
   let showNewChatModal = $state(false);
+  /** The people a page chose for a new group (a form's respondents): the panel opens with them chosen. */
+  let newChatInitialMembers = $state<GroupDraftMember[]>([]);
   let showNewChannelModal = $state(false);
   let showCommunityAdminPanel = $state(false);
   let showNewCommunityModal = $state(false);
@@ -500,7 +504,23 @@
   function closeNewChatModal() {
     showNewChatModal = false;
     newChatError = '';
+    newChatInitialMembers = [];
   }
+
+  /*
+   * A PAGE'S GROUP DRAFT (a form's respondents, `groupDraft.ts`): the panel opens with them chosen
+   * and the member names the group and presses create. Taken by the page's own sidebar only - the
+   * drawer is a second instance of this component and must not race it for the same draft.
+   */
+  $effect(() => {
+    if (drawerMode || !currentUserId || !groupDraft.pending) return;
+    const members = groupDraft.takeFor(currentUserId);
+    if (!members) return;
+    console.debug(`[NEW_CHAT] opening with ${members.length} person(s) chosen by a page`);
+    newChatInitialMembers = members;
+    newChatError = '';
+    showNewChatModal = true;
+  });
 
   function closeNewChannelModal() {
     showNewChannelModal = false;
@@ -991,6 +1011,7 @@
   open={showNewChatModal}
   {currentUserId}
   {recentPeers}
+  initialMembers={newChatInitialMembers}
   error={newChatError}
   busy={newChatBusy}
   onClose={closeNewChatModal}
