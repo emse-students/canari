@@ -47,13 +47,19 @@ describe('the tutorial page', () => {
     byText('Indice').click();
     flushSync();
     await tick();
-    expect(testId('tutorial-hint')?.textContent).toContain('Ce 1 touche une seule case cachée');
+    expect(testId('tutorial-hint')?.textContent).toContain(
+      "Ce 1 ne touche qu'une seule case cachée"
+    );
     byText('Indice suivant').click();
     flushSync();
-    expect(testId('tutorial-hint')?.textContent).toContain('Les deux autres 1');
+    expect(testId('tutorial-hint')?.textContent).toContain('Cette case est donc une mine sûre');
+    // The colours are explained once the hint is up, and only then.
+    expect(testId('tutorial-legend')?.textContent).toContain('Mine sûre');
+    expect(testId('tutorial-legend')?.textContent).toContain('Case sûre');
     byText("Masquer l'indice").click();
     flushSync();
     expect(testId('tutorial-hint')).toBeNull();
+    expect(testId('tutorial-legend')).toBeNull();
   });
 
   it('says a lesson is solved, and a mine is a mine; restart plays it again', () => {
