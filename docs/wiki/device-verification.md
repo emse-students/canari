@@ -34,6 +34,35 @@ Owner, 2026-11-23 ([decisions](decisions/owner-decisions-of-2026-11-23.md)): a r
 
 Owner, 2026-11-24 ([decisions](decisions/owner-decisions-of-2026-11-24.md), item 3): two Android call readings need a cellular call, and the bench Mi 9T has no SIM. Both are CLOSED, never queued: a Canari call started during a cellular call (the peer sees the microphone cut), and the microphone coming back by itself when the cellular call ends. The hold and its release are covered by `CallFocusHoldTest` and `CallAudioSlotTest` ([calls](frontend/modules/calls.md)).
 
+## The readings of 2026-11-26 (`1.8.2-alpha.8`, Mi 9T): the v22 store upgraded, a picked file sent, the person filter, `@tous` in a salon
+
+Mi 9T on dev, account `alpha`, the release APK of each tag sideloaded (no installer). **The v22 store
+came from `v1.8.0-alpha.10`, not from the `v1.8.0` stable**: a stable APK is a production build (it
+carries no `VITE_DEPLOY_ENVIRONMENT`, [features](../../frontend/src/lib/features.ts)) and would have
+signed the bench account in on production. `v1.8.0-alpha.10` is the last build before #4070 (`git
+merge-base --is-ancestor` says neither it nor `v1.8.0` holds it), points at dev, and is signed with the
+same certificate as `v1.8.2-alpha.8` (`apksigner` digests equal), so `adb install -r` keeps its data.
+The app was uninstalled, `v1.8.0-alpha.10` installed and signed in, and history arrived from the
+account's web seat and the peers. The store was read through the WebView's devtools
+(`plugin:sql|select`), the in-app log from its IndexedDB ring. Verdicts only; ids and logs stay in the
+private notes.
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| A v22 store upgraded keeps every row (P1) | **PASS** | Before: `user_version` 22, 2768 rows, 2768 distinct ids, 42 conversations. `install -r` of `alpha.8`, then the first open logged once `Migration v22->v23: keying 2768 message row(s)`, `2768 message row(s) now keyed by (conversation, id)`, `the copy of messages is released: 2768 row(s) set aside, all held (2768 now)`; no `second schema run`, no `REFUSED`, no error line. After: `user_version` 23, 2768 rows, every conversation with the same count, `store_meta` present, no `retained__messages`. The DMs and groups drew their history. A force-stop and a relaunch: no migration line, `[DB] Using SQLite storage` alone |
+| The first connection after the upgrade | **PASS** | `[HISTORY_RECONCILE] sweeping every group - the local message store is not the one the last connection saw` once (the record predates the incarnation, as designed); 75 `[HISTORY_*]` lines in that pass for 26 groups; every later connection (reload, cold start, each return from a picker) `no sweep - away 0 d, inside what the server keeps; every group already audited`. No "Synchronisation en attente" notification (none from the app in `dumpsys notification`), no locked composer |
+| A log export sent in-app (#4154) | **PASS** | Settings > A propos > "Enregistrer le journal" into "Telechargements": `write_staged_document ... 543076 bytes written, the provider records 543076`. Attached through "Tous les fichiers": `PickedFiles: pick 0 copied: text/plain, 543076 bytes`, `[OUTBOX] ... payload read in 19 ms (543076 file bytes)`, sent; the bubble reads 530,3 Ko |
+| An old export listed "0 octet(s)" | **PASS** | `canari-log-1.2.7-alpha.2-...`: `PickedFiles` ERROR `pick 0 copied: text/plain, 269916 bytes, but its provider states 0`, `payload read ... (269916 file bytes)`, sent; the bubble reads 263,6 Ko |
+| A gallery photo, a video, a PDF picked in-app | **PASS** | Photo through "Phototheque", Send 30 s after the pick: `pick 0 copied: image/png, 519226 bytes`, `(519226 file bytes)`, sent. Video (a bench test pattern): `copied: video/mp4, 3211865 bytes`, `video prepared: 3.1 Mo -> 2.9 Mo`, `(3079943 file bytes)`, sent, plays. PDF through "Tous les fichiers": `copied: application/pdf, 398 bytes`, sent. No `holds no bytes`, no `transient failure`, no `empty-attachment` for any of the five |
+| A cloud item picked in-app | **NOT TAKEN** | The cloud items the phone's picker offers are personal; none was sent |
+| The post search's person filter | **PASS** | Person `alpha` alone: every result is a personal post of `alpha` (none of the association posts `alpha` wrote as "Club Photo Fictif"). With the word "poll": the two polls. Person and association together: "Aucun post ne correspond a ces filtres". Removing the person chip lists the association's posts; removing the association chip gives the feed back. The P3 icon misplacement is still there, and in the association field the magnifier now sits over the typed text |
+| `@tous` offered in a salon by role (composer half) | **PASS in part** | In a community `alpha` administers, `@to` offered "@tous - Notifie tous les membres"; in a community `alpha` only belongs to (no "Ajouter un canal" there; the role was not read from the server), no row. Nothing was sent: the ring of a salon `@tous` and "Aucune" need a second phone at "Mentions" and are not read |
+| The sync notice's sweep path with an MLS-refused frame | **NOT TAKEN** | No frame the MLS layer refuses was produced |
+
+**What this sitting left on dev:** five attachments in the `alpha`-`beta` DM (two log exports, a
+screenshot, a test video, a test PDF) and a new device for `alpha` (the uninstall cost the old one).
+The phone keeps `alpha.8` with its upgraded store.
+
 ## The readings of 2026-11-26 (`1.8.2-alpha.7`, iPhone 12): `@tous`, the read tone, the seat hold, a group from respondents, a DM's open
 
 iPhone 12 (iOS 27.2.1) on dev, TestFlight build `100800207` (`1.8.2-alpha.7`; `apps list` read it back; the phone had just finished an OS update, so the developer image was mounted again and Setup Assistant left with no passcode set), account `gamma`. Peers: the harness web seats `alpha` and `beta`, each in a tab of its own so that the other sitting's tab was never driven. `alpha.8` was cut while this sitting ran; it was not read. Verdicts only; the accounts and the logs stay in the private notes.

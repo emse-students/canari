@@ -205,5 +205,8 @@ rows. What the fix leaves as a measurement: the error line `the messages table w
 that is not new` cannot fire for a 1.8.1 loss (the empty table was made again then), so the
 reliable signal is the generation-2 audit itself - a device whose first `1.8.2` connection pulls
 many rows (`[HISTORY_REQ] ... diff with ...: N to send` on the PEERS' side, `history_bundle` rows on
-the device's) is a device that had lost them. A phone reading of an upgraded v22 store is owed
-([backlog](../backlog.d/reading-owed-v23-rebuild-keeps-every-row-on-the-mi9t.md)).
+the device's) is a device that had lost them. **Read on the Mi 9T, `1.8.2-alpha.8` (2026-11-26):** a
+v22 store of 2768 rows upgraded with `install -r` was keyed, proved and released in one run with the
+same 2768 rows in every conversation, no copy left set aside, no second rebuild after a cold start, and
+one sweep on the first connection only
+([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-mi-9t-the-v22-store-upgraded-a-picked-file-sent-the-person-filter-tous-in-a-salon)).

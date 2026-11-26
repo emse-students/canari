@@ -21,3 +21,5 @@ WorkManager's `runAttemptCount`. No test runs WorkManager, the shade or the JNI 
    messages, leave it open two minutes: no "Synchronisation en attente".
 
 **Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** across background and foreground cycles no false "Synchronisation en attente" appeared. Still owed: the sweep path with a frame the MLS layer refuses (item 1's undecryptable DM), which the bench did not produce.
+
+**Read on the Mi 9T, `1.8.2-alpha.8` (2026-11-26, [sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-mi-9t-the-v22-store-upgraded-a-picked-file-sent-the-person-filter-tous-in-a-salon)):** across an upgrade, two cold starts and seven trips to the system pickers no "Synchronisation en attente" appeared (none of the app's notifications in `dumpsys notification`). The refused-frame sweep path is still not produced.
