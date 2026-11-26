@@ -324,10 +324,13 @@
         data-search-section={id}
       >
         <header class="mb-1 flex items-baseline justify-between gap-2 px-2">
-          <h2 id="search-section-{id}" class="text-text-main text-base font-bold">
+          <h2 id="search-section-{id}" class="text-text-main shrink-0 text-base font-bold">
             {TITLES[id]()}
           </h2>
-          <p class="text-text-muted truncate text-xs" data-search-source={search.sourceOf(id)}>
+          <p
+            class="text-text-muted min-w-0 text-right text-xs"
+            data-search-source={search.sourceOf(id)}
+          >
             {SOURCE_LINES[search.sourceOf(id)]()}
           </p>
         </header>
