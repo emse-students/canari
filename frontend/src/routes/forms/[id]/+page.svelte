@@ -935,11 +935,23 @@
   });
 
   /**
+   * The send's refusal while a file is still travelling, ONE implementation for the real send and the
+   * preview's test. Refused, not queued: an optional file question would otherwise go out empty
+   * while the member believes the file is attached. True when it refused (and said so).
+   */
+  function refusedWhileUploading(): boolean {
+    if (uploadingFiles.size === 0) return false;
+    Log.d('FormView', `submit refused: ${uploadingFiles.size} file(s) still uploading`);
+    error = m.form_file_wait_upload();
+    return true;
+  }
+
+  /**
    * Judges the answer as the send does - a required question, the order across the grids, what an
    * anonymous form asks to be declared - and says the first problem where the reader is looking
    * (the question's own card, brought into view). ONE judgement for the real send and the preview's
-   * "Tester l'envoi", so a test can never pass what a send refuses. True when nothing holds the
-   * answer back.
+   * "Tester l'envoi", so the test passes none of the answer-content refusals a send makes (the upload wait is
+   * `refusedWhileUploading`, shared the same way). True when nothing holds the answer back.
    */
   async function answerHoldsNothingBack(): Promise<boolean> {
     const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
@@ -982,7 +994,7 @@
     if (!form || !preview) return;
     Log.d('FormView', 'test send in the preview');
     error = '';
-    if (!(await answerHoldsNothingBack())) {
+    if (refusedWhileUploading() || !(await answerHoldsNothingBack())) {
       testSendReport = null;
       return;
     }
@@ -996,13 +1008,7 @@
       Log.d('FormView', 'submit held: a preview sends nothing');
       return;
     }
-    if (uploadingFiles.size > 0) {
-      // Refused, not queued: an optional file question would otherwise go out empty while the
-      // member believes the file is attached.
-      Log.d('FormView', `submit refused: ${uploadingFiles.size} file(s) still uploading`);
-      error = m.form_file_wait_upload();
-      return;
-    }
+    if (refusedWhileUploading()) return;
     if (isNotOpenYet) {
       error = form.opensAt
         ? m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) })

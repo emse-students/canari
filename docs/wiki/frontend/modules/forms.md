@@ -4235,9 +4235,11 @@ the only way to try the send was to open the form. Charter: principle 1 (the bel
 test must never ring it) and principle 3 (no notification for the organiser's convenience).
 
 **What it is.** In a PREVIEW (`isPreview`: a draft, or the unpublished revision of a published form) a
-secondary "Tester l'envoi" button sits beside the shut send button. It runs `answerHoldsNothingBack` in
-`routes/forms/[id]/+page.svelte` - the very function the real send now calls first (required questions,
-the order across the grids, an anonymous form's declared fields) - then says, in the sticky bar,
+secondary "Tester l'envoi" button sits beside the shut send button. It runs the send's own client-side refusals, each ONE
+implementation in `routes/forms/[id]/+page.svelte`: `refusedWhileUploading` (a file still travelling) and
+`answerHoldsNothingBack` (required questions, the order across the grids, an anonymous form's declared fields).
+It does NOT judge what the preview cannot mean (the opening window, the sign-in) nor what only the server knows.
+It then says, in the sticky bar,
 "Test reussi ... Rien n'a ete enregistre ... personne n'a ete prevenu", with the total the answer would be
 charged. The report disappears the moment the answer changes (it is keyed on the answer as the send
 would carry it). The form is NOT opened and nothing is sent: `submitForm` is never called.
