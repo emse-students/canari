@@ -6,8 +6,10 @@
  * MiConnect's mapping (`miconnect-claim-school-mail`, 10-mappings.yaml) is Python inside YAML: no
  * import can hand it libs/contracts/mail-domains.json, so it writes the domains itself and this test
  * holds them EQUAL to the contract's keys - the list core-service, the relay and the client also use.
- * And the claim exists so that ONE application sees a real address: it is bound to Canari's three
- * providers (50-providers.yaml) and to no other. The behaviour of the expression (CAS-created
+ * And the claim exists so that ONE application sees a real address: it is bound to Canari's
+ * production and dev providers (50-providers.yaml) and to no other - not even the local one, whose
+ * harness drives no mail - and none of Canari's providers copies a scope claim into the id_token,
+ * which the client keeps for the sign-out (`include_claims_in_id_token: false`). The behaviour of the expression (CAS-created
  * accounts only, never an Alumni address) is proven by evaluating it on a running MiConnect
  * (infrastructure/authentik/test-school-mail-claim.py, through test-blueprints.sh).
  */
@@ -38,6 +40,7 @@ need(
 );
 need(/scope_name: "school_mail"/.test(entry), 'the mapping is not on its own scope, school_mail');
 need(/source__slug="cas-emse"/.test(entry), 'the mapping does not require the CAS link');
+need(/address\.count\("@"\) != 1/.test(entry), 'the mapping does not require exactly one @');
 
 // Every provider block, by name, and whether it binds the mapping.
 const blocks = providers.split(/\n  - model: /).slice(1);
@@ -45,13 +48,21 @@ const binding = blocks
   .filter((b) => b.includes('miconnect-claim-school-mail'))
   .map((b) => b.match(/name: "([^"]+)"/)?.[1]);
 need(
-  JSON.stringify(binding.sort()) ===
-    JSON.stringify(['miconnect-canari', 'miconnect-canari-dev', 'miconnect-canari-local']),
-  `school_mail is bound to ${JSON.stringify(binding)}, not exactly Canari's three providers`
+  JSON.stringify(binding.sort()) === JSON.stringify(['miconnect-canari', 'miconnect-canari-dev']),
+  `school_mail is bound to ${JSON.stringify(binding)}, not exactly Canari's production and dev providers`
 );
+for (const name of ['miconnect-canari', 'miconnect-canari-dev', 'miconnect-canari-local']) {
+  const block = blocks.find((b) => b.match(/name: "([^"]+)"/)?.[1] === name) ?? '';
+  need(
+    /\n {6}include_claims_in_id_token: false\n/.test(block),
+    `${name} does not set include_claims_in_id_token: false - its id_token would carry the scope claims`
+  );
+}
 
 if (failures.length) {
   for (const f of failures) console.error(`FAIL ${f}`);
   process.exit(1);
 }
-console.log("school-mail-claim: the mapping names the contract's domains, bound to Canari's providers only");
+console.log(
+  "school-mail-claim: the mapping names the contract's domains, bound to Canari's providers only, out of the id_token"
+);

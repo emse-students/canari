@@ -38,6 +38,10 @@ entries:
         - "authorization_code"
         - "refresh_token"
       client_id: "KyTy6F1C3LkvhHmskO9TP5iqEjge2H6FzsaHiClv"
+      # The id_token carries the protocol claims only (iss, sub, aud, times), never a scope's: the
+      # client keeps it for the sign-out's hint and reads `iss` alone, and `school_mail` must not ride
+      # in it (10-mappings.yaml). Asserted by test-school-mail-claim.py.
+      include_claims_in_id_token: false
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
@@ -90,6 +94,10 @@ entries:
         - "authorization_code"
         - "refresh_token"
       client_id: "6cNHJotTO9THNMewP4vCO3O6aRLsNTSqKRuQjv4o"
+      # The id_token carries the protocol claims only (iss, sub, aud, times), never a scope's: the
+      # client keeps it for the sign-out's hint and reads `iss` alone, and `school_mail` must not ride
+      # in it (10-mappings.yaml). Asserted by test-school-mail-claim.py.
+      include_claims_in_id_token: false
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
@@ -125,16 +133,22 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-mail"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
         - "authorization_code"
         - "refresh_token"
       client_id: "qqzuUBQpD9oqLw8LrpPiMKWwdbTXoBscrC0yGjWl"
+      # The id_token carries the protocol claims only (iss, sub, aud, times), never a scope's: the
+      # client keeps it for the sign-out's hint and reads `iss` alone, and `school_mail` must not ride
+      # in it (10-mappings.yaml). Asserted by test-school-mail-claim.py.
+      include_claims_in_id_token: false
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # No `school_mail` here (2026-11-27): the cross-client harness, this provider's user, drives no
+      # mail, and its test accounts hold no school address; a client asking for the scope is granted
+      # the rest (authentik grants the overlap, test-school-mail-claim.py).
       # THE LOCAL ESTATE on a workstation (2026-11-18): its nginx entry (8081, the harness's), the
       # Vite dev server (1420, and 127.0.0.1:1420, Tauri's devUrl) and the harness APK's scheme. Port
       # 1421 never carried a sign-in on this client (`strictPort` pins the dev server to 1420). Asks for the terms,

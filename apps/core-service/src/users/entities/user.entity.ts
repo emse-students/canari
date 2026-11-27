@@ -48,9 +48,10 @@ export class User {
   alumniLinked?: boolean | null;
 
   /**
-   * The class of the school address MiConnect sent at the last sign-in (claim `school_mail`,
-   * migration 032): `student`, `staff`, or `null` - the mail client is not offered. Never the address
-   * (charter principle 1). Read by the mail relay's admission (`InternalMailController`).
+   * The class of the school address MiConnect sent at the last sign-in GRANTED `school_mail`
+   * (migration 032; any other sign-in leaves it): `student`, `staff`, or `null` - the mail client
+   * is not offered. Never the address (charter principle 1). Read by the mail relay's admission
+   * (`InternalMailController`).
    */
   @Column({ type: 'varchar', length: 16, nullable: true })
   mailClass?: MailClass | null;

@@ -91,10 +91,10 @@
     <p>
       MiConnect ne reçoit ni ne stocke jamais ton mot de passe : il reste chez le CAS ou les Alumni.
       Les services reçoivent une adresse e-mail technique, pas ton adresse personnelle, à une
-      exception près : si ton compte a été créé par le CAS et que ton adresse e-mail de l'École est
-      une adresse de l'École (élève ou personnel), Canari la reçoit, pour te proposer la messagerie
-      de l'École ; son serveur n'en garde que la catégorie, élève ou personnel. Aucun service ne
-      reçoit l'adresse enregistrée chez les Alumni.
+      exception près : si ton compte a été créé par le CAS et que son adresse e-mail est en
+      <code>etu.emse.fr</code> (élèves) ou en <code>emse.fr</code> (personnel), Canari la reçoit, pour
+      te proposer la messagerie de l'École ; son serveur n'en garde que la catégorie, élève ou personnel.
+      Aucun service ne reçoit l'adresse enregistrée chez les Alumni.
     </p>
     <p>
       Ta qualité de cotisant et ton adresse e-mail des Alumni ne sont transmises à aucun service, à

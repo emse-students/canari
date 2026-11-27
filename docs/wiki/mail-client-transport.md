@@ -167,11 +167,13 @@ address for - and only those.** MiConnect's `email` claim is SYNTHETIC
 so it cannot answer; a new claim does:
 
 ```
-MiConnect --sign-in, scope school_mail (Canari's 3 providers only)--> core-service (OIDC callback)
+MiConnect --sign-in, scope school_mail (Canari's production and dev providers only)--> core-service
    school_mail = the account's email, ONLY IF the CAS created the account (its cas-emse link's
-   identifier is the username) AND the domain is etu.emse.fr or emse.fr; else ABSENT
-core-service: users."mailClass" = student | staff | NULL   (refreshed at EVERY sign-in)
-core-service --sign-in answer { ..., school_mail } (ONE use, never stored)--> the client
+   identifier is the username) AND it is one address on etu.emse.fr or emse.fr; else ABSENT
+   (in the userinfo only - never in the id_token)
+core-service: users."mailClass" = student | staff | NULL
+   written ONLY by a sign-in whose token answer GRANTED school_mail; any other leaves it untouched
+core-service --sign-in answer { ..., school_mail } (ONE use, never stored; only for a STORED class)--> client
 client: keeps the address on the device for the mail sign-in's prefill (schoolMailAddress())
 
 chat-gateway --GET /api/internal/users/:id/mail-class (X-Internal-Secret)--> core-service
@@ -179,20 +181,59 @@ core-service --> { "mailClass": "student" | "staff" | null } | 404   (one row re
 ```
 
 **The claim** (`infrastructure/authentik/blueprints/10-mappings.yaml`, `miconnect-claim-school-mail`,
-its own scope `school_mail`, bound in `50-providers.yaml` to `miconnect-canari`, `-canari-dev` and
-`-canari-local` and NO other provider). An Alumni-created account carries the ALUMNI address in its
-`email` (D46), so the mapping refuses any account whose CAS link does not name it - even an Alumni
-account linked to the CAS later: never the Alumni address. Tested in a real authentik by
-`infrastructure/authentik/test-school-mail-claim.py` (inside `test-blueprints.sh`) and statically by
-`.github/scripts/tests/school-mail-claim.test.mjs` (the domains equal the contract, the scope is its
-own, the CAS link is required, the binding is exactly Canari's three providers).
+its own scope `school_mail`, bound in `50-providers.yaml` to `miconnect-canari` and
+`miconnect-canari-dev` and NO other provider). An Alumni-created account carries the ALUMNI address
+in its `email` (D46), so the mapping refuses any account whose CAS link does not name it - even an
+Alumni account linked to the CAS later: never the Alumni address. It sends ONE address: exactly one
+`@`, a local part, no whitespace, a listed domain exactly - the same rule as core-service's
+`readSchoolMail` and the client's `mailClassOf`.
+
+**The rule, measured** (read-only on production MiConnect, 2026-11-27): 719 `cas-emse` links, every
+one with identifier equal to its account's username (0 mismatches, 0 `alumni-*` usernames, all
+accounts active); by the address's domain, 689 `etu.emse.fr`, 30 `emse.fr`, 0 other, none or
+malformed. So "the CAS created the account" costs no CAS account, and every one of them gets a class
+at its next sign-in granted the scope.
+
+**Not the local provider** (`miconnect-canari-local`): its user is the cross-client harness, which
+drives no mail and whose accounts hold no school address. A client asking it for the scope is not
+refused: authentik grants the overlap (measured below).
+
+**Never in the id_token.** authentik copies a scope's claims into the id_token by default, and the
+client keeps the id_token (`canari_oidc_id_token`) for the sign-out's `id_token_hint`. Canari's three
+providers set `include_claims_in_id_token: false`: the id_token carries the protocol claims only
+(iss, sub, aud, times), and the client reads `iss` alone (`planMiconnectSignOut`, the only reader of
+its claims). So the address is kept on the device in ONE place, `canari_school_mail`.
+
+**Measured on the real endpoints** (`infrastructure/authentik/test-school-mail-claim.py`, inside
+`test-blueprints.sh`, authentik 2026.8): the mapping evaluated on test accounts (CAS student and staff
+get it; another domain, a subdomain, two `@`, whitespace, an Alumni account, an Alumni account
+later linked to the CAS, no link get nothing), then a real authorize and code redemption: the token
+answer's `scope` names `school_mail` when it was asked for and not otherwise, the userinfo carries
+the address, the id_token does not, and the local provider grants the rest without it. Statically,
+`.github/scripts/tests/school-mail-claim.test.mjs` holds the domains equal to the contract, the own
+scope, the CAS link, the single `@`, the binding to exactly the two providers, and
+`include_claims_in_id_token: false` on all three.
 
 **What Canari keeps: the CLASS, never the address** (charter principle 1, "your messages are yours":
 the server keeps what it needs to decide, and the address is not that). `parseProfileClaims` reads the
 claim into `mailClass` through `readSchoolMail` (`apps/core-service/src/users/mail-class.ts`), the
 upsert stores it on `users."mailClass"` (migration `032_users_mail_class.sql`, additive, nullable,
-`lock_timeout 5s` - not held), and a sign-in whose claim vanished sets it back to NULL. The address
-leaves in the callback's answer as `school_mail`, like `id_token`, and the logs name its class only.
+`lock_timeout 5s` - not held), and a sign-in granted the scope whose claim vanished sets it back to
+NULL.
+
+**Only a sign-in GRANTED the scope writes the class.** An older client does not ask for
+`school_mail`; were its sign-in read as "no claim", it would clear the class, and the class would
+flip with the device the person last signed in from. So core-service reads the GRANTED scopes from
+the token answer's `scope` (RFC 6749 5.1; authentik 2026.8 always sends it, measured above), and a
+sign-in without `school_mail` in it carries no class at all (`MiconnectProfile.mailClass` absent):
+the stored one is left as it is. A token answer with no `scope` is accused at warn and treated the
+same way.
+
+**The address is handed out only for a STORED class.** The relay admits on the column, so an address
+the client prefilled for a class the database refused would open a mail tab that is then refused.
+The upsert returns the row as stored (changes join it only once written), and the callback hands
+`school_mail` out only when that row's class is the claim's, accusing the mismatch at warn. The logs
+name the class only, never the address.
 A restore (account-restore) carries no MiConnect claim: it removes the device's copy, and the class
 on the row stays as the last MiConnect sign-in left it.
 
@@ -200,7 +241,16 @@ on the row stays as the last MiConnect sign-in left it.
 (`canari_school_mail`, the same store as the id_token), set or removed by every MiConnect sign-in,
 removed by a restore and by every sign-out that revokes the session. The documented accessor for
 lot 2 is `schoolMailAddress()` in `frontend/src/lib/stores/auth.ts`: it PREFILLS the mail sign-in,
-and the person still types their password. An address the client classes as no school address
+and the person still types their password.
+
+**Existing accounts get the class at their next MiConnect sign-in, and lot 3 offers one** (lead's
+decision, 2026-11-27, reversible). Nothing back-fills the column: the class exists only where a
+sign-in granted the scope wrote it, so after the stable every account already signed in has NULL -
+the mail not offered - until it signs in through MiConnect again. Canari's own sessions last, so that
+could be weeks. Lot 3 therefore shows, when `schoolMailAddress()` is `null`, an "Activer le mail"
+button calling `startSchoolMailActivation(returnTo)`: it is the ordinary sign-in entry point
+(`startOidcLogin`), and since the MiConnect session is usually still alive it is one tap - the
+callback stores the class and the device's address, then comes back. One path writes the class. An address the client classes as no school address
 (`mailClassOf`, `frontend/src/lib/mail/eligibility.ts`) is not kept and accused at warn: core-service
 validates against the same contract, so reaching that line is a disagreement between the two.
 
@@ -212,10 +262,18 @@ needs the class: principle 1 keeps the fact where it is used. The route is one p
 no third party, so `ELIGIBILITY_DEADLINE` is 5 s and a slower answer is a fault (503), never an
 admission. A stored value that is not a known class is answered `null` and logged at ERROR.
 
+**What the class does NOT follow (accepted, 2026-11-27).** The class is refreshed only at a
+MiConnect sign-in, so an account MiConnect deactivates, or a student who graduates, keeps relay
+access for as long as its Canari session lives. No sweep resets it: core-service has none for
+deactivated MiConnect accounts (the sign-in handoff asks MiConnect at the moment it hands over, and
+nothing else does). This is accepted rather than built: the relay is a pipe to the school's own
+mailbox, Partage still demands the person's password, and the school closes the mailbox itself when
+the person leaves - so the relay lets nobody read a mailbox they could not already open.
+
 **The rollout state, and why it is not a fallback.** The blueprint applies to MiConnect at a STABLE.
-Until then MiConnect emits no `school_mail` (an authentik provider ignores a scope it has no mapping
-for), every account's class is NULL, and the relay refuses everyone with 403 - the mail is simply not
-offered. That is the EXPECTED state of every estate before that stable, not a degraded path: nothing
+Until then MiConnect grants no `school_mail` (an authentik provider grants only the scopes it has a
+mapping for), so every sign-in leaves the class as it is - NULL - and the relay refuses everyone with
+403: the mail is simply not offered. That is the EXPECTED state of every estate before that stable, not a degraded path: nothing
 substitutes for the missing claim, and the first sign-in after the blueprint applies fills the class.
 Dev needs no new secret (the old design needed MiConnect's reader token on dev; it is gone).
 
@@ -308,6 +366,9 @@ and an HS256 token signed with that secret.
 ## Still open
 
 - **The claim reaches MiConnect at a stable**: until then no account is eligible (above). The first
-  reading owed after it: one CAS student and one staff account sign in, their `mailClass` is filled,
-  an Alumni-created account's stays NULL.
+  reading owed after it: one CAS student and one staff account sign in from a client that asks for
+  the scope, their `mailClass` is filled; a sign-in from an older client leaves it; an
+  Alumni-created account's stays NULL.
+- **Lot 3's "Activer le mail" button** (`startSchoolMailActivation`), for the accounts signed in
+  before the stable.
 - The macOS runner's Homebrew LLVM path for the ring build is written but has not run in CI yet.

@@ -194,8 +194,10 @@ entries:
       description: "Says whether the account is linked to its Alumni account"
   # THE SCHOOL ADDRESS, FOR CANARI'S MAIL CLIENT ONLY (owner, 2026-11-27;
   # docs/wiki/mail-client-transport.md#eligibility). Its OWN scope, `school_mail`, bound to Canari's
-  # three providers and no other (50-providers.yaml), so no other site can ask for it: every other
-  # provider keeps the synthetic `email` above.
+  # production and dev providers and no other (50-providers.yaml), so no other site can ask for it:
+  # every other provider keeps the synthetic `email` above. It stays out of the id_token
+  # (`include_claims_in_id_token: false` on those providers): the client keeps the id_token for the
+  # sign-out, and the address must reach it only where it is meant to be kept.
   #
   # Sent ONLY when the address is the CAS's: the account holds the `cas-emse` link AND was created
   # from it (the link's identifier is the account's username - the CAS `sub` the enrolment wrote,
@@ -203,7 +205,10 @@ entries:
   # An account created through the Alumni SSO (`alumni-<af_id>`) carries the address its holder
   # typed at Alumnforce, which may name any mailbox, so it never gets the claim - even once it holds a
   # CAS link too. And only on a domain of libs/contracts/mail-domains.json (keys equal to it:
-  # school-mail-claim.test.mjs). Otherwise the claim is ABSENT, which Canari reads as "not offered".
+  # school-mail-claim.test.mjs), as ONE address: exactly one `@`, a local part, no whitespace (the
+  # same rule as core-service's `readSchoolMail`). Otherwise the claim is ABSENT, which Canari reads as
+  # "not offered". Measured on production 2026-11-27: every `cas-emse` link's identifier equals its
+  # account's username (719 of 719), so the rule loses no CAS account.
   - model: authentik_providers_oauth2.scopemapping
     identifiers:
       name: "miconnect-claim-school-mail"
@@ -216,8 +221,10 @@ entries:
         if cas is None or cas.identifier != user.username:
             return {}
         address = (user.email or "").strip().lower()
-        local, at, domain = address.rpartition("@")
-        if not at or not local or domain not in SCHOOL_DOMAINS:
+        if address.count("@") != 1 or any(c.isspace() for c in address):
+            return {}
+        local, _, domain = address.partition("@")
+        if not local or domain not in SCHOOL_DOMAINS:
             return {}
         return {"school_mail": address}
       scope_name: "school_mail"

@@ -44,6 +44,7 @@ const {
   leaveSignedOut,
   startOidcLogin,
   schoolMailAddress,
+  startSchoolMailActivation,
   clearAuth,
 } = await import('$lib/stores/auth');
 
@@ -211,6 +212,24 @@ describe('from sign-in to sign-out', () => {
     await startOidcLogin('/chat');
     const url = new URL((invokeMock.mock.calls[0]![1] as { url: string }).url);
     expect(url.searchParams.get('scope')?.split(' ')).toContain('school_mail');
+  });
+
+  it('the mail activation is the ordinary sign-in, asking for school_mail and coming back', async () => {
+    invokeMock.mockResolvedValue({ outcome: 'completed' });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await startSchoolMailActivation('/mail');
+    const url = new URL((invokeMock.mock.calls[0]![1] as { url: string }).url);
+    expect(url.searchParams.get('scope')?.split(' ')).toContain('school_mail');
+    expect(localStorage.getItem('canari_oidc_return')).toBe('/mail');
+    // Its callback is the one every sign-in takes: it keeps the address.
+    await signIn({
+      access_token: 'h.e30.s',
+      id_token: idToken(),
+      school_mail: 'jane.doe@etu.emse.fr',
+      user: { id: 'user-1' },
+    });
+    expect(await schoolMailAddress()).toBe('jane.doe@etu.emse.fr');
+    log.mockRestore();
   });
 
   it('goes to /login at once, without waiting for the end-session sheet to close', async () => {
