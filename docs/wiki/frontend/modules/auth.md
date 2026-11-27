@@ -898,6 +898,7 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `local_state_unknown`, `local_state_move_unfinished` | untyped load fault, interrupted move | reopen the app | none |
 | `local_state_owner_unrecorded` | storage refused a write | free space, retry | "Deverrouiller" |
 | `vault_not_this_account`, `keystore_empty` | saved unlock not usable | type the PIN | keypad |
+| `biometric_dismissed` | the user dismissed the biometric sheet; the key is in the keystore, unread | type the PIN | keypad |
 | `device_holds_other_account` | the state is another account's | sign out | "Se deconnecter"; reset withheld |
 | `state_written_by_another_tab`, `state_owned_by_another_tab` | another tab holds the state | close it or use it | none |
 | `pin_reset_unsettled` | a reset waits for the server | go online, retry | "Deverrouiller" |
@@ -1567,6 +1568,17 @@ person asked for the sheet: the cold-launch flow (`startLoginFlow`) asks the cad
 hides the in-app `BiometricBottomSheet`; the PIN modal's "use biometrics" button always prompts. An
 unattended read that finds nothing (a device enrolled before WP-SEC-1 has no background item) is
 the existing `keystore_empty` failure and lands on the PIN modal, whose button prompts.
+
+**A dismissed sheet is its own code (1.8.3).** The plugins reject a dismissal with a typed code
+(`PROMPT_DISMISSED`: Android `BiometricPrompt.ERROR_USER_CANCELED` / `ERROR_NEGATIVE_BUTTON` /
+`ERROR_CANCELED`; iOS `errSecUserCanceled`), `DeviceKeyStore::read_device_key` answers
+`DeviceKeyRead::{Found, Absent, PromptDismissed}`, `resolve_at_rest_key` raises
+`MlsError::KeystorePromptDismissed` (`KEYSTORE_PROMPT_DISMISSED`, a state-load code), the page types it
+`KeystorePromptDismissedError` and the login throws `LoginFailure('biometric_dismissed')` - an expected
+outcome with the same keypad - so a log no longer says `keystore_empty` for a key that is there
+(owner's Android log, 2026-11-25). Compiled and unit-tested (`state_load_failure_is_typed.rs`,
+`mlsStateLoadError.test.ts`); the sheet itself is owed a reading on both phones
+([device-verification](../../device-verification.md)).
 
 **Owed on hardware** - nothing here has run on a phone yet: [device-verification](../../device-verification.md).
 

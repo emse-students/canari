@@ -79,6 +79,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   SCHEMA_VERSION,
   PENDING_MUTATIONS_ORDER_INDEX_STATEMENT,
+  DELETED_CONVERSATIONS_TABLE_STATEMENT,
   PENDING_MUTATIONS_TABLE_STATEMENT,
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
@@ -112,7 +113,7 @@ import {
   outboxServerErrorsStatement,
   outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
-import { settleRetainedTables } from './sqliteRetained';
+import { executeOwnTransaction, settleRetainedTables } from './sqliteRetained';
 import {
   newStoreIncarnation,
   STORE_INCARNATION_KEEP_STATEMENT,
@@ -292,6 +293,27 @@ export class SqliteStorage implements IStorage {
     }
   }
 
+  /**
+   * Closes THIS file's pool and loads a fresh one in its place (`PoolRecycler`, `sqliteRetained.ts`): what a script
+   * holding its own `BEGIN` asks for when it fails, so no transaction it left open survives on a
+   * pooled connection. The close names the path - a bare `close()` closes every pool of the plugin.
+   */
+  private readonly recyclePool = async (): Promise<void> => {
+    console.warn(
+      `[SQLite] a script holding its own transaction failed - recycling the pool of ${this.dbPath}`
+    );
+    const Database = (await import('@tauri-apps/plugin-sql')).default;
+    try {
+      await this.db?.close(this.dbPath);
+    } catch (e) {
+      // The load below replaces the pool whatever the close did; the line says why it may linger.
+      console.warn(
+        `[SQLite] the failed pool could not be closed before its replacement: ${String(e)}`
+      );
+    }
+    this.db = await Database.load(this.dbPath);
+  };
+
   /** The body of {@link init}; never called but through it. */
   private async openAndMigrate(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
@@ -321,7 +343,7 @@ export class SqliteStorage implements IStorage {
     // FIRST, before anything reads or writes a table: a copy a migration set aside and could not yet
     // release - a kill, or a defect its proof caught - is restored from and released here
     // (`sqliteRetained.ts`, charter principle 2). One read of `sqlite_master` when there is none.
-    await settleRetainedTables(this.db);
+    await settleRetainedTables(this.db, this.recyclePool);
 
     // Schema: conversations carry their lifecycle state (active|pending|removed).
     // Older databases (with an `is_ready` column) are migrated in v4 below.
@@ -465,6 +487,11 @@ export class SqliteStorage implements IStorage {
     // yet (a group joined in the same drain), and it names a conversation only to be cleared with it.
     await this.db.execute(PENDING_MUTATIONS_TABLE_STATEMENT);
     await this.db.execute(PENDING_MUTATIONS_ORDER_INDEX_STATEMENT);
+
+    // The conversations this device DELETED (`wasConversationDeleted`): the one durable fact that tells
+    // a native mirror line naming a conversation never stored here yet from one naming a conversation
+    // the member removed. Created by every open, fresh or not, like `feed_pages`; empty until a delete.
+    await this.db.execute(DELETED_CONVERSATIONS_TABLE_STATEMENT);
 
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
@@ -823,7 +850,7 @@ export class SqliteStorage implements IStorage {
     // The swap re-proves both facts INSIDE its own transaction (`messageRekeySteps`): the count
     // above explains a refusal, the guards in the swap are what make the drop safe.
     try {
-      await this.db.execute(steps.swap);
+      await executeOwnTransaction(this.db, steps.swap, this.recyclePool);
     } catch (e) {
       console.error(
         `[SQLite] Migration v22->v23: the swap REFUSED or failed and rolled back - both tables are left as they were for the next open: ${String(e)}`
@@ -836,7 +863,7 @@ export class SqliteStorage implements IStorage {
     );
     // The old table was set aside, not dropped: proved against the new one, restored from if it is
     // not whole, and released only then (`sqliteRetained.ts`).
-    await settleRetainedTables(this.db);
+    await settleRetainedTables(this.db, this.recyclePool);
   }
 
   // -- Conversations -------------------------------------------------------
@@ -868,8 +895,30 @@ export class SqliteStorage implements IStorage {
         conv.serverLastMessageAt ?? null,
       ]
     );
+    await this.clearDeletedMark(conv);
     // What waits for this row acts now (a native mirror line naming it, `conversationStored.ts`).
     announceConversationStored(conv.id);
+  }
+
+  /**
+   * A row written for a conversation that is not `removed` ends its "deleted here" mark: the member
+   * is in it again (a Welcome, a discovery, a restore). The `removed` stub the mirror recreates for
+   * a reply to a deleted conversation keeps it - it is the deletion's own trace, not a return.
+   */
+  private async clearDeletedMark(conv: ConversationMeta): Promise<void> {
+    if (conv.lifecycle === 'removed') return;
+    await this.db.execute('DELETE FROM deleted_conversations WHERE conversation_id = $1', [
+      conv.id,
+    ]);
+  }
+
+  /** See {@link IStorage.wasConversationDeleted}. */
+  async wasConversationDeleted(id: string): Promise<boolean> {
+    const rows: any[] = await this.db.select(
+      'SELECT 1 AS hit FROM deleted_conversations WHERE conversation_id = $1 LIMIT 1',
+      [id]
+    );
+    return rows.length > 0;
   }
 
   /**
@@ -941,6 +990,10 @@ export class SqliteStorage implements IStorage {
   async deleteConversation(id: string): Promise<void> {
     await this.deleteMessagesForConversation(id);
     await this.db.execute('DELETE FROM conversations WHERE id = $1', [id]);
+    await this.db.execute(
+      'INSERT OR IGNORE INTO deleted_conversations (conversation_id) VALUES ($1)',
+      [id]
+    );
   }
 
   /** Delete all messages (and the mutations awaiting them) for a conversation; the row is kept. */
@@ -1825,6 +1878,7 @@ export class SqliteStorage implements IStorage {
         conv.serverLastMessageAt ?? null,
       ]
     );
+    await this.clearDeletedMark(conv);
     announceConversationStored(conv.id);
   }
 
@@ -2555,8 +2609,8 @@ export class SqliteStorage implements IStorage {
   // -- Misc ----------------------------------------------------------------
 
   /**
-   * Delete every row from the messages, conversations, outbox, graine, owed-exit, distribution and
-   * feed-page tables, then the outbox blob store (account reset / testing). Rejects with
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit, distribution,
+   * feed-page, pending-mutation and deleted-conversation tables, then the outbox blob store (account reset / testing). Rejects with
    * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
    */
   async clear(): Promise<void> {
@@ -2574,6 +2628,9 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM feed_pages');
     // A mutation waiting for a message of the account goes with the account.
     await this.db.execute('DELETE FROM pending_mutations');
+    // So do the conversations it deleted: a mark left behind would fail the next account's shade
+    // reply to a conversation it shares with this one, before that conversation's row is written.
+    await this.db.execute('DELETE FROM deleted_conversations');
     // LAST, and only once every row above is gone: a separate database that may refuse to open
     // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
     await clearOutboxBlobsLast(this.blobs);

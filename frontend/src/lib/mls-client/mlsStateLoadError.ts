@@ -26,6 +26,9 @@ import {
 /** The code an empty keystore carries - `MlsError::KeystoreKeyUnavailable` in `mls-core`. */
 const KEYSTORE_KEY_UNAVAILABLE = 'KEYSTORE_KEY_UNAVAILABLE';
 
+/** The code a dismissed biometric sheet carries - `MlsError::KeystorePromptDismissed` in `mls-core`. */
+const KEYSTORE_PROMPT_DISMISSED = 'KEYSTORE_PROMPT_DISMISSED';
+
 /** The code of a sign-in refused over an unfinished move between two accounts' state places. */
 const SLOT_MOVE_UNFINISHED = 'SLOT_MOVE_UNFINISHED';
 
@@ -88,6 +91,18 @@ export class KeystoreKeyUnavailableError extends Error {
 }
 
 /**
+ * Biometric mode, and the user dismissed the sheet (cancel, negative button, system or app cancel).
+ * The key IS in the keystore, it was not read - so it is NOT {@link KeystoreKeyUnavailableError},
+ * whose reader looks for a wiped keystore. Same recovery: nothing destroyed, the PIN keypad.
+ */
+export class KeystorePromptDismissedError extends Error {
+  constructor(detail: string, cause?: unknown) {
+    super(`${KEYSTORE_PROMPT_DISMISSED}: ${detail}`, { cause });
+    this.name = 'KeystorePromptDismissedError';
+  }
+}
+
+/**
  * A state load failed for a reason `mls-core` does not type (a codec error, a poisoned lock, an IPC
  * fault, a trap). Its cause is UNKNOWN, and is classified so explicitly - never guessed from its
  * text, which is kept for the logs only.
@@ -140,6 +155,8 @@ export function mlsStateLoadErrorOf(rejection: unknown): Error {
   }
   if (isVerdictCode(code)) return new MlsStateVerdictError(code, message, null, rejection);
   if (code === KEYSTORE_KEY_UNAVAILABLE) return new KeystoreKeyUnavailableError(message, rejection);
+  if (code === KEYSTORE_PROMPT_DISMISSED)
+    return new KeystorePromptDismissedError(message, rejection);
   if (code === SLOT_MOVE_UNFINISHED) {
     console.error(
       `[MLS] The sign-in was refused: a move of a local state between two accounts is unfinished - nothing destroyed, retried at the next sign-in: ${message.slice(0, 200)}`

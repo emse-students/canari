@@ -110,7 +110,7 @@ the counts.
   nowhere and the form not opened; (B) moving the opening earlier asks first, naming how many people
   asked to be told; (display) the reminder names the association (its logo) and the form's title.
   Refused: (C) notifying only once the link "was distributed", which nothing can know
-  ([entry](../backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+  ([built](../frontend/modules/forms.md#tester-lenvoi-in-the-preview-owner-2026-11-17-built-2026-11-26), `1.7.1`).
 - **A form notifies only the people who pressed its bell.** *"Je ne pense pas que les formulaires
   doivent notifier les gens (sauf quand ils ont cliqué sur la cloche du formulaire)."* A form's opening
   writes no row for the association's followers any more; only an "asked" row ("Me prévenir") gets
@@ -118,7 +118,7 @@ the counts.
   entry, with a defect found that day: an opening moved later after it fired leaves the follower rows
   stamped as told, so the real opening tells nobody - every kind's moved opening must re-arm what has
   not really opened; that day's case was repaired by hand on production with the owner's yes
-  ([entry](../backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+  ([built](../frontend/modules/forms.md#tester-lenvoi-in-the-preview-owner-2026-11-17-built-2026-11-26), `1.7.1`).
 
 ### The evening (the owner present)
 

@@ -1,4 +1,4 @@
-import { createMlsStatePersister } from './mlsStatePersister';
+import { createMlsStatePersister, describeAskers } from './mlsStatePersister';
 import {
   registerMlsStatePersister,
   unregisterMlsStatePersister,
@@ -494,7 +494,9 @@ describe('createMlsStatePersister - the switch is read at every drain end', () =
     expect(lines).toEqual([
       '[MLS] Disk writes deferred (bulk ingest depth=1)',
       '[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.',
-      expect.stringMatching(/^\[MLS\] Encrypted state checkpoint persisted\.( \(\d+ ms\))?$/),
+      expect.stringMatching(
+        /^\[MLS\] Encrypted state checkpoint persisted\.( \(\d+ ms\))? Asked by: drain x1\.$/
+      ),
     ]);
     expect(debug).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
@@ -644,5 +646,79 @@ describe('persistMlsStructuralCheckpoint and the skip switch', () => {
 
   it('ON retries it too: a structural write that failed is still owed, so the drain never skips', async () => {
     expect(await run(10)).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createMlsStatePersister - the checkpoint line names who asked for it', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function make(persistImpl?: () => Promise<void>) {
+    const lines: string[] = [];
+    const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      log: (m) => lines.push(m),
+    });
+    const persisted = () => lines.filter((l) => l.includes('checkpoint persisted'));
+    return { lines, persisted, persistCheckpoint, persister };
+  }
+
+  it('describeAskers prints the counted kinds in a fixed order, and nothing for none', () => {
+    expect(describeAskers(new Map())).toBe('');
+    expect(
+      describeAskers(
+        new Map([
+          ['flush', 1],
+          ['applied', 3],
+          ['replay', 2],
+        ])
+      )
+    ).toBe(' Asked by: applied x3, replay x2, flush x1.');
+  });
+
+  it('a Welcome or commit applied (persistNow) is counted as applied, and a burst is one checkpoint', async () => {
+    const { persisted, persister } = make();
+    persister.persistNow();
+    persister.persistNow();
+    await flushMacrotask();
+    expect(persisted()).toEqual([expect.stringContaining('Asked by: applied x2.')]);
+  });
+
+  it('a replay window closing is told apart from a live drain closing', async () => {
+    const { persisted, persister } = make();
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd({ bufferUi: false, showOverlay: false });
+    await flushMacrotask();
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd({ bufferUi: true, showOverlay: false });
+    await flushMacrotask();
+    expect(persisted()).toEqual([
+      expect.stringContaining('Asked by: replay x1.'),
+      expect.stringContaining('Asked by: drain x1.'),
+    ]);
+  });
+
+  it('a flush with nothing to write counts nobody, so the next line is not credited to it', async () => {
+    const { persisted, persister } = make();
+    await persister.flush();
+    persister.persistNow();
+    await flushMacrotask();
+    expect(persisted()).toEqual([expect.stringContaining('Asked by: applied x1.')]);
+  });
+
+  it('askers of a FAILED checkpoint are still named by the one that retries it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let fail = true;
+    const { persisted, persister } = make(() =>
+      fail ? Promise.reject(new Error('disk')) : Promise.resolve()
+    );
+    persister.persistNow();
+    await flushMacrotask();
+    expect(persisted()).toEqual([]);
+    fail = false;
+    await persister.flush();
+    expect(persisted()).toEqual([expect.stringContaining('Asked by: applied x1, flush x1.')]);
   });
 });

@@ -4,6 +4,7 @@
     type MentionUser,
   } from '$lib/composables/useMentionAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { distinguishHomonyms } from '$lib/utils/users/distinguishHomonyms';
 
   interface Props {
     open: boolean;
@@ -13,6 +14,11 @@
   }
 
   let { open, suggestions, selectedIdx, onSelect }: Props = $props();
+
+  /** The promo or formation beside a row whose name another shown row shares (D56). */
+  const homonymDetails = $derived(
+    distinguishHomonyms(suggestions.filter((u) => u.id !== MENTION_EVERYONE_ROW_ID))
+  );
 </script>
 
 {#if open && suggestions.length > 0}
@@ -46,6 +52,9 @@
             class="text-text-main font-medium">{user.displayName || user.id}</span
           >{#if user.id === MENTION_EVERYONE_ROW_ID}<span class="text-text-muted ml-2 text-xs"
               >{m.mention_everyone_hint()}</span
+            >{:else if homonymDetails.get(user.id)}<span
+              class="text-text-muted ml-2 text-xs"
+              data-homonym-detail>{homonymDetails.get(user.id)}</span
             >{/if}
         </button>
       </li>

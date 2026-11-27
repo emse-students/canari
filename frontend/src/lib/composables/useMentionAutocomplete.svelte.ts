@@ -23,7 +23,16 @@ import {
 import { listBlockedUsers } from '$lib/users/blocks';
 import { Log } from '$lib/utils/Log';
 
-export type MentionUser = { id: string; displayName: string | null };
+/**
+ * A mention row. `promo` and `formation` come with a directory search row (D56) and tell two people
+ * of the same name apart in the list; a roster row has none.
+ */
+export type MentionUser = {
+  id: string;
+  displayName: string | null;
+  promo?: number | null;
+  formation?: string | null;
+};
 
 /**
  * The picker row that calls every member (`@tous`). Its id is no account id (those are 64 hex), so

@@ -82,7 +82,13 @@ impl MlsManager {
         }
 
         // Path A (no device_key_b64 — biometric mode): retrieve key from platform keystore.
-        if let Some(key) = keystore.retrieve_device_key(&alias) {
+        let read = keystore.read_device_key(&alias);
+        if read == crate::keystore::DeviceKeyRead::PromptDismissed {
+            return Err(MlsError::KeystorePromptDismissed(
+                "the biometric sheet was dismissed".into(),
+            ));
+        }
+        if let crate::keystore::DeviceKeyRead::Found(key) = read {
             // Quick validation: can the key actually decrypt the blob?
             // If not (PIN changed, blob re-encrypted with a new key), delete the
             // stale keystore entry so the user is prompted for the new PIN.
