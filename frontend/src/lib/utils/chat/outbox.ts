@@ -893,6 +893,12 @@ interface UploadTask {
    * then fails takes the ladder like any message (review of #2061).
    */
   sendDue: boolean;
+  /**
+   * The quote the file answers, read from the FULL row when the transfer started. The lane meets the
+   * entry again through the queue's slim read, which leaves a media row's payload (so its quote)
+   * undecoded: without this the send, the row and the proto were all built with no `replyTo`.
+   */
+  replyTo?: OutboxEntry['replyTo'];
 }
 
 /**
@@ -2181,6 +2187,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       conversationIds,
       settled: null,
       sendDue: false,
+      ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
     };
     uploadTasks.set(entry.id, task);
     const control = new AbortController();
@@ -3190,8 +3197,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // ITS UPLOAD ENDED IN THIS PAGE LIFE: the task holds the payload, bytes dropped, with the ref to
     // send - so the row is not read a second time, and a ref whose row write failed is still sent
     // (that loss costs a second upload only after a kill).
+    // ITS QUOTE COMES BACK WITH IT: the slim row this entry was read as holds no `replyTo`, and a file
+    // sent as a reply went out - and was stored - as a plain photo (seen on the iPhone after a cold
+    // start, 2026-11-27: the peer never had the quote either).
     if (entry.kind === 'media' && task?.settled?.ok)
-      entry = { ...entry, media: task.settled.media };
+      entry = {
+        ...entry,
+        media: task.settled.media,
+        ...(entry.replyTo || !task.replyTo ? {} : { replyTo: task.replyTo }),
+      };
 
     // THE PAYLOAD OF AN ATTACHMENT IS READ HERE AND NOWHERE EARLIER: the queue read returns a media
     // entry as its scheduling columns only, because decoding the file is what froze a Pixel 6a once

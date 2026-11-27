@@ -382,6 +382,15 @@ call invite for as long as it stayed on that network (CALL-WS-V6,
   TLS and the WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched
   version's `Builder::new` takes no argument, so it fails to compile rather than install silently. A
   vendored fork: Dependabot does not move it, an upstream release is rebased by hand.
+- **A leaving page closes its socket with code 1001, and the plugin then forwards nothing more** (2026-11-27,
+  the `LeavingConnections` patch). The reader task outlives the document: after `pagehide` the server's answer
+  to our own close was forwarded into the dead page's channel, `[TAURI] Couldn't find callback id N` once per
+  reload (iPhone 12, `1.8.3-alpha.1`, after the release itself was already sent without awaiting; the earlier
+  fix removed the 15 s repeats, not this last frame). `TauriMlsService.pausePlatformSocket` sends the
+  `disconnect` frame, then a `Close` coded `PAGE_LEAVING_CLOSE_CODE` (1001, "going away"); the plugin marks the
+  connection BEFORE writing it and the reader drops every later frame. An ordinary `disconnect()` (1000) still
+  reports its `Close` to a live page. The number is the contract between `TauriMlsService.ts` and `GOING_AWAY` in
+  the patch.
 - **The line says what the race PROVES, not who won.** The preferred address won: `debug`. Another
   address won while the preferred attempt was still PENDING: `INFO` (`... while the preferred address
   was still pending - lost: ...`) - one lost SYN on a healthy link looks exactly like this, and the

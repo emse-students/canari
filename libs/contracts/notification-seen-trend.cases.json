@@ -18,7 +18,10 @@
     "entry that outlived its window names a post no trend can name again.",
     "",
     "Case fields: `me` the signed-in account (`push_context.json`); `contentKey` and `postId` the push's own fields;",
-    "`expected` true when the push is withheld on this device, false when it is shown as before."
+    "`expected` true when the push is withheld on this device, false when it is shown as before; `reason` the end of the",
+    "decision a native reader LOGS (Android `SeenTrends.Verdict`, Swift `SeenTrendVerdict`, ObjC `CanariSeenTrendVerdict`):",
+    "every end is said, because a bare false hid a server push that named no post (1.8.3-alpha.1, Mi 9T). `no-record` (no",
+    "`seen_posts.json`) is not a case here: every case reads the book above."
   ],
   "trendWindowHours": 24,
   "trendKeys": ["social_campus_trend", "social_campus_trend_photo", "social_campus_trend_video"],
@@ -30,17 +33,17 @@
     }
   },
   "cases": [
-    { "name": "a trend for a displayed post is withheld", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": true },
-    { "name": "the photo form is a trend too", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend_photo", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": true },
-    { "name": "the video form is a trend too", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend_video", "postId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "expected": true },
-    { "name": "the post id is read in any case and trimmed", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": " AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA ", "expected": true },
-    { "name": "a post this device never displayed is announced", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "expected": false },
-    { "name": "a push that names no post is announced", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "", "expected": false },
-    { "name": "only the trend keys are withheld - a comment on a displayed post is told", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_comment", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false },
-    { "name": "a followed post's announcement is told even when displayed", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_followed_post", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false },
-    { "name": "a wording is never a classifier", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "Suggestion : campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false },
-    { "name": "another account's record never withholds", "me": "2222222222222222222222222222222222222222222222222222222222222222", "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false },
-    { "name": "no signed-in account withholds nothing", "me": null, "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false },
-    { "name": "a push with no content key is told", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": null, "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false }
+    { "name": "a trend for a displayed post is withheld", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": true, "reason": "withheld" },
+    { "name": "the photo form is a trend too", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend_photo", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": true, "reason": "withheld" },
+    { "name": "the video form is a trend too", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend_video", "postId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "expected": true, "reason": "withheld" },
+    { "name": "the post id is read in any case and trimmed", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": " AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA ", "expected": true, "reason": "withheld" },
+    { "name": "a post this device never displayed is announced", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "expected": false, "reason": "not-displayed" },
+    { "name": "a push that names no post is announced", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_campus_trend", "postId": "", "expected": false, "reason": "no-post-id" },
+    { "name": "only the trend keys are withheld - a comment on a displayed post is told", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_comment", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "not-a-trend" },
+    { "name": "a followed post's announcement is told even when displayed", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "social_followed_post", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "not-a-trend" },
+    { "name": "a wording is never a classifier", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": "Suggestion : campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "not-a-trend" },
+    { "name": "another account's record never withholds", "me": "2222222222222222222222222222222222222222222222222222222222222222", "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "other-account" },
+    { "name": "no signed-in account withholds nothing", "me": null, "contentKey": "social_campus_trend", "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "signed-out" },
+    { "name": "a push with no content key is told", "me": "1111111111111111111111111111111111111111111111111111111111111111", "contentKey": null, "postId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "expected": false, "reason": "not-a-trend" }
   ]
 }

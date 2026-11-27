@@ -92,7 +92,7 @@ describe('adminScopeLabels', () => {
     expect(adminScopeLabels(false).title()).not.toBe(adminScopeLabels(true).title());
   });
 
-  it('pairs each heading with the description that was already telling the truth', () => {
+  it('pairs each heading with its own description', () => {
     const moderator = adminScopeLabels(false);
     const global = adminScopeLabels(true);
 
@@ -102,6 +102,14 @@ describe('adminScopeLabels', () => {
     for (const scope of [moderator, global]) {
       expect(scope.title().length).toBeGreaterThan(0);
       expect(scope.description().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('names no single queue: the row it describes counts every queue the reader may act on', () => {
+    // 2026-11-27, dev: a space moderator's row read "Moderation de l'agenda de vos associations"
+    // over a badge counting REPORTS (`adminQueueCounts.total`). The words must hold for any sum.
+    for (const scope of [adminScopeLabels(false), adminScopeLabels(true)]) {
+      expect(scope.description()).not.toMatch(/agenda/i);
     }
   });
 });

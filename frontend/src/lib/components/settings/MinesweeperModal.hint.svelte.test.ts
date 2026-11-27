@@ -71,7 +71,7 @@ async function openUnrankedAndDig() {
   expect(startChallenge).not.toHaveBeenCalled();
 }
 
-describe('MinesweeperModal - the bulb', () => {
+describe('MinesweeperModal - the miner lamp (was the bulb)', () => {
   it('draws no bulb in a ranked game, before the first dig or once the challenge is held', async () => {
     startChallenge.mockResolvedValue({
       challengeId: 'c1',
@@ -94,9 +94,13 @@ describe('MinesweeperModal - the bulb', () => {
     expect(bulb()!.disabled).toBe(true);
     await firstDig();
     expect(bulb()!.disabled).toBe(false);
+    // The hint is a miner's lamp, not a bulb (owner, 2026-11-27): unlit until a hint is shown, then lit.
+    expect(bulb()!.querySelector('svg[data-lit]')?.getAttribute('data-lit')).toBe('false');
     findHint.mockReturnValue({ kind: 'numbers', tier: 'single', cells: [0] });
     bulb()!.click();
     flushSync();
+    expect(bulb()!.querySelector('svg[data-lit]')?.getAttribute('data-lit')).toBe('true');
+    expect(bulb()!.querySelector('svg.lucide-lightbulb')).toBeNull();
     expect(findHint).toHaveBeenCalledOnce();
     expect(lit().map((el) => el.dataset.hint)).toEqual(['hint']);
     expect(cell(0).dataset.hint).toBe('hint');
