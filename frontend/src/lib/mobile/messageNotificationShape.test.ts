@@ -111,6 +111,18 @@ describe('an unreadable direct message does not repeat its sender (owner, 2026-1
     // The decrypted banner's title is the push's name, or an unnamed group's members' label.
     expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(1);
     expect(nse.match(/groupName: titleName, declaredGroup: isGroup,/g)).toHaveLength(1);
+    // Both iOS paths title an unnamed group through the ONE Rust rule, declared in both headers
+    // (`mobile/unnamed_group_label.rs`), only when the push declares a group and names none.
+    expect(nse).toContain('canari_native_unnamed_group_title(dir.path, ctx.userId, groupId');
+    expect(nse).toContain('groupName.isEmpty && isGroup == true');
+    expect(app).toContain(
+      'canari_native_unnamed_group_title(dir.UTF8String, ctx.userId.UTF8String'
+    );
+    expect(app).toContain('groupName.length == 0 && isGroup != nil && isGroup.boolValue');
+    expect(app).toContain('CanariShowMessageNotification(shownName, titleName, body,');
+    for (const header of ['canari_NSE/canari_mls_ffi.h', 'Sources/canari/canari_rust_bridge.h']) {
+      expect(read(header), header).toContain('char *canari_native_unnamed_group_title(');
+    }
     expect(nse).toContain('declared ?? (!groupName.isEmpty && groupName != senderName)');
     expect(nse).toContain('return localized("notif.message.new", locale: locale)');
     expect(app).toContain('CanariBuildFallbackText(shownName, groupName, isGroup)');

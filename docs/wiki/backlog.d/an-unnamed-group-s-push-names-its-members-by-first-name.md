@@ -4,8 +4,9 @@ target: 1.8.3
 
 _2026-11-27: BUILT (the native title, composed on the phone by one Rust rule held to the app's by
 `libs/contracts/unnamed-group-label.cases.json`); what is left is the reading below. The Rust and the
-web halves are tested and the Android Kotlin compiles locally; the iOS extension's Swift was NOT
-compiled (no Mac here), so its first build is part of this reading._
+web halves are tested and the Android Kotlin compiles locally; the iOS extension's Swift and the
+app process's Objective-C (`canari_push.mm`, the same Rust call) were NOT compiled (no Mac here), so
+their first build is part of this reading._
 
 _2026-11-26: moved to 1.8.3 when 1.8.2 shipped._
 

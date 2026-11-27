@@ -8071,9 +8071,12 @@ choose, and the label is composed from what each device already holds.
   (`notificationGroupName` takes the resolved title for a group, `useMessaging`).
 - **A push raised while the app is DEAD** (2026-11-27, the owner's entry of 2026-11-17) is titled
   the same way, composed ON THE PHONE by the one native copy of the rule,
-  `src-tauri/src/mobile/unnamed_group_label.rs`, which the Android FCM service
-  (`nativeUnnamedGroupTitle`) and the iOS extension (`canari_native_unnamed_group_title`) both call
-  when the push declares a group (`isGroup`) and names none:
+  `src-tauri/src/mobile/unnamed_group_label.rs`, which every native push composer calls when the
+  push declares a group (`isGroup`) and names none: the Android FCM service
+  (`nativeUnnamedGroupTitle`), and on iOS both the extension (`unnamedGroupTitle`) and the app
+  process (`CanariUnnamedGroupTitle`, `canari_push.mm`, reading the copies in the app's data
+  directory) through `canari_native_unnamed_group_title`; `messageNotificationShape.test.ts` pins the
+  two iOS call sites and both headers:
   - **who** is the tree AT THE MESSAGE'S EPOCH: the push decrypt answers `treeMembers` (canonical
     user ids, sorted) from the state it just decrypted with, after its in-memory commit catch-up
     (`with_tree_members`, `background.rs`) - so a member removed while the app was dead is already
