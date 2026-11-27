@@ -60,7 +60,6 @@
   import { replyCaption } from '$lib/utils/chat/replyCaption';
   import ReplyGifThumb from './ReplyGifThumb.svelte';
   import ReplyMediaThumb from './ReplyMediaThumb.svelte';
-  import { onMount } from 'svelte';
   import type { QuotedVisual } from '$lib/utils/chat/quotedMedia';
   import {
     onDecryptedMediaHeld,
@@ -69,7 +68,6 @@
   } from '$lib/utils/mediaBlobCache';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import { mediaKindLabel } from '$lib/envelope';
-  import { Log } from '$lib/utils/Log';
 
   interface Props {
     /** ID of the quoted message, used for scroll-to navigation. */
@@ -126,24 +124,23 @@
   const mediaCaption = $derived(quotedMedia ? shortenReplyPreview(quotedMedia.caption) : '');
 
   // Takes the held blob when there is one, else waits for the store to say it landed - the
-  // original's own bubble may still be downloading. One hold at a time, released on teardown.
-  onMount(() => {
+  // original's own bubble may still be downloading. Keyed on the quoted ref, so a ref that changes
+  // or an original that joins the thread late is followed; the cleanup releases the hold (only if
+  // one was taken) and cancels the wait. A VIDEO takes no hold: it would pin the blob for a quote,
+  // so it draws its ThumbHash, or its label.
+  $effect(() => {
     const ref = quotedMedia?.ref;
-    if (!ref) return;
+    if (!ref || ref.type !== 'image') return;
     let held = false;
     let cancelWait: (() => void) | null = null;
-    const take = (): boolean => {
+    const take = () => {
       const warm = retainWarmDecryptedMediaBlobUrl(ref);
-      if (!warm) return false;
+      if (!warm) return;
       held = true;
       heldBlobUrl = warm;
-      return true;
     };
-    if (!take()) {
-      Log.d(
-        'MessageReplyQuote',
-        `quoted ${ref.mediaId.slice(0, 8)} is not held in memory - ${hashUrl ? 'its embedded placeholder' : 'the text label'} stands in until it lands`
-      );
+    take();
+    if (!held) {
       cancelWait = onDecryptedMediaHeld(ref, () => {
         cancelWait = null;
         take();
@@ -152,6 +149,7 @@
     return () => {
       cancelWait?.();
       if (held) releaseDecryptedMediaBlobUrl(ref);
+      heldBlobUrl = null;
     };
   });
 
@@ -211,7 +209,6 @@
       <span class="flex items-center gap-2">
         <ReplyMediaThumb
           src={thumbSrc}
-          video={quotedMedia.ref.type === 'video' && !!heldBlobUrl}
           label={mediaLabel}
           width={quotedMedia.ref.width}
           height={quotedMedia.ref.height}

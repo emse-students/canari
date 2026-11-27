@@ -75,16 +75,22 @@ describe('MessageReplyQuote - the quoted photo', () => {
     const t = render({ ref: photo, caption: '' });
     const img = t.querySelector('img[data-testid="reply-media-thumb"]')!;
     expect(img.getAttribute('src')).toBe('blob:held');
-    expect(img.getAttribute('aria-label')).toBe(m.chat_preview_photo());
+    expect(img.getAttribute('alt')).toBe(m.chat_preview_photo());
     expect(img.className).toContain('opacity-60');
     expect(t.querySelector('button')!.textContent).not.toContain(m.chat_preview_photo());
   });
 
-  it('draws a video as its first frame', () => {
+  it('draws a video from its placeholder and never holds its blob', () => {
     warm.mockReturnValue('blob:vid');
-    const t = render({ ref: { ...photo, type: 'video', mimeType: 'video/mp4' }, caption: '' });
-    const video = t.querySelector('video[data-testid="reply-media-thumb"]')!;
-    expect(video.getAttribute('src')).toBe('blob:vid#t=0.1');
+    const t = render({
+      ref: { ...photo, type: 'video', mimeType: 'video/mp4', placeholder: 'abc' },
+      caption: '',
+    });
+    expect(t.querySelector('img[data-testid="reply-media-thumb"]')!.getAttribute('src')).toBe(
+      'data:image/png;base64,HASH'
+    );
+    expect(warm).not.toHaveBeenCalled();
+    expect(arrival).toBeNull();
   });
 
   it('falls back to the embedded placeholder when nothing is held', () => {

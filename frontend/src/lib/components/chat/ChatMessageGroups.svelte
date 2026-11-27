@@ -168,7 +168,7 @@
 
   /** The messages the thread holds: the only place a quote may look for its original. */
   const heldMessages = $derived(
-    visibleMessageGroups.filter(isMessageGroupRow).map((g) => g.message)
+    new Map(visibleMessageGroups.filter(isMessageGroupRow).map((g) => [g.message.id, g.message]))
   );
 
   const pinnedSet = $derived(new Set(pinnedIds));

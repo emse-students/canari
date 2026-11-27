@@ -6,7 +6,8 @@ Built 2026-11-27 on the owner's two minifixes ([chat](../frontend/modules/chat.m
 
 - reply with a photo to a photo: no yellow edge around the reply, the quote attached above it;
 - the quote draws the photo small and semi-transparent when the original is on screen, its blurred placeholder when only that is held, and "Photo" when the original is not in the loaded thread;
-- same for a video (first frame);
+- a video quote draws its blurred placeholder when it has one, else the label (never a first frame: that would pin the video blob);
+- the media-only reply keeps `rounded-bubble` on all four corners under the stacked quote: check the seam reads as attached;
 - a reply to a CanaReel, a file or a voice note keeps its text quote.
 
 Delete this entry once read.

@@ -8435,10 +8435,10 @@ around it, the quote stays stacked above. A reel, a voice note or a file keeps i
 keeps the bubble (principle 7, simplicity: the owner asked only about the bare image).
 
 **Thumbnail in the quote:** a stored quote carries only a text preview, so `ChatMessageGroups` looks
-the original up among the messages it already renders (`quotedVisualMedia`, never a fetch) and hands
+the original up in an id map of the messages it already renders (`quotedVisualMedia`, never a fetch; the same original answers with the same object) and hands
 its ref to `MessageReplyQuote`, which draws `ReplyMediaThumb` (60% opacity, `aria-label` = the kind
 label) from, in order: the decrypted blob already in memory (`retainWarmDecryptedMediaBlobUrl`,
-released on teardown; a video shows its first frame), else the ThumbHash the sender embedded, else
+released on teardown; an `$effect` keyed on the ref; a VIDEO takes no hold - pinning its blob for a quote would keep it alive - and uses its ThumbHash), else the ThumbHash the sender embedded, else
 today's text label. The last two states are legitimate (original not loaded, expired, never opened)
 and log at debug only. A quote mounted before its original finished downloading takes the blob the moment it lands
 (`onDecryptedMediaHeld`, a one-shot arrival listener on `BlobUrlPool`; no polling, no remount).

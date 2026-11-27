@@ -139,7 +139,14 @@ export class BlobUrlPool {
     const waiting = this.arrivals.get(key);
     if (waiting) {
       this.arrivals.delete(key);
-      for (const listener of waiting) listener();
+      for (const listener of waiting) {
+        // One reader's failure must neither skip the others nor fail the load that registered this.
+        try {
+          listener();
+        } catch (error) {
+          console.error(`[blobUrlPool] an arrival listener for ${key} threw`, error);
+        }
+      }
     }
     return blobUrl;
   }

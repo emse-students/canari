@@ -169,4 +169,19 @@ describe('BlobUrlPool', () => {
     pool.retain('a', 'blob:a');
     expect(told).toHaveBeenCalledTimes(1);
   });
+
+  it('a throwing arrival listener neither skips the others nor fails the retain', () => {
+    const pool = new BlobUrlPool();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const after = vi.fn();
+    pool.onArrival('a', () => {
+      throw new Error('boom');
+    });
+    pool.onArrival('a', after);
+    expect(pool.retain('a', 'blob:a')).toBe('blob:a');
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('a');
+    error.mockRestore();
+  });
 });

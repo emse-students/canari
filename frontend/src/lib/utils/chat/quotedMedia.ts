@@ -18,17 +18,29 @@ export interface QuotedVisual {
  * until tapped): `null`, and the quote keeps its text label.
  */
 export function quotedVisualMedia(
-  messages: Iterable<{ id: string; content: string }>,
+  byId: ReadonlyMap<string, { content: string }>,
   quotedId: string
 ): QuotedVisual | null {
-  for (const msg of messages) {
-    if (msg.id !== quotedId) continue;
-    const env = parseEnvelope(msg.content);
-    if (env.kind !== 'media') return null;
-    const ref = env.media;
-    if (ref.type !== 'image' && ref.type !== 'video') return null;
-    if (isReelMessage(ref) || !ref.mediaId) return null;
-    return { ref, caption: env.caption ?? '' };
-  }
-  return null;
+  const msg = byId.get(quotedId);
+  if (!msg) return null;
+  // Answered per CONTENT and kept, so an original that did not change yields the SAME object: a
+  // reply is not handed a new `quotedMedia` on every thread update, and its deriveds do not re-run.
+  const known = answers.get(msg.content);
+  if (known !== undefined) return known;
+  const answer = visualOf(msg.content);
+  if (answers.size >= ANSWERS_MAX) answers.clear();
+  answers.set(msg.content, answer);
+  return answer;
+}
+
+const ANSWERS_MAX = 500;
+const answers = new Map<string, QuotedVisual | null>();
+
+function visualOf(content: string): QuotedVisual | null {
+  const env = parseEnvelope(content);
+  if (env.kind !== 'media') return null;
+  const ref = env.media;
+  if (ref.type !== 'image' && ref.type !== 'video') return null;
+  if (isReelMessage(ref) || !ref.mediaId) return null;
+  return { ref, caption: env.caption ?? '' };
 }
