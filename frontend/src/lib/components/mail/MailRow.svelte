@@ -108,8 +108,10 @@
       data-mail-row-avatar
     >
       {#if selected}
-        <span class="bg-cn-dark flex h-11 w-11 items-center justify-center rounded-full text-white">
-          <Check size={22} aria-hidden="true" />
+        <span
+          class="bg-accent text-on-accent flex h-11 w-11 items-center justify-center rounded-full"
+        >
+          <Check size={22} strokeWidth={3} aria-hidden="true" />
         </span>
       {:else}
         <AvatarPlaceholder

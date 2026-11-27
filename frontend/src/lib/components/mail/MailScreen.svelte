@@ -325,7 +325,13 @@
 
 {#snippet folderColumn()}
   {#if account}
-    <MailFolderList {folders} {view} {account} onSelect={selectView} />
+    <MailFolderList
+      {folders}
+      {view}
+      {account}
+      onSelect={selectView}
+      failed={store.error !== null}
+    />
   {/if}
 {/snippet}
 

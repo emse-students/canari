@@ -7498,6 +7498,7 @@
     }
   ],
   "mail_folders_label": "Dossiers",
+  "mail_folders_unavailable": "Les dossiers n'ont pas pu être chargés.",
   "mail_folders_mine": "Mes dossiers",
   "mail_folders_open": "Ouvrir les dossiers",
   "mail_account_title": "Mail de l'école",
@@ -7556,6 +7557,8 @@
   "mail_attachment_download": "Télécharger {name}",
   "mail_reply": "Répondre",
   "mail_reply_all": "Répondre à tous",
+  "mail_reply_all_short": "À tous",
+  "mail_attachment_unnamed": "piece-jointe",
   "mail_forward": "Transférer",
   "mail_recipient_remove": "Retirer {name}",
   "mail_directory_label": "Suggestions de l'annuaire",

@@ -3,13 +3,18 @@
  * AN HTML MAIL'S FRAME IS DRAWN ONCE ITS DOCUMENT IS FINAL (D9): the frame waits for the message's
  * own inline parts, so the first document it shows already carries them - a `srcdoc` changed while
  * the first one loads was seen to keep the first on screen - and a new document (images allowed) is
- * a new frame, never an in-place navigation.
+ * a new frame, never an in-place navigation. The frame is an opaque origin running only our script,
+ * and the parent acts on a message only from THAT frame, in a shape it knows.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount, type ComponentProps } from 'svelte';
 import { m } from '$lib/paraglide/messages';
+import { MAIL_FRAME_MAX_HEIGHT_PX } from '$lib/mail/mailFrameMessages';
 import type { AttachmentRef } from '$lib/mail/mailTypes';
 import MailHtmlFrame from './MailHtmlFrame.svelte';
+
+const openExternal = vi.hoisted(() => vi.fn(async (_url: string) => {}));
+vi.mock('$lib/utils/openExternal', () => ({ openExternal }));
 
 type FrameProps = ComponentProps<typeof MailHtmlFrame>;
 
@@ -17,7 +22,14 @@ const mounted: (() => void)[] = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
+  openExternal.mockClear();
 });
+
+/** Posts `data` to the app's window as if it came from `source`. */
+function post(data: unknown, source: MessageEventSource | null) {
+  window.dispatchEvent(new MessageEvent('message', { data, source }));
+  flushSync();
+}
 
 const LOGO: AttachmentRef = {
   messageId: '801',
@@ -104,5 +116,39 @@ describe('MailHtmlFrame', () => {
     const after = root.querySelector('iframe');
     expect(after).not.toBe(before);
     expect(after?.getAttribute('srcdoc')).toContain('https://tracker.example.test/p.gif');
+  });
+
+  it('is an opaque origin running scripts only: no same-origin, popup, form or navigation', () => {
+    const tokens = render({}).querySelector('iframe')?.getAttribute('sandbox')?.split(/\s+/);
+    expect(tokens).toEqual(['allow-scripts']);
+  });
+
+  it("takes its height from ITS frame's messages, capped, and ignores any other window", () => {
+    const root = render({});
+    const iframe = root.querySelector('iframe')!;
+    const own = iframe.contentWindow;
+    expect(own).not.toBeNull();
+
+    post({ type: 'mail-frame-height', h: 640 }, own);
+    expect(iframe.style.height).toBe('640px');
+
+    post({ type: 'mail-frame-height', h: 9999 }, window); // another window: ignored
+    post({ type: 'mail-frame-height', h: 9999 }, null);
+    expect(iframe.style.height).toBe('640px');
+
+    post({ type: 'mail-frame-height', h: MAIL_FRAME_MAX_HEIGHT_PX * 10 }, own);
+    expect(iframe.style.height).toBe(`${MAIL_FRAME_MAX_HEIGHT_PX}px`);
+  });
+
+  it('routes a pressed link through the app link path, and only a safe one from its frame', () => {
+    const root = render({ html: '<a href="https://example.test/a">a</a>' });
+    const own = root.querySelector('iframe')!.contentWindow;
+
+    post({ type: 'mail-frame-link', href: 'https://example.test/a' }, own);
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith('https://example.test/a');
+
+    post({ type: 'mail-frame-link', href: 'javascript:alert(1)' }, own);
+    post({ type: 'mail-frame-link', href: 'https://example.test/b' }, window);
+    expect(openExternal).toHaveBeenCalledOnce();
   });
 });

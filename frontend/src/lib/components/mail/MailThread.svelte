@@ -26,7 +26,14 @@
   import type { MailClient } from '$lib/mail/mailClient.svelte';
   import { classifyMailFailure, type MailError } from '$lib/mail/mailErrors';
   import { mailErrorRetryable, mailErrorText } from '$lib/mail/mailErrorText';
-  import { displayNameOf, isSelf, mailFullDate, mailListDate } from '$lib/mail/mailFormat';
+  import {
+    attachmentFileName,
+    displayNameOf,
+    isSelf,
+    mailFullDate,
+    mailListDate,
+  } from '$lib/mail/mailFormat';
+  import { isInlineImagePart } from '$lib/mail/mailHtml';
   import type { MailConversation, MailMessage } from '$lib/mail/mailTypes';
   import type { MailUiAction } from '$lib/mail/mailView';
   import { getInitials } from '$lib/utils/avatar';
@@ -141,7 +148,7 @@
       const bytes = await client.api.download(attachment);
       await saveBlobAs(
         new Blob([bytes as Uint8Array<ArrayBuffer>], { type: attachment.contentType }),
-        attachment.filename
+        attachmentFileName(attachment.filename)
       );
     } catch (err) {
       const kind = classifyMailFailure(err).kind;
@@ -280,10 +287,10 @@
                 </p>
               {/if}
 
-              {#if message.attachments.some((a) => !a.inline)}
+              {#if message.attachments.some((a) => !isInlineImagePart(a))}
                 <ul class="flex flex-wrap gap-2">
                   {#each message.attachments as attachment, index (attachment.part)}
-                    {#if !attachment.inline}
+                    {#if !isInlineImagePart(attachment)}
                       <li>
                         <Button
                           variant="bare"
@@ -320,12 +327,21 @@
 
   {#if conversation && messages.length}
     {@const last = messages[messages.length - 1]}
+    <!-- One line on a phone: "Répondre à tous" says "À tous" beside its icon below `sm`, and keeps its
+         whole name for a screen reader. -->
     <div class="border-cn-border bg-cn-surface flex gap-2 border-t px-4 py-2" data-mail-reply-bar>
       <Button variant="secondary" class="flex-1" onclick={() => onCompose('reply', last)}>
         <Reply size={18} aria-hidden="true" />{m.mail_reply()}
       </Button>
-      <Button variant="secondary" class="flex-1" onclick={() => onCompose('reply_all', last)}>
-        <ReplyAll size={18} aria-hidden="true" />{m.mail_reply_all()}
+      <Button
+        variant="secondary"
+        class="flex-1"
+        aria-label={m.mail_reply_all()}
+        onclick={() => onCompose('reply_all', last)}
+      >
+        <ReplyAll size={18} aria-hidden="true" /><span class="sm:hidden"
+          >{m.mail_reply_all_short()}</span
+        ><span class="hidden sm:inline">{m.mail_reply_all()}</span>
       </Button>
       <Button variant="secondary" class="flex-1" onclick={() => onCompose('forward', last)}>
         <Forward size={18} aria-hidden="true" />{m.mail_forward()}

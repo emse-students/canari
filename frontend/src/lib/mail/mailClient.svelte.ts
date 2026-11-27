@@ -178,17 +178,38 @@ export function watchMailTab(): void {
     $effect(() => {
       const userId = currentUserId();
       const on = serverMailMode() === 'on';
-      if (!userId || !on) return;
       // Only the account and the switch are this effect's dependencies: what the client reads and
       // writes as it opens is not, or every state change would open it again.
-      untrack(() => openTabOf(userId));
+      untrack(() => followMailSwitch(userId, on));
     });
   });
 }
 
+/**
+ * One step of {@link watchMailTab}, for the account signed in now and the server's switch. The
+ * switch turned OFF ends a client already built (review M5): its session signed out, its socket
+ * closed - "off, nothing of the mail runs" holds for a client opened while it was on, not only for
+ * one not yet built. On, with an account, that account's client is opened for the tab.
+ */
+export function followMailSwitch(
+  userId: string | null,
+  on: boolean,
+  build: (userId: string) => MailClient = buildClient
+): void {
+  if (!on) {
+    if (current) {
+      Log.i('MAIL', 'the mail switch is off - the open mailbox is ended');
+      void endCurrent('mail switched off');
+    }
+    return;
+  }
+  if (!userId) return;
+  openTabOf(userId, build);
+}
+
 /** Builds `userId`'s client, reads its eligibility, and opens an eligible mailbox for the badge. */
-function openTabOf(userId: string): void {
-  const client = mailClientFor(userId);
+function openTabOf(userId: string, build: (userId: string) => MailClient): void {
+  const client = mailClientFor(userId, build);
   void (async () => {
     await client.readEligibility();
     const eligibility = client.store.eligibility;

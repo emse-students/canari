@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { forgetMailPassword } from './sealedMailPassword';
 
 /**
  * THE CANARI SIGN-OUT ENDS THE MAIL SESSION (docs/wiki/mail-client-transport.md#as-built---lot-3).
@@ -12,6 +13,10 @@ import { Log } from '$lib/utils/Log';
  *
  * A Canari ACCOUNT SWITCH needs nothing here: it goes through the same sign-out, and the mail client
  * is keyed on the Canari account id besides (`mailClient.svelte.ts`).
+ *
+ * THE LEAVING ACCOUNT'S REMEMBERED PASSWORD IS FORGOTTEN AT EVERY SIGN-OUT, client or none (review
+ * I3): a password sealed in an earlier visit sits on the device whether or not this visit built a
+ * mail client, and a sign-out that only reached a registered client would leave it behind.
  */
 
 type MailSignOut = (reason: string) => Promise<void>;
@@ -27,18 +32,36 @@ export function registerMailSignOut(signOut: MailSignOut): () => void {
 }
 
 /**
- * Ends the mail session, when one exists, because the Canari session ended. Never throws: a sign-out
- * of Canari must go on whatever the mailbox answers, and a failure is logged as one.
+ * Ends the mail session, when one exists, because the Canari session ended, and forgets the
+ * remembered password of `leavingUserId` in every case. Never throws: a sign-out of Canari must go
+ * on whatever the mailbox answers, and a failure is logged as one.
  */
-export async function endMailOnSignOut(reason: string): Promise<void> {
+export async function endMailOnSignOut(
+  reason: string,
+  leavingUserId: string | null,
+  store?: Storage
+): Promise<void> {
   const signOut = registered;
   if (!signOut) {
     Log.d('MAIL', `canari sign-out (${reason}): no mail client to end`);
+  } else {
+    try {
+      await signOut(reason);
+    } catch (err) {
+      Log.w(
+        'MAIL',
+        `ERROR: the mail session did not end with the canari sign-out (${reason})`,
+        err
+      );
+    }
+  }
+  if (leavingUserId === null) {
+    Log.d('MAIL', `canari sign-out (${reason}): no account id, no remembered password to forget`);
     return;
   }
   try {
-    await signOut(reason);
+    forgetMailPassword(leavingUserId, store ?? localStorage);
   } catch (err) {
-    Log.w('MAIL', `ERROR: the mail session did not end with the canari sign-out (${reason})`, err);
+    Log.w('MAIL', `ERROR: the remembered mail password was not forgotten (${reason})`, err);
   }
 }

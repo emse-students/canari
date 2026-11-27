@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
+  attachmentFileName,
   displayNameOf,
   isSelf,
   MAIL_LIST_FILTERS,
@@ -55,5 +56,22 @@ describe('mailListQuery', () => {
     expect(mailListQuery('', 'unread')).toBe('is:unread');
     expect(mailListQuery('from:bde', 'flagged')).toBe('from:bde is:flagged');
     expect(mailListQuery('', 'attachment')).toBe('has:attachment');
+  });
+});
+
+describe('attachmentFileName (review I4)', () => {
+  it('reduces a stranger-written name to a bare basename', () => {
+    expect(attachmentFileName('rapport.pdf')).toBe('rapport.pdf');
+    expect(attachmentFileName('../../.ssh/authorized_keys')).toBe('authorized_keys');
+    expect(attachmentFileName('C:\\Windows\\evil.exe')).toBe('evil.exe');
+    expect(attachmentFileName('note.txt:hidden')).toBe('note.txthidden');
+    expect(attachmentFileName('..bashrc')).toBe('bashrc');
+    expect(attachmentFileName('a\u0000b\u001fc\u007f.txt')).toBe('abc.txt');
+  });
+
+  it('gives the generic name when nothing is left', () => {
+    for (const name of ['', '..', '/', 'dir/', ' . ']) {
+      expect(attachmentFileName(name)).toBe(m.mail_attachment_unnamed());
+    }
   });
 });

@@ -136,7 +136,7 @@
     <Button variant="ghost" icon aria-label={m.mail_compose_close()} onclick={() => void close()}>
       <X size={22} />
     </Button>
-    <h1 class="font-display text-text-main min-w-0 flex-1 px-1 text-xl font-semibold break-words">
+    <h1 class="font-display text-text-main min-w-0 flex-1 px-1 text-lg font-semibold break-words">
       {title}
     </h1>
     <Button
@@ -147,12 +147,16 @@
     >
       <Paperclip size={22} />
     </Button>
+    <!-- The label shows from `sm`: on a phone the title needs the width ("Nouveau message" on one line). -->
     <Button
       onclick={() => void send()}
       loading={sending}
       disabled={recipientCount === 0 || uploading.length > 0}
+      aria-label={m.mail_compose_send()}
     >
-      <Send size={18} aria-hidden="true" />{m.mail_compose_send()}
+      <Send size={18} aria-hidden="true" /><span class="hidden sm:inline"
+        >{m.mail_compose_send()}</span
+      >
     </Button>
   </header>
 

@@ -7489,6 +7489,7 @@
     }
   ],
   "mail_folders_label": "Folders",
+  "mail_folders_unavailable": "The folders could not be loaded.",
   "mail_folders_mine": "My folders",
   "mail_folders_open": "Open folders",
   "mail_account_title": "School mail",
@@ -7547,6 +7548,8 @@
   "mail_attachment_download": "Download {name}",
   "mail_reply": "Reply",
   "mail_reply_all": "Reply all",
+  "mail_reply_all_short": "All",
+  "mail_attachment_unnamed": "attachment",
   "mail_forward": "Forward",
   "mail_recipient_remove": "Remove {name}",
   "mail_directory_label": "Directory suggestions",

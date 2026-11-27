@@ -53,6 +53,12 @@ interface DemoConversation {
   messages: DemoMessage[];
 }
 
+/*
+ * THE COLOURS BELOW ARE A MAIL'S OWN, NOT THE APP'S: they are the content of an invented message,
+ * drawn in its sandboxed frame - another document, which the app's tokens (`app.css`) never reach.
+ * A real mail carries literal colours like these; the preview shows how the frame draws them.
+ */
+
 /** A small invented logo, served as the message's own inline part (`cid:`). */
 const LOGO_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" rx="8" fill="#f5b700"/><text x="60" y="26" font-family="sans-serif" font-size="16" text-anchor="middle" fill="#222">BDE</text></svg>';

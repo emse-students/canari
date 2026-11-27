@@ -99,3 +99,22 @@ const FILTER_TERMS: Readonly<Record<MailListFilter, string>> = {
 export function mailListQuery(search: string, filter: MailListFilter): string {
   return [search.trim(), FILTER_TERMS[filter]].filter(Boolean).join(' ');
 }
+
+/** The characters a saved name never keeps: control characters and the drive/stream separator. */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
+const UNSAFE_NAME_CHARACTERS = /[\u0000-\u001f\u007f:]/g;
+
+/**
+ * The name an attachment is SAVED under: the sender's filename reduced to a bare basename. The name
+ * is written by a stranger, and a save dialog or a download takes it as a path hint - so every
+ * directory part (`/`, `\`), drive or stream separator (`:`), control character and leading dot (a
+ * hidden or `..` name) is removed. Nothing left gives the generic "attachment" name.
+ */
+export function attachmentFileName(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? '';
+  const cleaned = base
+    .replace(UNSAFE_NAME_CHARACTERS, '')
+    .replace(/^[\s.]+/, '')
+    .trim();
+  return cleaned || m.mail_attachment_unnamed();
+}

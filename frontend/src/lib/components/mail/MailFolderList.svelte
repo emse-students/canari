@@ -6,6 +6,10 @@
    * conversation of the mailbox) after the inbox and the archive folder after the drafts; then the
    * account's own folders under "Mes dossiers", nested folders indented. A count is the unread
    * messages, except Drafts, whose count is how many there are (a draft is never unread).
+   *
+   * NEVER A HALF LIST: until the tree has loaded once (it always holds an inbox), no row is drawn -
+   * not even "Suivis", which needs none - and a mailbox that failed says so here too. A tree that
+   * loaded stays drawn as last known when a later refresh fails (the store keeps it).
    */
   import {
     Archive,
@@ -32,9 +36,14 @@
     /** The signed-in mailbox, drawn at the top. */
     account: { address: string; displayName: string | null };
     onSelect: (view: MailView) => void;
+    /** The mailbox answered with an error: said here when no tree was ever loaded. */
+    failed: boolean;
   }
 
-  let { folders, view, account, onSelect }: Props = $props();
+  let { folders, view, account, onSelect, failed }: Props = $props();
+
+  /** The tree has loaded once: before that, no row is drawn. */
+  const known = $derived(folders.length > 0);
 
   interface Row {
     key: string;
@@ -132,7 +141,7 @@
       variant="bare"
       class="flex min-h-11 w-full items-center gap-3 rounded-full px-4 text-left {current
         ? 'bg-accent/30 text-text-main font-extrabold'
-        : 'text-text-main font-semibold hover:bg-black/5 dark:hover:bg-white/10'}"
+        : 'text-text-main hover:bg-cn-surface-alt font-semibold'}"
       style="padding-left: calc(1rem + {row.depth} * 1rem)"
       aria-current={current ? 'page' : undefined}
       onclick={() => onSelect(row.view)}
@@ -164,12 +173,20 @@
       <span class="text-text-muted truncate text-xs">{account.address}</span>
     </div>
   </div>
-  <ul class="flex flex-col gap-0.5">
-    {#each systemRows as row (row.key)}
-      {@render folderRowView(row)}
-    {/each}
-  </ul>
-  {#if ownRows.length}
+  {#if !known}
+    {#if failed}
+      <p class="text-text-muted px-4 py-2 text-sm" role="status" data-mail-folders-unavailable>
+        {m.mail_folders_unavailable()}
+      </p>
+    {/if}
+  {:else}
+    <ul class="flex flex-col gap-0.5">
+      {#each systemRows as row (row.key)}
+        {@render folderRowView(row)}
+      {/each}
+    </ul>
+  {/if}
+  {#if known && ownRows.length}
     <p class="text-text-muted px-4 pt-3 text-xs font-bold">
       {m.mail_folders_mine()}
     </p>
