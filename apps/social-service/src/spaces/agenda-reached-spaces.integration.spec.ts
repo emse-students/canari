@@ -21,6 +21,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { applyFormationFisa } from './formation-fisa.it-fixture';
 import {
   AGENDA_REACHED_SPACES_SQL,
   eventReachesSpaceMatchingSql,
@@ -101,6 +102,7 @@ maybe('the agenda reached spaces against PostgreSQL', () => {
     ]) {
       await client.query(migration(name));
     }
+    await applyFormationFisa((sql) => client.query(sql));
     for (const [id, name] of [
       [A1, 'A1'],
       [A2, 'A2'],
@@ -160,7 +162,7 @@ maybe('the agenda reached spaces against PostgreSQL', () => {
 
   it('a student who joined an association of another space reaches its spaces too (D21)', async () => {
     expect(pairs(await reached('joiner'))).toEqual(
-      ['Autre', 'FSSS', 'ICM', 'ISMIN', 'PDIS']
+      ['Autre', 'FISA', 'ICM', 'ISMIN', 'PDIS']
         .map((f) => `${f}@gardanne`)
         .concat('ICM@saint-etienne')
         .sort()
@@ -178,7 +180,7 @@ maybe('the agenda reached spaces against PostgreSQL', () => {
 
   it("a member gets every space of their associations' rules", async () => {
     expect(pairs(await reached('member'))).toEqual(
-      ['Autre', 'FSSS', 'ICM', 'ISMIN', 'PDIS']
+      ['Autre', 'FISA', 'ICM', 'ISMIN', 'PDIS']
         .map((f) => `${f}@gardanne`)
         .concat('ICM@saint-etienne')
         .sort()

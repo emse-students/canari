@@ -95,14 +95,14 @@ const PEOPLE = [
   { key: 'chloe', first: 'Chloé', formation: 'ICM', promo: 2025, campus: 'saint-etienne' },
   { key: 'david', first: 'David', formation: 'ISMIN', promo: 2024, campus: 'gardanne' },
   { key: 'emma', first: 'Emma', formation: 'ISMIN', promo: 2025, campus: 'gardanne' },
-  { key: 'farid', first: 'Farid', formation: 'FSSS', promo: 2024, campus: 'saint-etienne' },
+  { key: 'farid', first: 'Farid', formation: 'FISA', promo: 2024, campus: 'saint-etienne' },
   { key: 'gaelle', first: 'Gaëlle', formation: 'PDIS', promo: 2022, campus: 'saint-etienne' },
   { key: 'hugo', first: 'Hugo', formation: 'Autre', promo: 2025, campus: 'gardanne' },
   { key: 'ines', first: 'Inès', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
   { key: 'jules', first: 'Jules', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
   { key: 'kenza', first: 'Kenza', formation: 'ISMIN', promo: 2024, campus: 'gardanne' },
   { key: 'louis', first: 'Louis', formation: 'ICM', promo: 2025, campus: 'saint-etienne' },
-  { key: 'manon', first: 'Manon', formation: 'FSSS', promo: 2023, campus: 'saint-etienne' },
+  { key: 'manon', first: 'Manon', formation: 'FISA', promo: 2023, campus: 'saint-etienne' },
   { key: 'noe', first: 'Noé', formation: 'ICM', promo: 2024, campus: 'saint-etienne' },
   { key: 'oceane', first: 'Océane', formation: 'PDIS', promo: 2026, campus: 'saint-etienne' },
   { key: 'pablo', first: 'Pablo', formation: 'ISMIN', promo: 2026, campus: 'gardanne' },
@@ -113,7 +113,7 @@ const PEOPLE = [
 type PersonKey = (typeof PEOPLE)[number]['key'];
 
 /** Every formation x campus pair, as migration 071 creates them; the seed restores all ten. */
-const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
+const FORMATIONS = ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'] as const;
 const CAMPUSES = ['saint-etienne', 'gardanne'] as const;
 
 /**

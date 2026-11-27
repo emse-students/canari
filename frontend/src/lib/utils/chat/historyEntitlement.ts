@@ -39,6 +39,7 @@ import {
   type GroupExclusions,
 } from '$lib/mls-client/mlsDeliveryApi';
 import type { IMlsService } from '$lib/mlsService';
+import { liftArrivalSpan } from './historyGrant';
 
 /**
  * How far a CLIENT clock is trusted, either way, when it is the only date a message has: one hour.
@@ -218,13 +219,20 @@ let warnedServerPredatesAddressing = false;
  * residual of step C stands. A fallback is a signal: it
  * accuses once per session at error, and is recorded in docs/wiki/legacy-compatibility.md.
  *
+ * **AN ANSWER UNDER A HISTORY GRANT** (`grantSince`, owner 2026-11-25, `historyGrant.ts`) lifts ONE
+ * window of the reader's own: the span before their first arrival starts at the grant's date
+ * ({@link liftArrivalSpan}); every gap stays withheld. Only for a reader the server names - a reader
+ * older than us is no newcomer, and keeps the superset below unlifted.
+ *
  * @param reader the user id of the device the answer is for.
+ * @param grantSince the start date of the grant this answer is made under, when it is one.
  */
 export async function readerHistorySelection<M extends PlaceableMessage>(
   groupId: string,
   messages: readonly M[],
   deps: ReaderDeps,
-  reader: string
+  reader: string,
+  grantSince?: number
 ): Promise<ReaderSelection<M> | null> {
   let supported: boolean;
   let exclusions: GroupExclusions;
@@ -271,7 +279,10 @@ export async function readerHistorySelection<M extends PlaceableMessage>(
   const own = withheld.get(reader.toLowerCase());
   let windows: ExclusionWindow[];
   let basis: string;
-  if (own !== undefined) {
+  if (own !== undefined && grantSince !== undefined) {
+    windows = liftArrivalSpan(own, grantSince);
+    basis = `the reader's ${own.length} window(s), arrival span lifted from ${grantSince > 0 ? new Date(grantSince).toISOString() : 'the beginning'} by a grant`;
+  } else if (own !== undefined) {
     windows = [...own];
     basis = `the reader's ${own.length} window(s)`;
   } else if (withheld.size > 0) {
@@ -313,6 +324,11 @@ export async function readerHistorySelection<M extends PlaceableMessage>(
  * this is what keeps an honest newcomer from storing a broadcast answer meant for another member's
  * new device. Each drop is logged by id.
  *
+ * **AN ANSWER TO OUR GRANT ASK, FROM ITS GRANTER** (`grantSince`, `historyGrant.ts`) is checked
+ * against our windows with the arrival span lifted from the grant's date, and that answer only: the
+ * caller passes it once the ask was taken for the granting device (`takeAddressedAsk`), never for
+ * any other frame. Our gaps still drop.
+ *
  * Returns `null` when our windows cannot be read; the caller then ingests no message of this frame
  * and says so (the comparison runs again on the next connection).
  */
@@ -320,7 +336,8 @@ export async function dropOwnExcludedMessages<M extends PlaceableMessage & { id:
   groupId: string,
   selfUserId: string,
   messages: readonly M[],
-  deps: WithheldDeps
+  deps: WithheldDeps,
+  grantSince?: number
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
   const consequence = 'ingesting none of these messages';
@@ -348,8 +365,14 @@ export async function dropOwnExcludedMessages<M extends PlaceableMessage & { id:
     );
     return gaps.length === 0 ? [...messages] : dropInside(groupId, messages, gaps, deps.log);
   }
-  const own = personalWindows(groupId, withheld, selfUserId, deps.log, consequence);
-  if (own === null) return null;
+  const personal = personalWindows(groupId, withheld, selfUserId, deps.log, consequence);
+  if (personal === null) return null;
+  const own = grantSince === undefined ? personal : liftArrivalSpan(personal, grantSince);
+  if (grantSince !== undefined) {
+    deps.log(
+      `[HISTORY_GRANT] ${groupId.slice(0, 8)}… - a granted answer: our arrival span lifted from ${grantSince > 0 ? new Date(grantSince).toISOString() : 'the beginning'}, ${own.length} window(s) still withheld`
+    );
+  }
   if (own.length === 0) return [...messages];
   return dropInside(groupId, messages, own, deps.log);
 }
