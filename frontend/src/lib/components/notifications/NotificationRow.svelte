@@ -13,6 +13,7 @@
     Cake,
     UserX,
     UserPen,
+    UsersRound,
     ShieldAlert,
     CalendarCog,
     Newspaper,
@@ -112,7 +113,7 @@
 
   /**
    * A NEW ITEM IN A GLOBAL ADMIN'S QUEUE (owner, 2026-11-18): a profile correction asked for, a
-   * subject reported. The platform is the actor and the row carries no text - who asked and what
+   * subject reported, an Alumni duplicate to attach. The platform is the actor and the row carries no text - who asked and what
    * was reported are the queue's to show - so the whole sentence is built here, and the row opens the
    * queue (`notificationHref`). The server serves it only while the item waits, so it leaves this
    * list for every admin once one of them handles it.
@@ -120,6 +121,7 @@
   const ADMIN_QUEUE_TEXT: Readonly<Record<string, () => string>> = {
     admin_profile_correction: m.notif_admin_profile_correction_text,
     admin_report: m.notif_admin_report_text,
+    admin_alumni_duplicate: m.notif_admin_alumni_duplicate_text,
   };
   const adminQueueText = $derived(
     Object.hasOwn(ADMIN_QUEUE_TEXT, notif.type) ? ADMIN_QUEUE_TEXT[notif.type]() : null
@@ -566,6 +568,8 @@
         <UserPen size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'admin_report'}
         <ShieldAlert size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'admin_alumni_duplicate'}
+        <UsersRound size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_request'}
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}

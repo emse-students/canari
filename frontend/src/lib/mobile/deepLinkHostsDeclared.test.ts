@@ -35,6 +35,7 @@ const SERVER_HOSTS = [
   // A new item in a global admin's queue (2026-11-18): the queue itself.
   'admin-profile-corrections',
   'admin-moderation',
+  'admin-alumni-duplicates',
 ];
 
 /** The checkout return. */

@@ -216,7 +216,8 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
 
   it('shows its pattern and nothing else: every number that speaks about a hidden cell is read by a step', () => {
     for (const [i, cell] of board.cells.entries()) {
-      if (!shown(p, i) || !neighbours(board, i).some((n) => board.cells[n].state !== 'revealed'))
+      // A number beside flags and open cells only says nothing about what is unknown.
+      if (!shown(p, i) || !neighbours(board, i).some((n) => board.cells[n].state === 'hidden'))
         continue;
       expect(read.includes(i), `number ${cell.adjacent} at ${i} is not read: draw it as ?`).toBe(
         true

@@ -106,11 +106,17 @@ describe('the queue badges (owner, 2026-11-18)', () => {
     adminHubGroups(t, pending).flatMap((g) => g.rows);
 
   it("draws each queue's server count on its own row, spoken, and nothing at zero", () => {
-    const all = rows(GLOBAL, { agenda: 2, moderation: 0, 'profile-corrections': 1 });
+    const all = rows(GLOBAL, {
+      agenda: 2,
+      moderation: 0,
+      'profile-corrections': 1,
+      'alumni-duplicates': 3,
+    });
     const by = (key: string) => all.find((r) => r.key === key)!;
     expect(by('agenda').badge).toBe(2);
     expect(by('agenda').badgeLabel).toBeTruthy();
     expect(by('profile-corrections').badge).toBe(1);
+    expect(by('alumni-duplicates').badge).toBe(3);
     expect(by('moderation').badge).toBeUndefined();
     expect(by('users').badge).toBeUndefined();
   });

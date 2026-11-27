@@ -127,6 +127,7 @@ const ALUMNI_MERGE_CODES = [
   'ALUMNI_MERGE_REASON_REQUIRED',
   'ALUMNI_MERGE_TARGET_BUSY',
   'ALUMNI_MERGE_NOT_MERGED',
+  'ALUMNI_MERGE_DISMISSED',
 ] as const;
 type AlumniMergeCode = (typeof ALUMNI_MERGE_CODES)[number];
 
@@ -176,6 +177,8 @@ export function alumniMergeErrorMessage(err: unknown): string {
       return m.alumni_merge_error_target_busy();
     case 'ALUMNI_MERGE_NOT_MERGED':
       return m.alumni_merge_error_not_merged();
+    case 'ALUMNI_MERGE_DISMISSED':
+      return m.alumni_merge_error_dismissed();
   }
 }
 
@@ -250,6 +253,18 @@ export function alumniReasonState(text: string): AlumniReasonState {
 export async function cancelAlumniMerge(duplicateUuid: string): Promise<void> {
   Log.d('alumniMerge.cancel', { dup: duplicateUuid.slice(0, 8) });
   const res = await apiFetch(`${base()}/${encodeURIComponent(duplicateUuid)}/cancel`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res);
+}
+
+/**
+ * "Pas un doublon": the admins' TERMINAL answer for an Alumni account that is not a duplicate - it
+ * leaves every admin's list and count for good and is never flagged again.
+ */
+export async function dismissAlumniDuplicate(duplicateUuid: string): Promise<void> {
+  Log.d('alumniMerge.dismiss', { dup: duplicateUuid.slice(0, 8) });
+  const res = await apiFetch(`${base()}/${encodeURIComponent(duplicateUuid)}/dismiss`, {
     method: 'POST',
   });
   if (!res.ok) throw await refusal(res);

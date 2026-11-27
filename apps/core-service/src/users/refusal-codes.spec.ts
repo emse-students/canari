@@ -42,7 +42,8 @@ describe('core-service refusal codes', () => {
         {} as ProfileCorrectionService,
         {} as AccountErasureService,
         sessions as unknown as AuthSessionsService,
-        {} as AlumniMergeService
+        {} as AlumniMergeService,
+        {} as never // AlumniDuplicateQueue: the duplicates route is not under test
       );
       return { controller, users, sessions };
     };

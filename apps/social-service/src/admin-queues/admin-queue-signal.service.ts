@@ -15,6 +15,7 @@ export const ADMIN_QUEUES_CHANGED_EVENT = 'admin.queues.changed';
 /** What changed in which queue - enough to name who may act on it, nothing the frame carries. */
 export type AdminQueueChange =
   | { queue: 'profile-corrections' }
+  | { queue: 'alumni-duplicates' }
   | { queue: 'moderation'; reportIds: readonly string[] }
   | { queue: 'agenda'; associationId: string };
 
@@ -47,6 +48,7 @@ const COMMENT_IN_SCOPE_SQL = `EXISTS (SELECT 1 FROM aqs_cm JOIN posts rp ON rp.i
  */
 const RECIPIENTS_SQL: Record<AdminQueueChange['queue'], string> = {
   'profile-corrections': `SELECT id AS uid FROM users WHERE admin = true`,
+  'alumni-duplicates': `SELECT id AS uid FROM users WHERE admin = true`,
   moderation: `WITH ${REPORTED_COMMENTS_SQL}
     SELECT id AS uid FROM users WHERE admin = true
     UNION SELECT aqs_c.uid FROM ${STAFF_SQL}
