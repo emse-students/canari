@@ -708,6 +708,9 @@
   /** What a question's card says after a refused send: why, while it is still unanswered. */
   function questionError(item: { id: string }): string | null {
     if (!missingAnswer || missingAnswer.itemId !== item.id) return null;
+    // A FORMAT fault is raised on an answer that IS typed: it stays said while that answer stands
+    // (the edit clears it), where a missing-answer sentence goes once the question is answered.
+    if (missingAnswer.kind === 'format') return missingAnswerMessage(missingAnswer);
     const answered = visibleItems.find((i) => i.id === item.id);
     return answered && isItemAnswered(answered, selections[item.id])
       ? null
