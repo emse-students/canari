@@ -30,10 +30,14 @@ export interface MiconnectProfile {
   /**
    * The class of the account's school address (claim `school_mail`, scope `school_mail`, owner
    * 2026-11-27): `student`, `staff`, or `null` - not offered. The ADDRESS is never part of the
-   * profile: it is not stored (charter principle 1). Absent until MiConnect's blueprint emits the
-   * claim, which is the expected state before that stable, not a fault.
+   * profile: it is not stored (charter principle 1).
+   *
+   * ABSENT (the key, not `null`) when the sign-in was NOT GRANTED the scope: an older client that
+   * does not ask for it, or a provider without the mapping. Such a sign-in says nothing about the
+   * class, so the stored one is left as it is - otherwise every sign-in from an old client would
+   * clear it and the class would flip with the device the person last signed in from.
    */
-  mailClass: MailClass | null;
+  mailClass?: MailClass | null;
 }
 
 /** The claims authentik emits on scope `profile` for Canari (WP1), all optional by contract. */
@@ -58,7 +62,11 @@ const logger = new Logger('MiconnectProfile');
  *
  * @param who - A short label of the account for the warnings (never the full id).
  */
-export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'): MiconnectProfile {
+export function parseProfileClaims(
+  claims: MiconnectClaims,
+  who = 'an account',
+  schoolMailGranted = false
+): MiconnectProfile {
   const campus = CAMPUSES.find((c) => c === claims.campus) ?? null;
   if (claims.campus !== undefined && campus === null) {
     logger.warn(`profile claim: unknown campus ${JSON.stringify(claims.campus)} dropped`);
@@ -113,6 +121,9 @@ export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'):
       `profile claim: alumni_linked is not a boolean (${typeof claims.alumni_linked}), read as unknown`
     );
   }
+  const profile: MiconnectProfile = { miconnectUuid, campus, cursus, posts, alumniLinked };
+  // Not granted: this sign-in says nothing about the class (see `MiconnectProfile.mailClass`).
+  if (!schoolMailGranted) return profile;
   const schoolMail = readSchoolMail(claims.school_mail);
   if (claims.school_mail !== undefined && schoolMail === null) {
     // MiConnect sends the claim only for a listed domain, so this is a mapping and a contract that
@@ -121,8 +132,7 @@ export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'):
       `profile claim: school_mail is not an address on a listed domain (${typeof claims.school_mail}), read as not offered`
     );
   }
-  const mailClass = schoolMail?.mailClass ?? null;
-  return { miconnectUuid, campus, cursus, posts, alumniLinked, mailClass };
+  return { ...profile, mailClass: schoolMail?.mailClass ?? null };
 }
 
 /**
@@ -354,5 +364,4 @@ export const EMPTY_PROFILE: MiconnectProfile = {
   cursus: [],
   posts: [],
   alumniLinked: null,
-  mailClass: null,
 };

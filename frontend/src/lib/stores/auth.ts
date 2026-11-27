@@ -965,6 +965,24 @@ async function rememberSchoolMail(address: string | undefined): Promise<void> {
 }
 
 /**
+ * Re-runs the MiConnect sign-in to fetch the school address and refresh the mail class - the
+ * "Activer le mail" button lot 3 shows when {@link schoolMailAddress} is `null` (lead's decision,
+ * 2026-11-27, docs/wiki/mail-client-transport.md#eligibility).
+ *
+ * WHY A SIGN-IN. The class is written only by a MiConnect sign-in GRANTED `school_mail`, and an
+ * account signed in before the client asked for that scope, or before MiConnect's blueprint emitted
+ * it, has none yet. MiConnect's session is usually still alive, so this is one tap: authorize answers
+ * at once, and the callback (`handleOidcCallback` -> `adoptSignedInSession`) stores the class on the
+ * server and the address on this device, then returns to `returnTo`. It is the ordinary sign-in
+ * entry point, {@link startOidcLogin}, and nothing else: one path writes the class.
+ * @public called by the mail tab's activation button (lot 3)
+ */
+export function startSchoolMailActivation(returnTo: string): Promise<OidcLoginStart> {
+  alog(`mail activation: re-running the MiConnect sign-in (return ${returnTo})`);
+  return startOidcLogin(returnTo);
+}
+
+/**
  * The signed-in account's SCHOOL address on this device, or `null` when it has none (mail not
  * offered). For the mail client's sign-in (lot 2): it PREFILLS the address, and the person still
  * types their password - Canari holds no mail credential.
@@ -1012,9 +1030,12 @@ export async function getOidcReturnTo(): Promise<string> {
  * after the sign-in, across reloads, so it is persisted in the same store as the OIDC state.
  *
  * WHY THAT IS NOT AN ACCESS TOKEN IN STORAGE. No Canari service accepts it (they verify their own
- * HS256 JWT) and Authentik reads it only as a logout HINT, expiry ignored. Its claims (sub, name,
- * promo) are what `saveUserLocally` already keeps. What it can do in other hands is sign this user
- * out of MiConnect, which any page can already do by navigating to end-session without a hint.
+ * HS256 JWT) and Authentik reads it only as a logout HINT, expiry ignored. It carries the protocol
+ * claims ONLY (iss, sub, aud, times): Canari's providers copy no scope claim into it
+ * (`include_claims_in_id_token: false`, 50-providers.yaml), so no profile and no school address is
+ * kept here - this client reads `iss` alone (`planMiconnectSignOut`). What it can do in other hands
+ * is sign this user out of MiConnect, which any page can already do by navigating to end-session
+ * without a hint.
  */
 async function rememberMiconnectIdToken(idToken: string | undefined): Promise<void> {
   if (idToken) {

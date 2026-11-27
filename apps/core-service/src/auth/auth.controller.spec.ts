@@ -703,8 +703,16 @@ describe('AuthController sessions', () => {
       );
     }
 
-    /** Authentik's token endpoint (with or without an id_token), then its userinfo. */
-    function authentikAnswers(idToken?: string, sub = 'user-1', claims: object = {}) {
+    /**
+     * Authentik's token endpoint (with or without an id_token, `scope` the GRANTED scopes, as
+     * authentik 2026.8 answers - measured by `test-school-mail-claim.py`), then its userinfo.
+     */
+    function authentikAnswers(
+      idToken?: string,
+      sub = 'user-1',
+      claims: object = {},
+      scope = 'openid profile'
+    ) {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(
@@ -712,6 +720,7 @@ describe('AuthController sessions', () => {
             JSON.stringify({
               access_token: 'ak-access',
               ...(idToken ? { id_token: idToken } : {}),
+              scope,
             }),
             { status: 200 }
           )
@@ -742,10 +751,28 @@ describe('AuthController sessions', () => {
       expect(body.id_token).toBe('h.idtoken.s');
     });
 
+    /** A users service whose upsert answers the row as stored, with `mailClass`. */
+    function usersStoring(mailClass: string | null) {
+      return {
+        findOrCreateFromOidc: jest
+          .fn()
+          .mockResolvedValue({ id: 'user-1', admin: false, mailClass }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
+      };
+    }
+
     it('hands the school address to the client once, and stores only its class', async () => {
-      authentikAnswers('h.idtoken.s', 'user-1', { school_mail: 'Jane.Doe@etu.emse.fr' });
+      authentikAnswers(
+        'h.idtoken.s',
+        'user-1',
+        { school_mail: 'Jane.Doe@etu.emse.fr' },
+        'openid profile school_mail'
+      );
       const users = {
-        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+        findOrCreateFromOidc: jest
+          .fn()
+          .mockResolvedValue({ id: 'user-1', admin: false, mailClass: 'student' }),
         claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
         isUserAdmin: jest.fn().mockResolvedValue(false),
       };
@@ -761,9 +788,41 @@ describe('AuthController sessions', () => {
       expect(JSON.stringify(stored)).not.toContain('jane.doe');
     });
 
+    it('an old client that was not granted school_mail leaves the stored class untouched', async () => {
+      // Even were the claim there, a sign-in without the scope says nothing about the class.
+      authentikAnswers('h.idtoken.s', 'user-1', { school_mail: 'jane.doe@etu.emse.fr' });
+      const users = usersStoring('student');
+      const body = await callbackController(undefined, users).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(users.findOrCreateFromOidc.mock.calls[0][4]).not.toHaveProperty('mailClass');
+      expect(body).not.toHaveProperty('school_mail');
+    });
+
+    it('hands no address for a class the database did not store', async () => {
+      authentikAnswers(
+        'h.idtoken.s',
+        'user-1',
+        { school_mail: 'jane.doe@etu.emse.fr' },
+        'openid profile school_mail'
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const body = await callbackController(undefined, usersStoring(null)).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(body).not.toHaveProperty('school_mail');
+      expect(warn.mock.calls.flat().join(' ')).toContain('not stored');
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('jane.doe');
+      warn.mockRestore();
+    });
+
     it('hands no address when MiConnect sends none or one off the school domains', async () => {
       for (const claims of [{}, { school_mail: 'someone@example.org' }]) {
-        authentikAnswers('h.idtoken.s', 'user-1', claims);
+        authentikAnswers('h.idtoken.s', 'user-1', claims, 'openid profile school_mail');
         const body = await callbackController().oidcCallback(
           { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
           makeReq({ origin: 'https://canari.example' }),

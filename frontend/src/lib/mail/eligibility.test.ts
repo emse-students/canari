@@ -17,6 +17,8 @@ describe('mailClassOf', () => {
     expect(mailClassOf('x@example.com')).toBeNull();
     expect(mailClassOf('emse.fr')).toBeNull();
     expect(mailClassOf('@emse.fr')).toBeNull();
+    expect(mailClassOf('a@b@emse.fr')).toBeNull();
+    expect(mailClassOf('jane doe@etu.emse.fr')).toBeNull();
     expect(mailClassOf('')).toBeNull();
     expect(mailClassOf(null)).toBeNull();
   });
