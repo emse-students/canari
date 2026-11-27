@@ -36,6 +36,7 @@
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
+import type { NativeRefusal } from '$lib/db/types';
 import { asNativeRefusal } from '$lib/db/outboxCodec';
 import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
@@ -52,6 +53,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { Conversation } from '$lib/types';
 import { replaceMessageOrdered } from './messageOrder';
+import { deletedConversationStub } from './conversations';
 import { noteServerTime } from './serverClock';
 
 /** One line of `outbox_pending.ndjson`, consumed natively. `proto` is base64(plaintext AppMessage). */
@@ -324,7 +326,8 @@ interface AdoptedMirrorEntry {
  */
 export function adoptMirrorEntry(
   entry: OutboxMirrorEntry,
-  userId: string
+  userId: string,
+  parkedAs?: NativeRefusal
 ): AdoptedMirrorEntry | null {
   let proto: Uint8Array;
   try {
@@ -348,12 +351,16 @@ export function adoptMirrorEntry(
   // Typed entries only: a control frame has no Retry to park it behind.
   // The cause travels with the entry, so its failure is said as what it was - never as the 5xx run
   // its parked count otherwise reads as.
-  const parked = entry.unsendable
-    ? (() => {
-        const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
-        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
-      })()
-    : {};
+  // `parkedAs` is the PAGE's own verdict (a line naming a conversation this device deleted): it wins
+  // over the drain's, which cannot know what the page knows.
+  const parked = parkedAs
+    ? { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal: parkedAs }
+    : entry.unsendable
+      ? (() => {
+          const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
+          return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
+        })()
+      : {};
 
   // A silent entry is a control event (reaction/edit/delete/read): the flusher sends its proto
   // verbatim and silently, which is exactly what `kind: 'control'` means. Nothing to display.
@@ -545,8 +552,9 @@ export async function adoptOrphanedMirrorEntries(
       sentNativeLines.add(orphan.id);
       continue;
     }
-    const rebuilt = adoptMirrorEntry(orphan, userId);
+    let rebuilt = adoptMirrorEntry(orphan, userId);
     if (!rebuilt) continue;
+    let parkedAs: NativeRefusal | undefined;
     // THE ROW FIRST, THE ENTRY SECOND, AND NO ENTRY WITHOUT ITS ROW. The entry was queued first and
     // the row written "best-effort" after it: a row the store refused (its conversation not stored
     // yet - the foreign key) left an entry with nothing to show, parked failed for ever, its text
@@ -567,11 +575,44 @@ export async function adoptOrphanedMirrorEntries(
         if (waitingForConversation.has(orphan.id)) stillWaiting.set(orphan.id, orphan.groupId);
         continue;
       }
-      if (stored === null) {
+      if (stored === null && storage.wasConversationDeleted) {
+        // THE CONVERSATION WAS DELETED HERE, a durable fact the store keeps - never learnt from the
+        // server's refusal. The member's reply is SHOWN (owner, 2026-11-22; principles 1 and 2): the
+        // conversation comes back as a `removed` stub holding the line as failed, with its Delete.
+        const deleted = await storage.wasConversationDeleted(orphan.groupId).catch((e) => {
+          appendLog(
+            `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… deletion mark not read - the line stays native: ${String(e)}`
+          );
+          return null;
+        });
+        if (deleted === null) {
+          if (waitingForConversation.has(orphan.id)) stillWaiting.set(orphan.id, orphan.groupId);
+          continue;
+        }
+        if (deleted) {
+          try {
+            await storage.mergeConversation(
+              deletedConversationStub(orphan.groupId, orphan.sentAt || Date.now())
+            );
+          } catch (e) {
+            appendLog(
+              `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… its deleted conversation could not be recreated - the line stays native for the next pass: ${String(e)}`
+            );
+            stillWaiting.set(orphan.id, orphan.groupId);
+            continue;
+          }
+          console.warn(
+            `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, which this device deleted - the conversation is recreated as removed and the reply shown as not sent`
+          );
+          parkedAs = 'conversation_deleted';
+        }
+      }
+      if (stored === null && !parkedAs) {
         // Said ONCE per page life, and truthfully: the write of that row adopts it - a Welcome, a
         // discovery, a restore. A conversation this device deleted is never written again, and what
         // its line then becomes is an open question (`open-questions.md`, "A native line naming a
-        // conversation this device no longer stores").
+        // conversation this device no longer stores") - here only a conversation never stored YET, or
+        // one deleted before the page kept the mark.
         if (!waitingForConversation.has(orphan.id)) {
           console.warn(
             `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, which this device does not store - not adopted, kept native in the mirror; adopted when that conversation's row is written, never if it was deleted here`
@@ -581,6 +622,8 @@ export async function adoptOrphanedMirrorEntries(
         continue;
       }
     }
+    // THE PAGE'S OWN VERDICT parks it: failed, with its Delete, never sent.
+    if (parkedAs) rebuilt = adoptMirrorEntry(orphan, userId, parkedAs) ?? rebuilt;
     // HELD BEFORE IT IS QUEUED: a flush reading the queue between the write and the hold would send
     // a line the background drain may send too.
     claims?.hold(orphan.id);

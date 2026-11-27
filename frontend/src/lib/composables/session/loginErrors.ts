@@ -83,6 +83,8 @@ export type LoginErrorCode =
   | 'local_state_owner_unrecorded'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
+  /** Biometric mode, and the user dismissed the sheet: the key is in the keystore, the keypad is asked for. */
+  | 'biometric_dismissed'
   /** This device was revoked; local state has been wiped and it must re-register. */
   | 'device_revoked'
   /** The server could not be REACHED at all - we never got an answer to disagree with. */
@@ -320,6 +322,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'pin_not_set' ||
     (provesLocalStateExists(code) && code !== 'hardware_key_unavailable') ||
     code === 'keystore_empty' ||
+    code === 'biometric_dismissed' ||
     code === 'server_unreachable' ||
     code === 'pin_attempts_throttled' ||
     code === 'pin_salt_changed' ||

@@ -545,6 +545,17 @@ describe('UsersService.directory campus and post filters', () => {
     expect(where.some(([sql]) => sql.includes('blockedIds'))).toBe(false);
   });
 
+  // D56: the clause itself is judged against PostgreSQL in picker-merging-duplicate.integration.spec.ts.
+  it('leaves out a duplicate whose Alumni merge is open, beside the block clause', async () => {
+    const { service, where } = makeService(['blocked-1']);
+    await service.directory({ campus: 'gardanne' }, 'me');
+    const merging = where.find(([sql]) => sql.includes('alumni_merges'));
+    expect(merging?.[0]).toContain('NOT EXISTS');
+    expect(merging?.[0]).toContain('merging."duplicateUuid" = user.miconnectUuid');
+    expect(merging?.[0]).toContain('merging."completedAt" IS NULL');
+    expect(where.some(([sql]) => sql.includes('blockedIds'))).toBe(true);
+  });
+
   it('breaks ties on the id after the name order, so offset paging is stable', async () => {
     const { service, orders } = makeService();
     await service.directory({ campus: 'gardanne' });
@@ -594,7 +605,7 @@ describe('UsersService review cohort', () => {
       createQueryBuilder: jest.fn().mockReturnValue(qb),
     } as unknown as Repository<User>;
     const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, where };
+    return { service, where, qb };
   }
 
   it('shows a review account the cohort and nobody else, admins included', async () => {
@@ -614,6 +625,30 @@ describe('UsersService review cohort', () => {
       'user.id NOT IN (:...reviewCohort)',
       { reviewCohort: ['aa01', 'bb02'] },
     ]);
+  });
+
+  it('hides a duplicate waiting for its merge from the search too, and answers the earliest cursus (D56)', async () => {
+    const { service, where, qb } = makeService(false);
+    qb.getMany.mockResolvedValue([
+      {
+        id: 'u1',
+        displayName: 'Camille Durand',
+        cursus: [
+          { formation: 'ISMIN', promo: 2022 },
+          { formation: 'ICM', promo: 2019 },
+        ],
+        promo: 2022,
+        formation: 'ISMIN',
+      },
+      { id: 'u2', displayName: 'Camille Durand', cursus: [], promo: 2020, formation: null },
+    ]);
+    expect(await service.search('Camille', 'cc03')).toEqual([
+      { id: 'u1', displayName: 'Camille Durand', promo: 2019, formation: 'ICM' },
+      { id: 'u2', displayName: 'Camille Durand', promo: 2020, formation: null },
+    ]);
+    expect(where.some(([sql]) => sql.includes('NOT EXISTS (SELECT 1 FROM alumni_merges'))).toBe(
+      true
+    );
   });
 
   it('shows a global admin everybody, so the team can reach the review accounts', async () => {

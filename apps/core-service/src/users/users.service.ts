@@ -19,6 +19,7 @@ import {
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
 import { cursusEntryFilter } from './cursus-filter';
+import { earliestCursus, type UserSearchRow } from './user-search-row';
 import { UserBlocksService } from './user-blocks.service';
 import {
   EMPTY_PROFILE,
@@ -495,12 +496,27 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
+   * Hides from every person picker the Canari account of an Alumni duplicate waiting for its merge
+   * (D56, profiles-and-access.md): from the moment the merge is REQUESTED until it is closed - by
+   * MiConnect's merge or by a cancel, which brings the account back - the duplicate is the same
+   * person as its target, and listing both showed two identical rows. Only the DUPLICATE side is
+   * hidden, never the target. `GET /users/batch` is not a picker and still resolves the id.
+   */
+  private applyMergingDuplicateVisibility(qb: SelectQueryBuilder<User>): void {
+    qb.andWhere(
+      `NOT EXISTS (SELECT 1 FROM alumni_merges merging WHERE merging."duplicateUuid" = user.miconnectUuid AND merging."completedAt" IS NULL)`
+    );
+  }
+
+  /**
    * Search users by displayName - case-insensitive, accent-insensitive, word-order-insensitive,
    * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
    * Returns up to 10 results. The caller (requesterId) is included in results - callers that
    * must not target themselves (e.g. starting a DM) enforce that as a separate business rule.
+   * Each row carries its EARLIEST cursus entry's promo and formation, what the pickers show to
+   * tell two people of the same name apart (D56, `distinguishHomonyms` on the client).
    */
-  async search(query: string, requesterId?: string): Promise<Pick<User, 'id' | 'displayName'>[]> {
+  async search(query: string, requesterId?: string): Promise<UserSearchRow[]> {
     // `query` is typed `string`, but Express query parsing can yield an array or
     // object at runtime (e.g. `?q=a&q=b` -> string[], `?q[x]=1` -> object). Re-check
     // the runtime type before any string operation to prevent parameter-tampering
@@ -516,7 +532,7 @@ export class UsersService implements OnModuleInit {
 
     const qb = this.userRepository
       .createQueryBuilder('user')
-      .select(['user.id', 'user.displayName']);
+      .select(['user.id', 'user.displayName', 'user.promo', 'user.formation', 'user.cursus']);
 
     // Accent-insensitive, word-order-insensitive, typo-tolerant name matching + relevance ordering.
     const applied = applyFuzzyNameSearch(qb, query);
@@ -524,8 +540,14 @@ export class UsersService implements OnModuleInit {
 
     await this.applyReviewCohortVisibility(qb, requesterId);
     await this.applyBlockVisibility(qb, requesterId, 'search');
+    this.applyMergingDuplicateVisibility(qb);
 
-    return qb.take(10).getMany();
+    const rows = await qb.take(10).getMany();
+    return rows.map((u) => ({
+      id: u.id,
+      displayName: u.displayName ?? null,
+      ...earliestCursus(u),
+    }));
   }
 
   /**
@@ -606,6 +628,7 @@ export class UsersService implements OnModuleInit {
 
     await this.applyReviewCohortVisibility(qb, requesterId);
     await this.applyBlockVisibility(qb, requesterId, 'directory');
+    this.applyMergingDuplicateVisibility(qb);
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {

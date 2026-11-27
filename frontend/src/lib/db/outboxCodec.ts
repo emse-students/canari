@@ -129,6 +129,7 @@ const NATIVE_REFUSALS: ReadonlySet<unknown> = new Set<NativeRefusal>([
   'refused',
   'not_encryptable',
   'unrecorded',
+  'conversation_deleted',
 ]);
 
 /**

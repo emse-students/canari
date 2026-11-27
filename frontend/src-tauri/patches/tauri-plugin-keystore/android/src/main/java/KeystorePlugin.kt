@@ -33,6 +33,11 @@ private const val DEFAULT_CANCEL = "Annuler"
 /// `KEY_NOT_WRAPPED` there.
 private const val KEY_NOT_WRAPPED = "KEY_NOT_WRAPPED"
 
+/// The rejection code for "the user dismissed the biometric sheet" (cancel, negative button, system
+/// cancel) - read by `keystore_bridge::read_device_key`, never by a message. Kept in step with
+/// `PROMPT_DISMISSED` there.
+private const val PROMPT_DISMISSED = "PROMPT_DISMISSED"
+
 @TauriPlugin
 class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     /// Request/response classes for the key-bytes API.
@@ -146,7 +151,16 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                     errorCode: Int, errString: CharSequence
                 ) {
                     super.onAuthenticationError(errorCode, errString)
-                    invoke.reject("Authentication error: $errorCode")
+                    // A dismissed sheet is a typed answer: the key is in the Keystore, it was not
+                    // asked for. Every other error (lockout, no hardware) keeps its numeric message.
+                    if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                        errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                        errorCode == BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        invoke.reject("Authentication dismissed: $errorCode", PROMPT_DISMISSED)
+                    } else {
+                        invoke.reject("Authentication error: $errorCode")
+                    }
                 }
 
                 override fun onAuthenticationFailed() {

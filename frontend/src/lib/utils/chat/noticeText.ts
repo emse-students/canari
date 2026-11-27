@@ -10,6 +10,7 @@
  * @see docs/wiki/frontend/chat.md
  */
 import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
 import type { NoticeSpec } from '$lib/envelope';
 
 /** Every user id the sentence names, in the order it names them. */
@@ -41,6 +42,17 @@ export function noticeText(spec: NoticeSpec, nameOf: (userId: string) => string)
       return m.chat_system_group_photo_changed({ sender });
     case 'groupPhotoRemoved':
       return m.chat_system_group_photo_removed({ sender });
+    case 'historyGranted': {
+      const target = nameOf(targets[0] ?? '');
+      const since = spec.since ?? 0;
+      return since > 0
+        ? m.chat_system_history_granted({
+            sender,
+            target,
+            date: new Date(since).toLocaleDateString(getLocale()),
+          })
+        : m.chat_system_history_granted_all({ sender, target });
+    }
   }
 }
 

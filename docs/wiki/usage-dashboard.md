@@ -200,6 +200,21 @@ the current month - has no row: the oldest of the 366-day window, or one with da
 Paraglide (`admin_usage_*`); the shaping lives in `frontend/src/lib/admin/usageDashboard.ts`. A read
 that fails says so - it never draws zeros it was not told.
 
+**The earlier line charts and the orders of magnitude (owner, 2026-11-26: *"j'aimais bien les graphiques
+d'avant aussi (avec un petit polissage), et les ordres de grandeurs journee/semaine/mois"*).** The
+"previous charts" are the admin presence charts of #3049 - a smoothed line per platform and per version
+with a dashed total, over 24 h, 7 d or 30 d. They were never removed: they still draw the connected
+DEVICES of `/admin/status` (a sample a minute, kept 30 days), and #4007 built `/admin/usage` beside them
+without them. They are now ONE component, `LineChart.svelte` (points, series, total and labels passed in),
+fed by `PresenceLineChart` on the status page and by `peopleSeries` (`usageDashboard.ts`) on this one: a
+line per device type and per version that had somebody over the day window, the dashed total being the
+day's distinct people, a day with no row `null` in every line (a gap, never a zero). The window is the
+reader's (7, 30 or 90 days) and also drives the day bars. The headline (`headline`) gives each of today,
+this week and this month with the last COMPLETE period beside it (yesterday, last week, last month,
+matched by start date, "not counted" when the server has no row) and the mean people per day over the
+last 7 and 30 complete days. No percentage is drawn: the current period is still running, so a delta against
+a full one would mislead. Live connected devices stay on `/admin/status`: a different question.
+
 ## Interpretation taken, reversible
 
 - **"The per-minute detail, 30 days"** is read as: the sub-daily detail this feature adds (the hour

@@ -94,7 +94,7 @@ describe('smallestRules', () => {
   });
 
   it('reaches exactly the pairs it was given', () => {
-    const given = pairs(['FSSS', 'PDIS'], 'gardanne');
+    const given = pairs(['FISA', 'PDIS'], 'gardanne');
     const rules = smallestRules(given);
     for (const campus of SPACE_CAMPUSES) {
       for (const formation of SPACE_FORMATIONS) {
@@ -516,7 +516,7 @@ describe('SpacesService', () => {
     const { service } = make({
       spaceRows: [
         { id: 'se-icm', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: 'bde' },
-        { id: 'se-fsss', formation: 'FSSS', campus: 'saint-etienne', bdeAssociationId: 'fsss' },
+        { id: 'se-fisa', formation: 'FISA', campus: 'saint-etienne', bdeAssociationId: 'fisa' },
       ],
       rules: [
         { associationId: 'inside', formation: 'ICM', campus: 'saint-etienne' },
@@ -527,7 +527,7 @@ describe('SpacesService', () => {
       .fn()
       .mockResolvedValue([
         { id: 'bde', name: 'BDE', type: 'association', parentAssociationId: null },
-        { id: 'fsss', name: 'FSSS', type: 'association', parentAssociationId: null },
+        { id: 'fisa', name: 'FISA', type: 'association', parentAssociationId: null },
         { id: 'inside', name: 'In', type: 'association', parentAssociationId: 'bde' },
         { id: 'wide', name: 'Wide', type: 'association', parentAssociationId: 'bde' },
         { id: 'orphan', name: 'Orphan', type: 'list', parentAssociationId: 'gone' },
@@ -546,7 +546,7 @@ describe('SpacesService', () => {
       spaceRows: [
         { id: 's1', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: 'a' },
         { id: 's2', formation: 'ISMIN', campus: 'gardanne', bdeAssociationId: 'a' },
-        { id: 's3', formation: 'FSSS', campus: 'gardanne', bdeAssociationId: null },
+        { id: 's3', formation: 'FISA', campus: 'gardanne', bdeAssociationId: null },
       ],
     });
     const spaces = await service.list();

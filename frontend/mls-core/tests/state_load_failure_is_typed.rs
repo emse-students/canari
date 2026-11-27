@@ -118,6 +118,36 @@ fn a_keystore_that_hands_back_no_key_is_its_own_variant_and_never_a_state_verdic
     );
 }
 
+/// A keystore whose biometric sheet the user dismissed: the key is there, unread.
+struct DismissedSheet;
+
+impl mls_core::keystore::DeviceKeyStore for DismissedSheet {
+    fn store_device_key(&self, _key: &[u8; 32], _alias: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn read_device_key(&self, _alias: &str) -> mls_core::keystore::DeviceKeyRead {
+        mls_core::keystore::DeviceKeyRead::PromptDismissed
+    }
+    fn delete_device_key(&self, _alias: &str) -> Result<(), String> {
+        panic!("a dismissed sheet must never delete the entry");
+    }
+}
+
+#[test]
+fn a_dismissed_biometric_sheet_is_its_own_code_and_never_an_empty_keystore() {
+    let sealed = encrypt_blob(&key(1), b"cbor-mls-snapshot").expect("seal");
+    let err = MlsManager::resolve_at_rest_key(USER, DEVICE, Some(&sealed), None, &DismissedSheet)
+        .expect_err("a dismissed sheet reads no key");
+    assert!(
+        matches!(err, MlsError::KeystorePromptDismissed(_)),
+        "expected KeystorePromptDismissed, got {err:?}"
+    );
+    let refusal = mls_core::StateLoadRefusal::from(err);
+    assert!(refusal.is_keystore_prompt_dismissed());
+    assert!(!refusal.is_keystore_key_unavailable());
+    assert_eq!(refusal.code, Some("KEYSTORE_PROMPT_DISMISSED"));
+}
+
 /// A keystore whose entry holds a key that does not open the blob, and whose delete is REFUSED -
 /// the app's at-rest guard keeping the only copy of a hardware-held key.
 struct GuardedStaleEntry {
@@ -129,8 +159,8 @@ impl mls_core::keystore::DeviceKeyStore for GuardedStaleEntry {
     fn store_device_key(&self, _key: &[u8; 32], _alias: &str) -> Result<(), String> {
         Ok(())
     }
-    fn retrieve_device_key(&self, _alias: &str) -> Option<[u8; 32]> {
-        Some(self.held)
+    fn read_device_key(&self, _alias: &str) -> mls_core::keystore::DeviceKeyRead {
+        mls_core::keystore::DeviceKeyRead::Found(self.held)
     }
     fn delete_device_key(&self, _alias: &str) -> Result<(), String> {
         self.deletes

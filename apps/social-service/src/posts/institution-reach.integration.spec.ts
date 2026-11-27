@@ -69,6 +69,7 @@ import {
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
+import { applyFormationFisa } from '../spaces/formation-fisa.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -286,6 +287,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     ]) {
       await q(migration(file));
     }
+    await applyFormationFisa(q);
     await q(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS "liveId" uuid NULL`);
     for (const [id, name, type, rule] of [
       [I, 'I', 'institution', [null, SE]],
@@ -487,7 +489,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
           [Q, SE]
         )) as { formation: string }[]
       ).map((r) => r.formation);
-    expect(await reaches()).toEqual(['Autre', 'FSSS', 'ICM', 'ISMIN', 'PDIS']);
+    expect(await reaches()).toEqual(['Autre', 'FISA', 'ICM', 'ISMIN', 'PDIS']);
     await setReach(Q, { spaces: [ICM_SE, ISMIN_SE], public: 'all' });
     expect(await reaches()).toEqual(['ICM', 'ISMIN']);
     await setReach(Q, { spaces: [ICM_SE, ISMIN_SE], public: 'students' });
@@ -645,7 +647,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
 
     it("offers every space of the institution's audience, campus then formation", async () => {
       expect(await institutionReachOptions(manager, I)).toEqual(
-        ['Autre', 'FSSS', 'ICM', 'ISMIN', 'PDIS'].map((formation) => ({ formation, campus: SE }))
+        ['Autre', 'FISA', 'ICM', 'ISMIN', 'PDIS'].map((formation) => ({ formation, campus: SE }))
       );
     });
 

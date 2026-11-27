@@ -98,6 +98,12 @@ export const ACCOUNT_KEY = {
    */
   notepadMoved: (userId: string) => `canari.notepad-moved.${userId}`,
   /**
+   * `chat/historyGrant.ts`: the history grants this device ISSUED to a newcomer (owner, 2026-11-25) -
+   * what it answers the newcomer's grant ask from, so a reload between the press and the ask still
+   * answers it.
+   */
+  historyGrantsIssued: (userId: string) => `mls_history_grants_issued:v1:${userId}`,
+  /**
    * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
    * community the roots and the admissions it verified. Other members' ids, written by this
    * account's device.
@@ -284,6 +290,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.registerOwed(userId),
     ACCOUNT_KEY.notepadMoved(userId),
+    ACCOUNT_KEY.historyGrantsIssued(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),

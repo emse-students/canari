@@ -522,6 +522,7 @@ describe('account reset: rows first, the blob store LAST, and a blob failure ski
     'DELETE FROM distribution_groups',
     'DELETE FROM feed_pages',
     'DELETE FROM pending_mutations',
+    'DELETE FROM deleted_conversations',
   ];
 
   it('SQLite: a blob store that will not open still lets every table be emptied, then rejects typed', async () => {

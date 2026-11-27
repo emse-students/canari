@@ -44,6 +44,13 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 const openStores = new Map<string, Promise<IStorage>>();
 
 /**
+ * The close in flight per user. The plugin shares ONE pool per file, so a store opened while an older
+ * handle of the same file is still closing would have its pool closed under it by that close
+ * (a wipe racing a sign-in). `getStorage` therefore waits for the user's close to settle first.
+ */
+const closingStores = new Map<string, Promise<unknown>>();
+
+/**
  * Instantiate the correct storage backend for the current runtime.
  * Returns SqliteStorage when running inside Tauri (detected via `__TAURI_INTERNALS__`),
  * falling back to IndexedDbStorage for regular browser / PWA environments.
@@ -51,6 +58,8 @@ const openStores = new Map<string, Promise<IStorage>>();
  * The handle is shared per user for as long as it stays open - see {@link openStores}.
  */
 export async function getStorage(userId: string): Promise<IStorage> {
+  // An open never overlaps a close of the same file (see {@link closingStores}).
+  while (closingStores.has(userId)) await closingStores.get(userId);
   const cached = openStores.get(userId);
   if (cached) {
     // A JOINER SHARES THE OPEN'S OUTCOME, FAILURE INCLUDED. It used to read a rejected open as "no
@@ -89,13 +98,24 @@ export async function getStorage(userId: string): Promise<IStorage> {
  * Returns whether a store was open.
  */
 export async function closeCachedStore(userId: string): Promise<boolean> {
+  // A second close joins the first rather than finding an empty cache and answering "none open".
+  const inFlight = closingStores.get(userId);
+  if (inFlight) return (await inFlight) as boolean;
   const cached = openStores.get(userId);
   if (!cached) return false;
   openStores.delete(userId);
-  const store = await cached.catch(() => null);
-  if (!store) return false;
-  await store.close();
-  return true;
+  const closing = (async () => {
+    const store = await cached.catch(() => null);
+    if (!store) return false;
+    await store.close();
+    return true;
+  })();
+  closingStores.set(userId, closing);
+  try {
+    return await closing;
+  } finally {
+    if (closingStores.get(userId) === closing) closingStores.delete(userId);
+  }
 }
 
 /** Open a fresh store for the runtime in use. Callers go through {@link getStorage}. */

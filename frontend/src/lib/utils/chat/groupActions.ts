@@ -22,6 +22,14 @@ import { serverTimeSeen } from './serverClock';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import {
+  HISTORY_GRANT_ASK_EVENT,
+  HISTORY_GRANT_EVENT,
+  historyGrantPayload,
+  mintGrantId,
+  noteIssuedGrant,
+  type HistoryGrant,
+} from './historyGrant';
+import {
   endSpentRegisterAsks,
   isRegisterOwed,
   noteRegisterAsked,
@@ -33,7 +41,8 @@ import {
   sealHistoryContent,
   type HistoryAnswerKey,
 } from '$lib/crypto/historySeal';
-import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalUserId, treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { digestIdentity } from './historyDigestRendezvous';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -1569,12 +1578,15 @@ async function sendBundleChunks(
     to,
     state,
     answer,
+    grantSince,
   }: {
     chunkSize: number;
     to: string;
     state?: ConversationHistoryState;
     /** The ask this answers, and the seal its key asks for - see {@link KeyedAnswer}. */
     answer: KeyedAnswer;
+    /** The grant this answer is made under, when it is one (`historyGrant.ts`). */
+    grantSince?: number;
   }
 ): Promise<BundleOutcome> {
   // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
@@ -1600,7 +1612,8 @@ async function sendBundleChunks(
       groupId,
       selection.slice(i, i + chunkSize),
       { mlsService, log },
-      reader
+      reader,
+      grantSince
     );
     if (chosen === null) {
       if (!read) return { kind: 'unreadable' };
@@ -2113,6 +2126,119 @@ export async function sendHistoryDigest(
 }
 
 /**
+ * THE NEWCOMER'S ASK UNDER A HISTORY GRANT (`historyGrant.ts`, owner 2026-11-25): this device's
+ * digest, sent to the GRANTING device alone, naming the grant. It is an ordinary keyed digest ask -
+ * the same digest, request id and answer key `sendHistoryDigest` sends - so its answer is the
+ * ordinary diff, sealed to this ask and addressed to this device; it differs in two things only:
+ *
+ * - it names `to` (the granter) and the `grantId`, and only that device answers it - no election,
+ *   since the history given is the granter's own;
+ * - the ask is kept WITH the grant (`grant` in {@link noteHistoryAsk}), so its answer is taken from
+ *   the granter alone and checked against our windows lifted from the grant's date.
+ *
+ * `since` is the later of the grant's date and this device's own history window: "everything" is
+ * bounded by the window every answer is bounded by, never more.
+ */
+export async function sendHistoryGrantAsk(
+  groupId: string,
+  grant: { grantId: string; granter: string; since: number },
+  from: string,
+  deps: HistoryStoreDeps
+): Promise<boolean> {
+  const { mlsService, log, storage } = deps;
+  if (followerTabSendsNoHistoryFrame('grant ask', groupId, log)) return false;
+  const entries = await readHistoryEntries(groupId, deps);
+  if (entries === null) {
+    log(`[HISTORY_GRANT] Cannot describe ${groupId.slice(0, 8)}… - no readable store, no ask`);
+    return false;
+  }
+  const digest = await buildHistoryDigest(entries);
+  const since = Math.max(grant.since, await historyRangeStartFor(groupId, storage));
+  const key = await askKeyOrNothing(groupId, 'HISTORY_GRANT', deps);
+  if (key === null) return false;
+  const requestId = mintHistoryRequestId();
+  noteHistoryAsk(
+    groupId,
+    requestId,
+    {
+      kind: 'digest',
+      since,
+      askedAt: Date.now(),
+      grant: { grantId: grant.grantId, granter: grant.granter, since: grant.since },
+    },
+    key.secret
+  );
+  const bytes = encodeAppMessage(
+    mkSystem(
+      HISTORY_GRANT_ASK_EVENT,
+      JSON.stringify({
+        from,
+        to: grant.granter,
+        grantId: grant.grantId,
+        digest,
+        since,
+        requestId,
+        answerKey: key.answerKey,
+      })
+    )
+  );
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_GRANT] Asked ${grant.granter} for the history it granted in ${groupId.slice(0, 8)}… from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
+    );
+    return true;
+  } catch (e) {
+    log(`[HISTORY_GRANT] Ask failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+    return false;
+  }
+}
+
+/**
+ * THE PRESS OF "ENVOYER L'HISTORIQUE DES MESSAGES" (owner, 2026-11-25): grants `newcomer` the
+ * messages THIS device holds in `groupId` from `since` (`0` = everything).
+ *
+ * The grant is recorded durably BEFORE it leaves (the newcomer's ask can come back before the send
+ * resolves, and a reload must still answer it), then sent as a VISIBLE notice every member draws -
+ * the acting device included, under the same id (`sendVisibleNotice`). Nothing else is sent here: the
+ * messages leave when the newcomer's devices ask (`sendHistoryGrantAsk`), sealed to each ask.
+ *
+ * Throws when the grant could not be recorded or sent, so the caller can say so; a recorded grant
+ * whose send failed is harmless - no newcomer device can name it.
+ */
+export async function grantHistoryToNewcomer(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  /** This account (the granter's user). */
+  userId: string;
+  newcomer: string;
+  since: number;
+  own: OwnNotice;
+}): Promise<HistoryGrant> {
+  const { mlsService, groupId, userId, newcomer, since, own } = params;
+  const grant: HistoryGrant = {
+    grantId: mintGrantId(),
+    newcomer: canonicalUserId(newcomer),
+    granter: digestIdentity(userId, mlsService.getDeviceId()),
+    since: Math.max(0, Math.floor(since)),
+  };
+  if (!noteIssuedGrant(userId, groupId, grant)) {
+    throw new Error('the grant could not be recorded on this device');
+  }
+  await sendVisibleNotice(
+    mlsService,
+    groupId,
+    HISTORY_GRANT_EVENT,
+    historyGrantPayload(grant),
+    own
+  );
+  console.log(
+    `[HISTORY_GRANT] ${groupId.slice(0, 8)}… - granted ${grant.newcomer.slice(0, 8)} our history from ${grant.since > 0 ? new Date(grant.since).toISOString() : 'the beginning'} (grant ${grant.grantId.slice(0, 8)})`
+  );
+  return grant;
+}
+
+/**
  * Asks one specific device for the messages this one is missing, by id or - when the digest could
  * only resolve to a slice of the id space - by slice.
  *
@@ -2230,10 +2356,15 @@ export async function sendHistoryBundleForIds(
      * proof (`vetBundle`, `tombstoneHeld`).
      */
     withTombstones?: boolean;
+    /**
+     * The start date of the HISTORY GRANT this answers (`historyGrant.ts`): the reader's arrival span
+     * is lifted from it, and nothing else ({@link readerHistorySelection}).
+     */
+    grantSince?: number;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since, requestId, seal, withTombstones = false } = opts;
+  const { to, chunkSize = 200, since, requestId, seal, withTombstones = false, grantSince } = opts;
   if (followerTabSendsNoHistoryFrame('bundle for ids', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
@@ -2271,7 +2402,7 @@ export async function sendHistoryBundleForIds(
     groupId,
     selected,
     { mlsService, log },
-    { chunkSize, to, state, answer: { requestId, seal } }
+    { chunkSize, to, state, answer: { requestId, seal }, grantSince }
   );
   if (outcome.kind !== 'sent') return;
   log(

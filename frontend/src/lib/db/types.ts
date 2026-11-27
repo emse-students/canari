@@ -579,9 +579,11 @@ export interface OutboxEntry {
  * The native drain's verdict on a mirror line it marked unsendable (`UnsendableCause` in the
  * Android service): `refused`, the server refused the frame for good (a final 4xx);
  * `not_encryptable`, it could not be encrypted from the background for good (its group not held,
- * this device removed, a malformed proto); `unrecorded`, a line marked by a build that wrote no cause.
+ * this device removed, a malformed proto); `unrecorded`, a line marked by a build that wrote no cause;
+ * `conversation_deleted`, the PAGE's own verdict on a line naming a conversation this device deleted
+ * (never from the native drain).
  */
-export type NativeRefusal = 'refused' | 'not_encryptable' | 'unrecorded';
+export type NativeRefusal = 'refused' | 'not_encryptable' | 'unrecorded' | 'conversation_deleted';
 
 /**
  * What the page's own flusher parked an entry on: `server_error`, a run of counted 5xx;
@@ -872,6 +874,13 @@ export interface IStorage {
   getConversation(id: string): Promise<ConversationMeta | null>;
   /** Delete the conversation row and cascade-delete all of its messages and pending mutations. */
   deleteConversation(id: string): Promise<void>;
+  /**
+   * Whether this device deleted `id` and has not been in it since - the durable fact that tells a
+   * native mirror line naming a conversation the member REMOVED from one naming a conversation not
+   * stored YET (a Welcome in flight). Optional: only the SQLite store, the one the native mirror runs
+   * beside, keeps it; absent reads as "not deleted".
+   */
+  wasConversationDeleted?(id: string): Promise<boolean>;
   /** Delete all messages (and the mutations awaiting them) for a conversation, keeping its metadata row. */
   deleteMessagesForConversation(conversationId: string): Promise<void>;
 

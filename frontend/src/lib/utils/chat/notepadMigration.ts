@@ -91,7 +91,7 @@ export async function notepadMessageId(userId: string, digest: string): Promise<
 }
 
 /** The message posted: a heading saying where it came from, then the notepad as it was. */
-export function notepadMessageText(notepad: string): string {
+function notepadMessageText(notepad: string): string {
   return `${m.notepad_moved_heading()}\n\n${notepad}`;
 }
 

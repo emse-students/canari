@@ -1273,6 +1273,7 @@ impl SendProspect {
             | E::StateSealedUnderAnotherKey(_)
             | E::StateAltered(_)
             | E::KeystoreKeyUnavailable(_)
+            | E::KeystorePromptDismissed(_)
             | E::Serialization(_)
             | E::Unrecoverable(_) => Self::Never,
             E::OpenMls(_)
@@ -1306,6 +1307,7 @@ impl SendProspect {
             | E::StateSealedUnderAnotherKey(_)
             | E::StateAltered(_)
             | E::KeystoreKeyUnavailable(_)
+            | E::KeystorePromptDismissed(_)
             | E::ForeignExternalRemove(_) => Self::NotYet,
         }
     }
