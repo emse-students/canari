@@ -21,6 +21,8 @@
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import { LoaderCircle } from '@lucide/svelte';
+  import { everyoneMentionOf } from '$lib/notifications/conversationLevel';
+  import { isChannelConversationId } from '$lib/utils/chat/rawId';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import { m } from '$lib/paraglide/messages';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
@@ -373,6 +375,10 @@
               reelPurgedAt={msg.mediaPurgedAt}
               {onReelPurged}
               {conversationId}
+              everyoneHonoured={everyoneMentionOf(
+                conversationId !== undefined && isChannelConversationId(conversationId),
+                msg.everyoneVouched === true
+              ) === 'honoured'}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}

@@ -154,6 +154,12 @@ export interface StoredMessage {
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
   /**
+   * A salon row whose `@tous` the SERVER vouched for (`ChatMessage.everyoneVouched`). Sealed with the
+   * row, never a clear column, so a page drawn from this copy already knows it and the chip does not
+   * flip when the server page arrives.
+   */
+  everyoneVouched?: boolean;
+  /**
    * Why this own attachment was retired UNSENT, when the reason was the group's (see
    * {@link UnsentReason}). Written by the outbox as it retires the entry - the entry and its bytes go,
    * and this is what lets the bubble still say why after a reload or in another tab.
