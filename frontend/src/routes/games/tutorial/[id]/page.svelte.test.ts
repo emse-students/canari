@@ -27,6 +27,7 @@ function open(id: string) {
 
 beforeEach(() => {
   localStorage.clear();
+  localStorage.setItem('canari.minesweeper.flagPrimary', '0');
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 afterEach(() => {

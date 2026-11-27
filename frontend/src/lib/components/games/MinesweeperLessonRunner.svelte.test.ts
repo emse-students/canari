@@ -11,6 +11,7 @@ import { LESSONS } from '$lib/minesweeper/tutorial/lessons';
 import { PATTERNS } from '$lib/minesweeper/tutorial/patterns';
 import { locateLesson } from '$lib/minesweeper/tutorial/path';
 import { TUTORIAL_PROGRESS_KEY, loadTutorialProgress } from '$lib/minesweeper/tutorial/progress';
+import { FLAG_PRIMARY_STORAGE_KEY } from '$lib/minesweeper/controls';
 import MinesweeperLessonRunner from './MinesweeperLessonRunner.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
@@ -25,6 +26,8 @@ function open(id: string) {
 
 beforeEach(() => {
   localStorage.clear();
+  // The gestures were chosen already: the first-time choice has its own test.
+  localStorage.setItem(FLAG_PRIMARY_STORAGE_KEY, '0');
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 afterEach(() => {
@@ -42,6 +45,12 @@ const byText = (text: string) =>
   [...document.querySelectorAll<HTMLElement>('button, a')].find((b) =>
     b.textContent?.trim().startsWith(text)
   )!;
+/** The flag is the other gesture: a right click here. */
+const flag = async (el: HTMLElement) => {
+  el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  flushSync();
+  await tick();
+};
 const press = async (el: HTMLElement) => {
   el.click();
   flushSync();
@@ -51,7 +60,7 @@ const press = async (el: HTMLElement) => {
 describe('a lesson screen', () => {
   it('says the goal first, with Le Pic thinking, and shows the family position', () => {
     open('reveal');
-    expect(testId('tutorial-goal')?.textContent).toContain('Touche la case entourée en vert');
+    expect(testId('tutorial-goal')?.textContent).toContain('Creuse la case entourée en vert');
     expect(pic().dataset.mood).toBe('think');
     expect(pic().dataset.pose).toBe('rest');
     expect(testId('tutorial-progress')?.textContent).toContain(`1 / ${LESSONS.length}`);
@@ -119,8 +128,7 @@ describe('a lesson screen', () => {
 
   it('records a solved lesson ONCE and shows the solved screen: the flag, the progress, the next lesson', async () => {
     open('flag');
-    await press(byText('Drapeau'));
-    await press(cell(8));
+    await flag(cell(8));
     expect(testId('tutorial-solved')).not.toBeNull();
     expect(loadTutorialProgress().done).toEqual(['flag']);
     expect(pic().dataset.pose).toBe('flag');
@@ -141,8 +149,7 @@ describe('a lesson screen', () => {
     // Solve it the way a player does: open what the lesson asks, flag what it asks.
     const board = first.goal;
     for (const [x, y] of board.reveal) await press(cell(y * first.rows[0].length + x));
-    await press(byText('Drapeau'));
-    for (const [x, y] of board.flag) await press(cell(y * first.rows[0].length + x));
+    for (const [x, y] of board.flag) await flag(cell(y * first.rows[0].length + x));
     expect(testId('tutorial-solved')?.textContent).toContain('Motif maîtrisé !');
     expect(testId('tutorial-solved-name')?.textContent?.trim()).toBe('B1');
     expect(testId('tutorial-solved-next')?.textContent).toContain('Motif suivant ·');
@@ -176,5 +183,16 @@ describe('the bottom bar and the tab bar', () => {
     expect(bar.contains(testId('tutorial-lamp'))).toBe(true);
     expect(bar.contains(testId('tutorial-skip'))).toBe(true);
     expect(bar.textContent).toContain('Recommencer');
+  });
+
+  it('asks the gestures the first time, and keeps the choice for the game', () => {
+    localStorage.removeItem(FLAG_PRIMARY_STORAGE_KEY);
+    open('reveal');
+    expect(testId('controls-choice')).not.toBeNull();
+    document.querySelector<HTMLButtonElement>('[data-choice="flag"]')!.click();
+    flushSync();
+    expect(testId('controls-choice')).toBeNull();
+    expect(localStorage.getItem(FLAG_PRIMARY_STORAGE_KEY)).toBe('1');
+    expect(testId('tutorial-gestures')?.textContent).toContain('Clic gauche : drapeau');
   });
 });

@@ -715,6 +715,7 @@ describe('NotificationRow for an item in a global admin queue (owner, 2026-11-18
   it.each([
     ['admin_profile_correction', () => m.notif_admin_profile_correction_text()],
     ['admin_report', () => m.notif_admin_report_text()],
+    ['admin_alumni_duplicate', () => m.notif_admin_alumni_duplicate_text()],
   ])('%s says what waits, in one sentence, names nobody, and opens', (type, text) => {
     const target = renderRow(adminRow(type));
     expect(target.textContent).toContain(text());

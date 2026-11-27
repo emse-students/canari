@@ -5,6 +5,8 @@
   import LePic, { type PicMood, type PicPose } from '$lib/components/games/LePic.svelte';
   import MinerLamp from '$lib/components/games/MinerLamp.svelte';
   import MinesweeperMiniGrid from '$lib/components/games/MinesweeperMiniGrid.svelte';
+  import MinesweeperControlsChoice from '$lib/components/games/MinesweeperControlsChoice.svelte';
+  import { loadFlagPrimary, playedByTouch, saveFlagPrimary } from '$lib/minesweeper/controls';
   import {
     countDone,
     shortName,
@@ -53,6 +55,21 @@
   const pulse = $derived(hintStep === null && !progress.lampUsed);
   const isPattern = $derived(place.tab === 'patterns');
 
+  /**
+   * THE GESTURES (owner, 2026-11-27): asked once, before the first lesson, and stored where the game reads
+   * them; the grid says them in one quiet line, with a way to swap them.
+   */
+  const stored = loadFlagPrimary();
+  let chosen = $state(stored !== null);
+  let flagPrimary = $state(stored ?? false);
+  const touch = playedByTouch();
+
+  function chooseGestures(value: boolean) {
+    flagPrimary = value;
+    chosen = true;
+    saveFlagPrimary(value);
+  }
+
   /** What Le Pic does: thinks at the start, points while he explains, is glad when the safe cell is shown. */
   const mood = $derived<PicMood>(
     outcome === 'lost' ? 'worried' : hintStep === null ? 'think' : lastStep ? 'happy' : 'neutral'
@@ -93,6 +110,10 @@
       : tutorialPathHref(place.tab)
   );
 </script>
+
+{#if outcome !== 'solved' && !chosen}
+  <MinesweeperControlsChoice {touch} onChoose={chooseGestures} />
+{/if}
 
 {#if outcome === 'solved'}
   <section
@@ -217,6 +238,9 @@
         {hintStep}
         onSolved={solved}
         onLost={() => (outcome = 'lost')}
+        {flagPrimary}
+        {touch}
+        onInvert={() => chooseGestures(!flagPrimary)}
       />
     {/key}
 

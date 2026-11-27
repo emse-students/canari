@@ -40,11 +40,15 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { compareSemver } from '$lib/utils/appVersion';
 
 /**
- * THE FIRST BUILD THAT DRAWS THE HISTORY-GRANT NOTICE (`historyGranted`). A grant is offered only
+ * THE FIRST BUILD THAT DRAWS THE HISTORY-GRANT NOTICE (`historyGranted`) - `1.8.3-alpha.1`, the first
+ * alpha that shipped the reader, NAMED AS A REAL VERSION: a pre-release orders below its stable, so a
+ * floor of the bare `1.8.3` could never be served on the pre-release estate (it would lock out every
+ * 1.8.3 alpha, dev's own web bundle included) and the button could never be read there; the floor DTO
+ * accepts `x.y.z-alpha.N` for that. Production's `1.8.3` floor still draws it. A grant is offered only
  * while the server's `minClientVersion` is at or above it, so no member still admitted runs a build
  * that would receive the hand-over silently (charter principle 1; lead, 2026-11-27).
  */
-export const HISTORY_GRANT_NOTICE_FIRST_VERSION = '1.8.3';
+export const HISTORY_GRANT_NOTICE_FIRST_VERSION = '1.8.3-alpha.1';
 
 /**
  * Whether the served client floor (`minClientVersion`, `null` before the version check answered)

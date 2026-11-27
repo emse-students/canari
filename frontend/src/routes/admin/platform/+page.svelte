@@ -490,7 +490,7 @@
           id="min-client-version"
           type="text"
           bind:value={minClientVersion}
-          pattern="^\d+\.\d+\.\d+$"
+          pattern="^\d+\.\d+\.\d+(-alpha\.(0|[1-9]\d*))?$"
           required
           class="border-cn-border text-text-main focus:ring-accent/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
         />

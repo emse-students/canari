@@ -16,12 +16,15 @@ export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests' satisfies 
 export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies AppPath;
 
 /**
- * The two global-admin queues a notice announces a new item in (owner, 2026-11-18) - where an
- * `admin_profile_correction` / `admin_report` row and its push (`fr.emse.canari://admin-...`) land.
+ * The three global-admin queues a notice announces a new item in (owner, 2026-11-18; the Alumni
+ * duplicates, 2026-11-26) - where an `admin_profile_correction` / `admin_report` /
+ * `admin_alumni_duplicate` row and its push (`fr.emse.canari://admin-...`) land.
  */
 export const ADMIN_PROFILE_CORRECTIONS_ROUTE = '/admin/profile-corrections' satisfies AppPath;
 /** See {@link ADMIN_PROFILE_CORRECTIONS_ROUTE}. */
 export const ADMIN_MODERATION_ROUTE = '/admin/moderation' satisfies AppPath;
+/** See {@link ADMIN_PROFILE_CORRECTIONS_ROUTE}. */
+export const ADMIN_ALUMNI_DUPLICATES_ROUTE = '/admin/alumni-duplicates' satisfies AppPath;
 
 /**
  * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
@@ -201,6 +204,8 @@ export function notificationHref(
       return ADMIN_PROFILE_CORRECTIONS_ROUTE;
     case 'admin_report':
       return ADMIN_MODERATION_ROUTE;
+    case 'admin_alumni_duplicate':
+      return ADMIN_ALUMNI_DUPLICATES_ROUTE;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -270,6 +275,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'delegation_resumed',
   'admin_profile_correction',
   'admin_report',
+  'admin_alumni_duplicate',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

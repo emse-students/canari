@@ -133,3 +133,36 @@ describe('UpdatePlatformConfigDto retention durations', () => {
     }
   });
 });
+
+/** The client floor takes `x.y.z` or `x.y.z-alpha.N` and nothing else: a typo is a 400, not a lockout. */
+describe('UpdatePlatformConfigDto.minClientVersion', () => {
+  const errorsFor = (minClientVersion: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { minClientVersion }));
+
+  it.each(['1.8.3', '0.0.0', '1.8.3-alpha.1', '1.8.3-alpha.12', '1.8.3-alpha.0'])(
+    'accepts %s',
+    async (version) => {
+      expect(await errorsFor(version)).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    '',
+    '1.8',
+    '1.8.3-',
+    '1.8.3-alpha',
+    '1.8.3-alpha.',
+    '1.8.3-alpha.01',
+    '1.8.3-beta.1',
+    '1.8.3-rc.1',
+    '1.8.3-alpha.1.2',
+    '1.8.3+build',
+    'v1.8.3',
+    ' 1.8.3',
+    'latest',
+    130,
+  ])('refuses %j', async (version) => {
+    const errors = await errorsFor(version);
+    expect(errors.map((e) => e.property)).toEqual(['minClientVersion']);
+  });
+});

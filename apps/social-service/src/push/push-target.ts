@@ -31,19 +31,23 @@ export const FORM_RESPONSES_TARGET = 'form-responses';
 export const BOOKINGS_TARGET = 'bookings';
 
 /**
- * The `target`s naming the two global-admin queues a notice announces an item in (owner, 2026-11-18),
- * and the deep-link hosts for them: the profile corrections (`/admin/profile-corrections`) and the
- * moderation reports (`/admin/moderation`). Floored at the build that owns the hosts
- * (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`), so no device is sent a host it cannot open.
+ * The `target`s naming the three global-admin queues a notice announces an item in (owner, 2026-11-18),
+ * and the deep-link hosts for them: the profile corrections (`/admin/profile-corrections`), the
+ * moderation reports (`/admin/moderation`) and the Alumni duplicates (`/admin/alumni-duplicates`). Floored at the build that owns the hosts, so no
+ * device is sent a host it cannot open: `ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION` (1.7.1) for the first
+ * two, `ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION` (1.8.3) for the Alumni duplicates.
  */
 export const ADMIN_PROFILE_CORRECTIONS_TARGET = 'admin-profile-corrections';
 /** See {@link ADMIN_PROFILE_CORRECTIONS_TARGET}. */
 export const ADMIN_MODERATION_TARGET = 'admin-moderation';
+/** See {@link ADMIN_PROFILE_CORRECTIONS_TARGET}: the Alumni duplicates (`/admin/alumni-duplicates`). */
+export const ADMIN_ALUMNI_DUPLICATES_TARGET = 'admin-alumni-duplicates';
 
 /** The admin queue targets, a closed set: a host is written only for one of these. */
 const ADMIN_QUEUE_TARGETS: readonly string[] = [
   ADMIN_PROFILE_CORRECTIONS_TARGET,
   ADMIN_MODERATION_TARGET,
+  ADMIN_ALUMNI_DUPLICATES_TARGET,
 ];
 
 /**

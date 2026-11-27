@@ -56,6 +56,12 @@ export const POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION = '1.7.0';
 export const ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION = '1.7.1';
 
 /**
+ * The first build that draws the Alumni duplicate notice (`admin_alumni_duplicate`) and opens its
+ * deep-link host: the third admin queue notice.
+ */
+export const ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION = '1.8.3';
+
+/**
  * The first build that draws the question put to a form left open (`form_stale_open`, owner,
  * 2026-11-21): the bell row and the card of the managers' list.
  */
@@ -139,6 +145,7 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // A new item in a global admin's queue (owner, 2026-11-18): the first build that draws it.
   admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
   admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  admin_alumni_duplicate: ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION,
   // The heir of a Lydia Responsable hand-over (2026-11-20): the first build that draws it. The
   // `1.7.2` pre-releases already out do not, and a floor compares the version core only.
   lydia_responsable_handed_over: '1.7.3',
@@ -229,6 +236,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_campus_trend_video: CAMPUS_TREND_MIN_CLIENT_VERSION,
   social_admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
   social_admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  social_admin_alumni_duplicate: ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION,
 };
 
 /**

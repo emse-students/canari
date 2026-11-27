@@ -82,6 +82,7 @@
   } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import { loadFlagPrimary, saveFlagPrimary } from '$lib/minesweeper/controls';
   import { m } from '$lib/paraglide/messages';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 
@@ -131,19 +132,8 @@
   /** Where the long-press progress ring is drawn (viewport coordinates), null when none is pending. */
   let pressRing = $state<{ x: number; y: number } | null>(null);
 
-  const FLAG_PRIMARY_STORAGE_KEY = 'canari.minesweeper.flagPrimary';
-
-  function loadFlag(key: string): boolean {
-    if (typeof localStorage === 'undefined') return false;
-    return localStorage.getItem(key) === '1';
-  }
-
-  function saveFlag(key: string, value: boolean) {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value ? '1' : '0');
-  }
-
   /** Control-inversion setting: when true, short press/left click flags (dig on revealed cells) and long press/right click digs. */
-  let flagPrimary = $state(loadFlag(FLAG_PRIMARY_STORAGE_KEY));
+  let flagPrimary = $state(loadFlagPrimary() ?? false);
   /**
    * Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is
    * submitted. A newcomer plays unranked (owner, 2026-11-26): the ranked board is the barrier to entry.
@@ -156,7 +146,7 @@
 
   function toggleFlagPrimary() {
     flagPrimary = !flagPrimary;
-    saveFlag(FLAG_PRIMARY_STORAGE_KEY, flagPrimary);
+    saveFlagPrimary(flagPrimary);
   }
 
   /**

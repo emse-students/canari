@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * The Alumni duplicates (D47): accounts an Alumni sign-in created whose name and promo match an
+   * The Alumni duplicates (D47): accounts an Alumni sign-in created that an existing account may be (a search by their name finds one, D55: the lead reading of 2026-11-27) - "Pas un doublon" closes one for good. Whose name and promo match an
    * existing account. "Rattacher" (D48) MARKS the duplicate - MiConnect moves its Alumni link onto
    * the existing account and deletes it at its next Alumni sign-in, and its Canari account is erased
    * after that merge - so the confirmation first NAMES what the duplicate holds in Canari, counted by
@@ -15,19 +15,21 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { RefreshCw, Link2, RotateCcw, X, UserSearch } from '@lucide/svelte';
+  import { RefreshCw, Link2, RotateCcw, X, UserSearch, UserX } from '@lucide/svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import AlumniManualMerge from '$lib/components/admin/AlumniManualMerge.svelte';
   import { Log } from '$lib/utils/Log';
   import { isGlobalAdmin } from '$lib/stores/user';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import { intlLocale } from '$lib/utils/intlLocale';
   import {
     alumniMergeErrorMessage,
     alumniSiteLine,
     cancelAlumniMerge,
+    dismissAlumniDuplicate,
     fetchAlumniClosedMerges,
     fetchAlumniDuplicates,
     fetchAlumniHoldings,
@@ -150,6 +152,29 @@
     }
   }
 
+  /** "Pas un doublon": terminal for every admin, so it is asked before it is done. */
+  async function dismiss(duplicate: AlumniAccount) {
+    const ok = await showConfirm(m.alumni_duplicates_not_duplicate_confirm(), {
+      danger: true,
+      confirmLabel: m.alumni_duplicates_not_duplicate(),
+    });
+    Log.d('admin.alumni-duplicates.dismiss', { dup: duplicate.uuid.slice(0, 8), ok });
+    if (!ok) return;
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await dismissAlumniDuplicate(duplicate.uuid);
+      notice = m.alumni_duplicates_dismissed();
+      await load();
+    } catch (err) {
+      Log.d('admin.alumni-duplicates.dismiss failed', err);
+      error = alumniMergeErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   const day = (iso: string) => new Date(iso).toLocaleDateString(intlLocale());
 
   const heldLines = (h: AlumniHoldings): string[] => [
@@ -168,6 +193,19 @@
     await load();
   });
 </script>
+
+{#snippet notDuplicate(duplicate: AlumniAccount)}
+  <Button
+    size="compact"
+    variant="secondary"
+    disabled={busy}
+    title={m.alumni_duplicates_not_duplicate_hint()}
+    onclick={() => void dismiss(duplicate)}
+  >
+    <UserX size={14} />
+    {m.alumni_duplicates_not_duplicate()}
+  </Button>
+{/snippet}
 
 {#snippet manual(duplicate: AlumniAccount)}
   {#if manualFor === duplicate.uuid}
@@ -272,7 +310,10 @@
               </Button>
             </div>
           {/each}
-          {@render manual(row.duplicate)}
+          <div class="flex flex-wrap gap-2">
+            {@render manual(row.duplicate)}
+            {@render notDuplicate(row.duplicate)}
+          </div>
         </li>
       {/each}
     </ul>
@@ -285,7 +326,10 @@
             class="bg-cn-surface space-y-3 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/10"
           >
             {@render account(row.duplicate, m.alumni_duplicates_duplicate_label())}
-            {@render manual(row.duplicate)}
+            <div class="flex flex-wrap gap-2">
+              {@render manual(row.duplicate)}
+              {@render notDuplicate(row.duplicate)}
+            </div>
           </li>
         {/each}
       </ul>

@@ -8,3 +8,5 @@ closes this entry, on web desktop, the Mi 9T and the iPhone 12, light and dark: 
 (single, first, middle and last of a group, own and peer), a captioned photo, a photo alone, a poll and
 a reply (the quoted chip is NOT outlined, only the bubble). PASS when the outline hugs the rounded
 corners everywhere and never draws a rectangle around the "vous a repondu" header. Delete this file on PASS.
+
+First reading, 2026-11-27, web, dev 1.8.3-alpha.1, both themes: every case PASSED except a captioned photo that had arrived live, which showed NO outline - its arrival animation (`bubbleInAfterGlide`) replaced the outline's on the same element. Fixed by composing the two in one `animation` list (`app.css`, `.motion-bubble-in.chat-message-jump-highlight`). The reading stays owed on the next alpha, that case first.
