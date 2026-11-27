@@ -2,6 +2,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { UsersController } from './users.controller';
 
 const DUP = '11111111-1111-4111-8111-111111111111';
+const LONELY = '22222222-2222-4222-8222-222222222222';
 
 /**
  * The admin page of Alumni duplicates and the queue it feeds: what the page lists IS what the queue
@@ -10,7 +11,10 @@ const DUP = '11111111-1111-4111-8111-111111111111';
  */
 describe('the Alumni duplicates page and the admin queue', () => {
   const start = new Date('2026-11-27T10:00:00Z');
-  const listing = [{ duplicate: { uuid: DUP }, targets: [] }];
+  const listing = [
+    { duplicate: { uuid: DUP }, targets: [] },
+    { duplicate: { uuid: LONELY }, targets: [] },
+  ];
   let error: jest.SpyInstance;
 
   beforeEach(() => {
@@ -20,7 +24,10 @@ describe('the Alumni duplicates page and the admin queue', () => {
   afterEach(() => jest.restoreAllMocks());
 
   function make(queueOver: Record<string, jest.Mock> = {}) {
-    const alumniMerge = { listDuplicates: jest.fn(async () => listing) };
+    const alumniMerge = {
+      listDuplicates: jest.fn(async () => ({ duplicates: listing, flaggable: [DUP] })),
+      dismiss: jest.fn(async () => undefined),
+    };
     const alumniQueue = {
       databaseNow: jest.fn(async () => start),
       reconcile: jest.fn(async () => undefined),
@@ -42,7 +49,7 @@ describe('the Alumni duplicates page and the admin queue', () => {
     return { controller, alumniMerge, alumniQueue };
   }
 
-  it('reconciles the queue with exactly what it lists, from the database clock', async () => {
+  it('reconciles the queue with the FLAGGABLE subset of what it lists, from the database clock: an account with no candidate is on the page, not in the queue', async () => {
     const { controller, alumniQueue } = make();
     expect(await controller.listAlumniDuplicates()).toEqual(listing);
     expect(alumniQueue.reconcile).toHaveBeenCalledWith([DUP], start);
@@ -58,12 +65,12 @@ describe('the Alumni duplicates page and the admin queue', () => {
   });
 
   it('"Pas un doublon" writes the terminal answer, and refuses a malformed id before writing', async () => {
-    const { controller, alumniQueue } = make();
+    const { controller, alumniMerge } = make();
     await controller.dismissAlumniDuplicate(DUP, 'admin-1');
-    expect(alumniQueue.dismiss).toHaveBeenCalledWith(DUP);
+    expect(alumniMerge.dismiss).toHaveBeenCalledWith(DUP);
     await expect(controller.dismissAlumniDuplicate('nope', 'admin-1')).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(alumniQueue.dismiss).toHaveBeenCalledTimes(1);
+    expect(alumniMerge.dismiss).toHaveBeenCalledTimes(1);
   });
 });

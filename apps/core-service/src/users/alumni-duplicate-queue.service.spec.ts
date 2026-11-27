@@ -1,7 +1,11 @@
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
-import { ALUMNI_FOUND_BATCH, AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
+import {
+  ALUMNI_FOUND_BATCH,
+  AlumniDuplicateQueue,
+  batchIdOf,
+} from './alumni-duplicate-queue.service';
 
 jest.mock('axios');
 
@@ -71,7 +75,9 @@ function make(
       return [{ n: gone.length }];
     }
     if (sql.startsWith('SELECT f."duplicateUuid"')) {
-      return flags.filter((f) => !f.announced && !f.resolved).map((f) => ({ uuid: f.uuid }));
+      const owed = flags.filter((f) => !f.announced && !f.resolved).map((f) => ({ uuid: f.uuid }));
+      const limit = params?.[0] as number | null | undefined;
+      return limit ? owed.slice(0, limit) : owed;
     }
     if (sql.includes('SET "announcedAt" = now()')) {
       for (const f of flags) if ((params[0] as string[]).includes(f.uuid)) f.announced = true;
@@ -89,10 +95,11 @@ function make(
 }
 
 const posted = () => (axios.post as jest.Mock).mock.calls.map((c) => c[0] as string);
-const found = () =>
+const foundCalls = () =>
   (axios.post as jest.Mock).mock.calls
     .filter((c) => String(c[0]).includes('alumni-duplicates-found'))
-    .map((c) => (c[1] as { duplicateUuids: string[] }).duplicateUuids);
+    .map((c) => c[1] as { duplicateUuids: string[]; batchId: string });
+const found = () => foundCalls().map((b) => b.duplicateUuids);
 const NOW = () => new Date(Date.now() + 1000);
 
 describe('AlumniDuplicateQueue', () => {
@@ -165,6 +172,44 @@ describe('AlumniDuplicateQueue', () => {
     await queue.flag(DUP);
     await queue.flag(OTHER);
     expect(found()).toEqual([[DUP], [OTHER]]);
+  });
+
+  it("a sign-in's flag also flushes the notices an earlier refused call left owed - one batch at most - so a retry waits for no admin to open the page", async () => {
+    const { queue, flags } = make([{ uuid: DUP, announced: false }]);
+    await queue.flag(OTHER);
+    expect(found()).toEqual([[DUP, OTHER]]);
+    expect(flags.every((f) => f.announced)).toBe(true);
+    // A sign-in whose flag is already known flushes as well.
+    const owed = make([{ uuid: DUP, announced: false }]);
+    (axios.post as jest.Mock).mockClear();
+    expect(await owed.queue.flag(DUP)).toBe('known');
+    expect(found()).toEqual([[DUP]]);
+  });
+
+  it("a sign-in's flush is BOUNDED to one batch: the rest of a large backlog waits for a reading", async () => {
+    const backlog = Array.from({ length: ALUMNI_FOUND_BATCH + 50 }, (_, i) => ({
+      uuid: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+      announced: false,
+    }));
+    const { queue, flags } = make(backlog);
+    await queue.flag(OTHER);
+    expect(found().map((b) => b.length)).toEqual([ALUMNI_FOUND_BATCH]);
+    expect(flags.filter((f) => !f.announced).length).toBe(51);
+  });
+
+  it('names each batch by a digest of its sorted uuids, the same batch by the same id, so social can tell a replay from news', async () => {
+    const first = make([
+      { uuid: DUP, announced: false },
+      { uuid: OTHER, announced: false },
+    ]);
+    (axios.post as jest.Mock).mockRejectedValueOnce(new Error('answer lost'));
+    await first.queue.reconcile([DUP, OTHER], NOW());
+    await first.queue.reconcile([DUP, OTHER], NOW());
+    const [a, b] = foundCalls();
+    expect(a.batchId).toBe(b.batchId);
+    expect(a.batchId).toMatch(/^[0-9a-f]{64}$/);
+    expect(a.batchId).toBe(batchIdOf([OTHER, DUP]));
+    expect(batchIdOf([DUP])).not.toBe(batchIdOf([DUP, OTHER]));
   });
 
   it('keeps the flag a merge stands for out of the resolution, whatever the page lists', async () => {

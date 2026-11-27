@@ -132,15 +132,18 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   // blanked: the flag of the erased account as a DUPLICATE (found by its MiConnect uuid, read from the
   // `users` row), and the flag of any duplicate that a LIVE merge names this account the TARGET of (a
   // cancelled merge ties nothing: that duplicate waits again, and is not this account's). A flag
-  // holds only a MiConnect uuid, and goes with either account (register M1).
+  // holds only a MiConnect uuid, and goes with either account (register M1) - EXCEPT a DISMISSED one
+  // ("Pas un doublon"): it holds the uuid and the dismissal time and nothing else, and deleting it
+  // would put the account back in the admins' queue and push it again (the lead's reading, 2026-11-27).
   {
     label: 'alumni_duplicate_flags',
     sql: `DELETE FROM alumni_duplicate_flags
-            WHERE "duplicateUuid"::text = (SELECT "miconnectUuid" FROM users WHERE id = $1)
-               OR "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM alumni_merges
+            WHERE "dismissedAt" IS NULL
+              AND ("duplicateUuid"::text = (SELECT "miconnectUuid" FROM users WHERE id = $1)
+                OR "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM alumni_merges
                     WHERE ("targetUserId" = $1
                        OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))
-                      AND "cancelledAt" IS NULL)`,
+                      AND "cancelledAt" IS NULL))`,
   },
   {
     label: 'alumni_merges',

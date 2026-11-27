@@ -256,9 +256,9 @@ export const DROP_DUPLICATE_FLAG_SQL = `DELETE FROM alumni_duplicate_flags WHERE
 /**
  * THE ONE RULE of what an admin can act on (D48, D55), pure: the account was created by an Alumni
  * sign-in, is a person, and its links are exactly [alumni]. The mark refuses by it
- * (`assertDuplicateShaped`), and the admins' queue flags only what it accepts (`flagNewAccount`,
- * a candidate is also needed to flag, `hasCandidate`): since D55 a merge by hand needs no name match,
- * so a homonym or a name spelled differently IS actionable and is flagged - nothing is merged by itself. Null when accepted, else
+ * (`assertDuplicateShaped`), and the admins' queue flags only what it accepts AND that has a candidate
+ * (`flagNewAccount`, `eligibleAmong`): since D55 a merge by hand needs no name match, so a homonym or
+ * a name spelled differently IS actionable and is flagged - nothing is merged by itself. Null when accepted, else
  * the reason, in the words of {@link AlumniMergeNotDuplicateError}.
  */
 export function duplicateShapeRefusal(
@@ -386,10 +386,12 @@ export class AlumniMergeService {
         return;
       }
       const busy = await this.busyTargets();
-      if (
-        busy.openDuplicates.has(account.uuid) ||
-        !(await this.hasCandidate(account, busy.targets))
-      ) {
+      const { eligible } = busy.openDuplicates.has(account.uuid)
+        ? { eligible: [] }
+        : await this.eligibleAmong(account, await this.searchByName(account.name), busy.targets, {
+            firstOnly: true,
+          });
+      if (eligible.length === 0) {
         this.logger.log(
           `[ALUMNI_MERGE] new Alumni account ${tag} is not flagged: no account to attach it to (or a merge is open)`
         );
@@ -406,11 +408,16 @@ export class AlumniMergeService {
 
   /**
    * Every Alumni-created account not already in an open merge (those are listed by {@link
-   * listOpenMerges}), each with the existing accounts it matches by name and promo (D47) - the
-   * flagged duplicates first. One that matches none is listed too, with no target: the admin may
-   * still attach it by hand when the names differ between the Alumni base and Canari (D55).
+   * listOpenMerges}) and not dismissed, each with the existing accounts it matches by name and promo
+   * (D47) - the ones with a match first. An account matching none is listed too, with no target: the
+   * admin may still attach it by hand or answer "Pas un doublon" (D55).
+   *
+   * LISTED IS NOT FLAGGED (the lead's reading of D55, 2026-11-27): `flaggable` is the subset the
+   * admins' queue holds, announces and counts - the accounts with at least ONE eligible candidate
+   * ({@link eligibleAmong}). An alumnus nobody matches is on the page but never pushed, never
+   * bell-rowed, never counted in the badge.
    */
-  async listDuplicates(): Promise<AlumniDuplicate[]> {
+  async listDuplicates(): Promise<{ duplicates: AlumniDuplicate[]; flaggable: string[] }> {
     this.logger.log('[ALUMNI_MERGE] listing the duplicates');
     const busy = await this.busyTargets();
     const created = (await this.editor.searchUsers(ALUMNI_USERNAME_PREFIX)).filter(
@@ -419,31 +426,37 @@ export class AlumniMergeService {
     const dismissed = (await this.queue?.dismissedAmong(created.map((u) => u.uuid))) ?? new Set();
     const flagged: { duplicate: MiconnectUserListing; targets: MiconnectUserListing[] }[] = [];
     const unpaired: { duplicate: MiconnectUserListing; targets: MiconnectUserListing[] }[] = [];
+    const flaggable: string[] = [];
     let notShaped = 0;
-    let noCandidate = 0;
     for (const dup of created) {
       if (dismissed.has(dup.uuid)) continue;
       if (duplicateShapeRefusal(dup, await this.editor.sourceSlugsOf(dup.pk))) {
         notShaped += 1;
         continue;
       }
-      if (!(await this.hasCandidate(dup, busy.targets))) {
-        noCandidate += 1;
-        continue;
-      }
-      const targets = await this.targetsOf(dup);
+      // ONE name search per duplicate: the candidates and the name-and-promo matches read it.
+      const found = await this.searchByName(dup.name);
+      const { eligible } = await this.eligibleAmong(dup, found, busy.targets, { firstOnly: true });
+      if (eligible.length > 0) flaggable.push(dup.uuid);
+      const targets = this.targetsOf(dup, found);
       (targets.length > 0 ? flagged : unpaired).push({ duplicate: dup, targets });
     }
-    const found = [...flagged, ...unpaired];
+    const listed = [...flagged, ...unpaired];
     const view = await this.viewer(
-      found.flatMap((f) => [f.duplicate.uuid, ...f.targets.map((t) => t.uuid)])
+      listed.flatMap((f) => [f.duplicate.uuid, ...f.targets.map((t) => t.uuid)])
     );
     this.logger.log(
       `[ALUMNI_MERGE] ${created.length} Alumni-created account(s) outside an open merge: ${dismissed.size} dismissed, ` +
-        `${notShaped} not duplicate-shaped, ${noCandidate} with no candidate, ${found.length} listed ` +
-        `(${flagged.length} matched by name and promo, ${unpaired.length} to attach by hand)`
+        `${notShaped} not duplicate-shaped, ${listed.length} listed (${flagged.length} matched by name and promo, ` +
+        `${unpaired.length} to attach by hand), ${flaggable.length} with a candidate (the queue's)`
     );
-    return found.map((f) => ({ duplicate: view(f.duplicate), targets: f.targets.map(view) }));
+    return {
+      duplicates: listed.map((f) => ({
+        duplicate: view(f.duplicate),
+        targets: f.targets.map(view),
+      })),
+      flaggable,
+    };
   }
 
   /** The open merges' duplicates and the accounts they name as target (those are not eligible). */
@@ -459,26 +472,64 @@ export class AlumniMergeService {
   }
 
   /**
-   * THE LEAD'S READING OF D55 (2026-11-27): an Alumni-created account is a duplicate an admin can act
-   * on only when a search by its name finds AT LEAST ONE eligible account - a person, active, not a
-   * superuser, holding a CAS link and no Alumni link, named by no open merge (homonyms included: that
-   * is the manual case). An alumnus nobody matches is no duplicate: never flagged, never announced.
-   * Bounded: at most {@link TARGET_SEARCH_MAX} candidates are read for their links, stopping at the
-   * first eligible one.
+   * "Pas un doublon" (the admins' terminal answer): the durable write is the queue's, the REFUSALS
+   * are the merge's. Refused, each logged: a duplicate named by a merge that is not cancelled (open
+   * or completed - a dismissal must never hide an account a merge is acting on, `AlumniMergeInProgressError`),
+   * an account MiConnect does not have, one that is not duplicate-shaped (the allowlist of
+   * {@link duplicateShapeRefusal}: a dismissal of a real person's account is no answer to anything).
    */
-  private async hasCandidate(
+  async dismiss(duplicateUuid: string): Promise<void> {
+    const tag = `dismissal dup=${duplicateUuid.slice(0, 8)}`;
+    this.editor.assertAvailable();
+    const merges = (await this.dataSource.query(
+      `SELECT 1 FROM alumni_merges WHERE "duplicateUuid"::text = $1 AND "cancelledAt" IS NULL LIMIT 1`,
+      [duplicateUuid]
+    )) as unknown[];
+    if (merges.length > 0) {
+      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: a merge of this account is not cancelled`);
+      throw new AlumniMergeInProgressError();
+    }
+    const dup = await this.editor.userByUuid(duplicateUuid);
+    if (!dup) {
+      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: no such account`);
+      throw new AlumniMergeNotFoundError();
+    }
+    await this.assertDuplicateShaped(dup, tag);
+    await this.queue?.dismiss(duplicateUuid);
+  }
+
+  /** MiConnect's user search for a name; a name shorter than {@link TARGET_SEARCH_MIN} finds nothing. */
+  private async searchByName(name: string): Promise<MiconnectUserListing[]> {
+    return [...name.trim()].length < TARGET_SEARCH_MIN ? [] : this.editor.searchUsers(name.trim());
+  }
+
+  /**
+   * THE ONE RULE of an eligible target (D55), shared by the manual search ({@link eligibleTargets})
+   * and the queue's candidate check ({@link flagNewAccount}, {@link listDuplicates}): of the accounts
+   * `found` by a search, those that are target-shaped, not the duplicate, not named by an open merge
+   * (`busy`), and read from MiConnect to hold a CAS link and no Alumni link. BOUNDED: at most {@link
+   * TARGET_SEARCH_MAX} candidates are read for their links - a candidate past the 25th target-shaped
+   * homonym is not seen by a name search here; the admin's own search, with a narrower query, still
+   * reaches it. `firstOnly` stops at the first eligible one (existence is all the queue needs).
+   */
+  private async eligibleAmong(
     dup: MiconnectUserListing,
-    busyTargets: ReadonlySet<string>
-  ): Promise<boolean> {
-    if ([...dup.name.trim()].length < TARGET_SEARCH_MIN) return false;
-    const candidates = (await this.editor.searchUsers(dup.name))
-      .filter((t) => t.uuid !== dup.uuid && isTargetShaped(t) && !busyTargets.has(t.uuid))
+    found: readonly MiconnectUserListing[],
+    busy: ReadonlySet<string>,
+    opts: { firstOnly: boolean }
+  ): Promise<{ candidates: number; eligible: MiconnectUserListing[] }> {
+    const candidates = found
+      .filter((t) => t.uuid !== dup.uuid && isTargetShaped(t) && !busy.has(t.uuid))
       .slice(0, TARGET_SEARCH_MAX);
+    const eligible: MiconnectUserListing[] = [];
     for (const t of candidates) {
       const slugs = await this.editor.sourceSlugsOf(t.pk);
-      if (slugs.includes(CAS_SOURCE_SLUG) && !slugs.includes(ALUMNI_SOURCE_SLUG)) return true;
+      if (slugs.includes(CAS_SOURCE_SLUG) && !slugs.includes(ALUMNI_SOURCE_SLUG)) {
+        eligible.push(t);
+        if (opts.firstOnly) break;
+      }
     }
-    return false;
+    return { candidates: candidates.length, eligible };
   }
 
   /**
@@ -501,21 +552,20 @@ export class AlumniMergeService {
     // The search discloses e-mails and last sign-ins (register M1): only for a real Alumni duplicate,
     // never for any account a caller names.
     await this.assertDuplicateShaped(dup, `target search ${tag}`);
+    // The duplicate's OWN open row is freed: its target stays a candidate of that very duplicate.
     const busy = new Set(
       (await this.openRows())
         .filter((r) => r.duplicateUuid !== duplicateUuid)
         .map((r) => r.targetUuid)
     );
-    const candidates = (await this.editor.searchUsers(q))
-      .filter((t) => t.uuid !== dup.uuid && isTargetShaped(t) && !busy.has(t.uuid))
-      .slice(0, TARGET_SEARCH_MAX);
-    const eligible: MiconnectUserListing[] = [];
-    for (const t of candidates) {
-      const slugs = await this.editor.sourceSlugsOf(t.pk);
-      if (slugs.includes(CAS_SOURCE_SLUG) && !slugs.includes(ALUMNI_SOURCE_SLUG)) eligible.push(t);
-    }
+    const { candidates, eligible } = await this.eligibleAmong(
+      dup,
+      await this.searchByName(q),
+      busy,
+      { firstOnly: false }
+    );
     this.logger.log(
-      `[ALUMNI_MERGE] target search ${tag}: ${candidates.length} candidate(s), ${eligible.length} eligible`
+      `[ALUMNI_MERGE] target search ${tag}: ${candidates} candidate(s), ${eligible.length} eligible`
     );
     const view = await this.viewer(eligible.map((t) => t.uuid));
     return eligible.map(view);
@@ -870,10 +920,13 @@ export class AlumniMergeService {
    * The accounts `dup` matches: other, non-Alumni, active person accounts with the same name and a
    * promo in common. Read through authentik's search, a superset narrowed here.
    */
-  private async targetsOf(dup: MiconnectUserListing): Promise<MiconnectUserListing[]> {
+  private targetsOf(
+    dup: MiconnectUserListing,
+    found: readonly MiconnectUserListing[]
+  ): MiconnectUserListing[] {
     const dupKey = { name: dup.name, promos: promosOf(dup.attributes) };
     if (dupKey.promos.length === 0 || normalizeName(dup.name) === '') return [];
-    return (await this.editor.searchUsers(dup.name)).filter(
+    return found.filter(
       (t) =>
         t.uuid !== dup.uuid &&
         !isAlumniCreated(t) &&
@@ -915,7 +968,7 @@ export class AlumniMergeService {
     if (!targetSlugs.includes(CAS_SOURCE_SLUG)) {
       refuse(new AlumniMergeNoMatchError('the target holds no CAS link'));
     }
-    const matches = await this.targetsOf(dup);
+    const matches = this.targetsOf(dup, await this.editor.searchUsers(dup.name));
     const mode: AlumniMergeMode =
       matches.length === 1 && matches[0].uuid === targetUuid ? 'auto' : 'manual';
     if (mode === 'manual') {

@@ -677,18 +677,16 @@ export class UsersController {
       this.logger.error(
         `[ALUMNI_QUEUE] the reading's start was NOT read, the queue is not reconciled: ${String(err)}`
       );
-      return this.alumniMerge.listDuplicates();
+      return (await this.alumniMerge.listDuplicates()).duplicates;
     }
-    // What the page lists IS what the queue holds as pending (`AlumniMergeService.listDuplicates`:
-    // an account with a candidate to attach to, not dismissed, not in an open merge): the admins'
-    // queue converges on it - a listed duplicate is flagged (and told, once), a flag no longer listed
-    // is resolved if the reading began after it was flagged (`AlumniDuplicateQueue`). A failed
-    // reading is not "no longer listed": it throws before any reconcile. Never throws after it.
-    const duplicates = await this.alumniMerge.listDuplicates();
-    await this.alumniQueue.reconcile(
-      duplicates.map((d) => d.duplicate.uuid),
-      readStartedAt
-    );
+    // What the queue holds as pending is the page's FLAGGABLE subset (`AlumniMergeService.listDuplicates`:
+    // an account with a candidate to attach to, not dismissed, not in an open merge) - an account the
+    // page lists with no candidate is on the page only: the queue converges on the subset (a flaggable
+    // duplicate is flagged and told once, a flag no longer flaggable is resolved if the reading began
+    // after it was flagged, `AlumniDuplicateQueue`). A failed reading is not "no longer listed": it
+    // throws before any reconcile. Never throws after it.
+    const { duplicates, flaggable } = await this.alumniMerge.listDuplicates();
+    await this.alumniQueue.reconcile(flaggable, readStartedAt);
     return duplicates;
   }
 
@@ -708,7 +706,7 @@ export class UsersController {
     this.logger.log(
       `[ALUMNI_QUEUE] "not a duplicate" by ${actorId?.slice(0, 8)} for ${duplicateUuid.slice(0, 8)}`
     );
-    await this.alumniQueue.dismiss(duplicateUuid);
+    await this.alumniMerge.dismiss(duplicateUuid);
   }
 
   /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
+import { createHash } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { socialUrl } from '../internal/service-urls';
 
@@ -11,6 +12,17 @@ const SOCIAL_TIMEOUT_MS = 5_000;
  * (`MAX_FOUND`, `internal-alumni-duplicates.controller.ts`), so a backlog goes out in batches.
  */
 export const ALUMNI_FOUND_BATCH = 200;
+
+/**
+ * A batch's id for social-service's replay guard: a digest of its sorted uuids, so the SAME batch
+ * sent again (an answer lost on the way) is told ONCE. A batch that gained or lost a duplicate in
+ * between is another batch: at worst one extra notice, never a notice lost.
+ */
+export function batchIdOf(duplicateUuids: readonly string[]): string {
+  return createHash('sha256')
+    .update([...duplicateUuids].sort().join(','))
+    .digest('hex');
+}
 
 /** What {@link AlumniDuplicateQueue.flag} did with a duplicate. */
 export type FlagOutcome = 'created' | 'reopened' | 'known' | 'failed';
@@ -26,9 +38,10 @@ export type FlagOutcome = 'created' | 'reopened' | 'known' | 'failed';
  * `alumni_merges`. Marking a duplicate for a merge therefore clears it for every admin by itself;
  * this service only tells the badges ({@link changed}).
  *
- * WHAT IS FLAGGED: only a duplicate an admin can act on - an Alumni-created account with a candidate
- * to attach to (`AlumniMergeService.listDuplicates`, the lead's reading of D55, 2026-11-27). An
- * alumnus nobody on the CAS side matches is not a duplicate and is never flagged or announced.
+ * WHAT IS FLAGGED: only an Alumni-created account with a candidate to attach to
+ * (`AlumniMergeService.listDuplicates` `flaggable`, the lead's reading of D55, 2026-11-27). An
+ * alumnus nobody on the CAS side matches is LISTED on the admin page (to attach by hand or dismiss)
+ * but is never flagged, announced, pushed or counted in the badge.
  * "Pas un doublon" ({@link dismiss}) is the admin's TERMINAL answer for one that looks like one and
  * is not: durable (`dismissedAt`), never cleared, so no later reading and no later sign-in flags it
  * again.
@@ -136,8 +149,8 @@ export class AlumniDuplicateQueue {
 
   /**
    * `duplicateUuid` is a duplicate an admin can act on: flags it. A NEW flag is told to the admins
-   * at once when `announce` (the sign-in's own notice) and is otherwise left to {@link reconcile}'s
-   * {@link announceOwed}. A flag that was resolved and is found again waits again with NO new notice
+   * at once when `announce` (the sign-in's own notice, flushed with any notice still owed, {@link flushOwed})
+   * and is otherwise left to {@link reconcile}'s {@link announceOwed}. A flag that was resolved and is found again waits again with NO new notice
    * (it was told once), EXCEPT one dismissed: that is terminal and never waits again. Never throws.
    */
   async flag(duplicateUuid: string, announce = true): Promise<FlagOutcome> {
@@ -151,19 +164,30 @@ export class AlumniDuplicateQueue {
       )) as unknown[];
       if (inserted.length === 1) {
         this.logger.log(`[ALUMNI_QUEUE] duplicate ${tag} flagged`);
-        if (announce) await this.announceBatches([duplicateUuid]);
+        if (announce) await this.flushOwed();
         return 'created';
       }
       if (await this.reopen(duplicateUuid)) {
         this.logger.log(`[ALUMNI_QUEUE] duplicate ${tag} found again: waits again, no new notice`);
-        if (announce) await this.changed();
+        if (announce && (await this.flushOwed()) === 0) await this.changed();
         return 'reopened';
       }
+      // Already known: a notice an earlier call left owed is retried by this sign-in too.
+      if (announce) await this.flushOwed();
       return 'known';
     } catch (err) {
       this.logger.error(`[ALUMNI_QUEUE] duplicate ${tag} was NOT flagged: ${String(err)}`);
       return 'failed';
     }
+  }
+
+  /**
+   * The sign-in's flush: tells the admins of the notices owed, ONE batch at most - the new flag's and
+   * any that an earlier refused or failed call left, so a retry never waits for an admin to open the
+   * page. Bounded to {@link ALUMNI_FOUND_BATCH}: the rest waits for a reading.
+   */
+  private flushOwed(): Promise<number> {
+    return this.announceOwed(ALUMNI_FOUND_BATCH);
   }
 
   /** Clears the resolution of `duplicateUuid` unless it was dismissed; true when it WAS resolved. */
@@ -201,9 +225,10 @@ export class AlumniDuplicateQueue {
   /**
    * Tells the admins of every flag still waiting whose notice was never confirmed (`announcedAt` is
    * null): the ones this reading just flagged AND the ones an earlier refused or failed call left.
-   * Answers how many batches social accepted (each signals the badges itself).
+   * `limit` bounds how many are told (a sign-in's flush is one batch at most; a reading tells all). Answers
+   * how many batches social accepted (each signals the badges itself).
    */
-  private async announceOwed(): Promise<number> {
+  private async announceOwed(limit?: number): Promise<number> {
     let owed: string[];
     try {
       owed = (
@@ -212,7 +237,9 @@ export class AlumniDuplicateQueue {
             WHERE f."announcedAt" IS NULL AND f."resolvedAt" IS NULL
               AND NOT EXISTS (SELECT 1 FROM alumni_merges m
                 WHERE m."duplicateUuid" = f."duplicateUuid"::text AND m."cancelledAt" IS NULL)
-            ORDER BY f."flaggedAt"`
+            ORDER BY f."flaggedAt"
+            LIMIT $1`,
+          [limit ?? null]
         )) as { uuid: string }[]
       ).map((r) => r.uuid);
     } catch (err) {
@@ -238,7 +265,7 @@ export class AlumniDuplicateQueue {
       try {
         await axios.post(
           socialUrl('internal/notifications/alumni-duplicates-found'),
-          { duplicateUuids: batch },
+          { duplicateUuids: batch, batchId: batchIdOf(batch) },
           { headers: { 'X-Internal-Secret': this.internalSecret }, timeout: SOCIAL_TIMEOUT_MS }
         );
       } catch (err) {

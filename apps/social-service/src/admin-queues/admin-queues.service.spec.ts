@@ -26,16 +26,24 @@ describe('AdminQueuesService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  const BATCH = 'ab'.repeat(32);
+
   function make(opts: {
     moderates?: boolean;
     validates?: boolean;
     admins?: string[];
     covered?: boolean;
     row?: Record<string, number>;
+    /** The batch ids the ledger already holds. */
+    told?: string[];
   }) {
     const query = jest.fn(async (sql: string, params: unknown[]) => {
       if (sql === LOCK_REPORT_SUBJECT_SQL) return [{}];
       if (sql === REPORT_ALREADY_ANNOUNCED_SQL) return [{ covered: opts.covered ?? false }];
+      if (sql.includes('SELECT 1 FROM alumni_duplicate_announcements')) {
+        return (opts.told ?? []).includes(params[0] as string) ? [{}] : [];
+      }
+      if (sql.includes('INSERT INTO alumni_duplicate_announcements')) return [];
       if (sql.includes('FROM users WHERE admin = true')) {
         return (opts.admins ?? []).filter((id) => id !== params[0]).map((id) => ({ id }));
       }
@@ -132,7 +140,10 @@ describe('AdminQueuesService', () => {
     it('tells EVERY global admin of a found Alumni duplicate - once, as the platform, with no name', async () => {
       const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
-      expect(await service.announceAlumniDuplicates([duplicate])).toBe(2);
+      expect(await service.announceAlumniDuplicates([duplicate], BATCH)).toEqual({
+        told: 2,
+        replayed: false,
+      });
       expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
       expect(notifications.createNotifications).toHaveBeenCalledWith({
         recipientIds: ['a1', 'a2'],
@@ -142,6 +153,7 @@ describe('AdminQueuesService', () => {
         actorName: 'Canari',
         text: '',
         pushData: { target: 'admin-alumni-duplicates' },
+        meta: { duplicateUuids: [duplicate] },
       });
       expect(socialDeepLink({ target: 'admin-alumni-duplicates' })).toBe(
         'fr.emse.canari://admin-alumni-duplicates'
@@ -157,20 +169,56 @@ describe('AdminQueuesService', () => {
         '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11',
         '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12',
       ];
-      await service.announceAlumniDuplicates(ids);
+      await service.announceAlumniDuplicates(ids, BATCH);
       expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
       expect(notifications.createNotifications.mock.calls[0][0]).toMatchObject({
         postId: ids[0],
         recipientIds: ['a1', 'a2'],
+        // The row names the WHOLE batch: its bell gate keeps it while any of them waits.
+        meta: { duplicateUuids: ids },
       });
       expect(signal.changed).toHaveBeenCalledTimes(1);
+    });
+
+    it('a batch whose id the ledger holds is NOT told again (a lost answer replayed), the badges still recount, and a told batch is written to the ledger', async () => {
+      const replay = make({ admins: ['a1'], told: [BATCH] });
+      const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
+      expect(await replay.service.announceAlumniDuplicates([duplicate], BATCH)).toEqual({
+        told: 0,
+        replayed: true,
+      });
+      expect(replay.notifications.createNotifications).not.toHaveBeenCalled();
+      expect(replay.signal.changed).toHaveBeenCalledTimes(1);
+
+      const first = make({ admins: ['a1'] });
+      await first.service.announceAlumniDuplicates([duplicate], BATCH);
+      expect(
+        first.query.mock.calls.some(
+          ([sql, params]) =>
+            String(sql).includes('INSERT INTO alumni_duplicate_announcements') &&
+            (params as string[])[0] === BATCH
+        )
+      ).toBe(true);
+    });
+
+    it('a failed notice is NOT written to the ledger, so the retry tells it', async () => {
+      const { service, notifications, query } = make({ admins: ['a1'] });
+      notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
+      await expect(
+        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'], BATCH)
+      ).rejects.toThrow('db down');
+      expect(
+        query.mock.calls.some(([sql]) =>
+          String(sql).includes('INSERT INTO alumni_duplicate_announcements')
+        )
+      ).toBe(false);
     });
 
     it('a failed write still tells the badges, and the failure reaches the caller to retry', async () => {
       const { service, notifications, signal } = make({ admins: ['a1'] });
       notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
       await expect(
-        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
+        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'], BATCH)
       ).rejects.toThrow('db down');
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });

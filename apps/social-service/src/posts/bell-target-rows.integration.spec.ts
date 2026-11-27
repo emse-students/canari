@@ -682,6 +682,26 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     ]);
     expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
 
+    // ONE row for a BATCH (meta.duplicateUuids), keyed on its first duplicate: it stays while ANY of
+    // them still waits, and leaves only when none does.
+    await q(`DELETE FROM post_notifications WHERE type = 'admin_alumni_duplicate'`);
+    const dup2 = id(62);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = NULL`);
+    await q(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [dup2]);
+    await row('adm', 'admin_alumni_duplicate', dup, { duplicateUuids: [dup, dup2] });
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = now() WHERE "duplicateUuid" = $1`, [
+      dup,
+    ]);
+    // The first duplicate (the row's key) is handled, the second still waits: the notice stays.
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await merge(false, false); // a marked merge of `dup` changes nothing for `dup2`
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = now() WHERE "duplicateUuid" = $1`, [
+      dup2,
+    ]);
+    expect(await servedTo183('adm')).toEqual([]);
+
     // An admin who loses the flag loses the notice too.
     await q(`UPDATE users SET admin = false WHERE id = 'adm2'`);
     expect(await servedTo183('adm2')).toEqual([]);

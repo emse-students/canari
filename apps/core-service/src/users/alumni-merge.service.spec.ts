@@ -305,7 +305,8 @@ describe('AlumniMergeService', () => {
       username: 'alumni-0002',
       attributes: { profile: { cursus: [{ formation: 'ICM', promo: 1999 }] } },
     });
-    // Nobody on the CAS side bears this name: no candidate, so no duplicate (lead's reading of D55).
+    // Nobody on the CAS side bears this name: no candidate - listed to attach by hand or dismiss, but
+    // not flaggable (never announced, never counted; the lead's reading of D55, 2026-11-27).
     const stranger = person({ pk: 4, uuid: 'y', username: 'alumni-0003', name: 'Other One' });
     const { service } = make({
       accounts: {
@@ -315,7 +316,9 @@ describe('AlumniMergeService', () => {
       },
       canari: { [TARGET_UUID]: 'canari-target' },
     });
-    expect(await service.listDuplicates()).toEqual([
+    const { duplicates, flaggable } = await service.listDuplicates();
+    expect(flaggable).toEqual([DUP_UUID, 'x']);
+    expect(duplicates).toEqual([
       {
         duplicate: expect.objectContaining({ uuid: DUP_UUID, canariUserId: null }),
         targets: [
@@ -329,12 +332,14 @@ describe('AlumniMergeService', () => {
       },
       // D55: one with a candidate but no name-and-promo match is listed after, for a manual merge.
       { duplicate: expect.objectContaining({ uuid: 'x' }), targets: [] },
+      // No candidate at all: listed last, in "to attach by hand", and not flaggable.
+      { duplicate: expect.objectContaining({ uuid: 'y' }), targets: [] },
     ]);
   });
 
   it('does not list as a duplicate one already in an open merge', async () => {
     const { service } = make({ accounts: world(), rows: [{ markedAt: new Date() }] });
-    expect(await service.listDuplicates()).toEqual([]);
+    expect(await service.listDuplicates()).toEqual({ duplicates: [], flaggable: [] });
   });
 
   it('counts what the duplicate holds through social and chat-delivery', async () => {

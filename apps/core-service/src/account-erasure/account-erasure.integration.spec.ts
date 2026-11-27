@@ -166,6 +166,19 @@ maybe('account erasure queue against PostgreSQL', () => {
        VALUES ('admin', $1, 'alumni-4', $2, '{}'::jsonb, now(), now(), now())`,
       [CANCELLED_FLAG, `mc-${SUBJECT.slice(0, 8)}`]
     );
+    // A DISMISSED flag ("Pas un doublon") survives the erasure of the account a live merge names as its
+    // target: it holds a MiConnect uuid and a time, and deleting it would put the account back in the
+    // admins' queue (register M1).
+    const DISMISSED_FLAG = '00000000-0000-4000-8000-000000000004';
+    await ds.query(
+      `INSERT INTO alumni_duplicate_flags ("duplicateUuid", "resolvedAt", "dismissedAt") VALUES ($1, now(), now())`,
+      [DISMISSED_FLAG]
+    );
+    await ds.query(
+      `INSERT INTO alumni_merges ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held, "markedAt")
+       VALUES ('admin', $1, 'alumni-5', $2, '{}'::jsonb, now())`,
+      [DISMISSED_FLAG, `mc-${SUBJECT.slice(0, 8)}`]
+    );
     // The first-time helps both accounts have seen (migration 019).
     for (const id of [SUBJECT, OTHER]) {
       await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'welcome-tour')`, [id]);
@@ -216,6 +229,12 @@ maybe('account erasure queue against PostgreSQL', () => {
       await count(`alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [
         '00000000-0000-4000-8000-000000000003',
       ])
+    ).toBe(1);
+    expect(
+      await count(
+        `alumni_duplicate_flags WHERE "duplicateUuid" = $1 AND "dismissedAt" IS NOT NULL`,
+        ['00000000-0000-4000-8000-000000000004']
+      )
     ).toBe(1);
     // The closed merge is gone; the open one stays with the target blanked, so the duplicate's own
     // erasure still runs once MiConnect merges.

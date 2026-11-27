@@ -129,17 +129,21 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   une notif, comme toutes les autres fonctionnalités de la console admin"; what a duplicate IS: the
   lead's reading of D55, [decisions of 2026-11-27](../../decisions/owner-decisions-of-2026-11-27.md)):
   an Alumni-created account holding only the Alumni link AND for which a search by its name finds at
-  least one eligible CAS account (homonyms included, `AlumniMergeService.hasCandidate`); an alumnus
-  nobody matches is no duplicate and is never flagged, announced, counted or listed. EVERY global admin
+  least one eligible CAS account (homonyms included, `AlumniMergeService.eligibleAmong`, at most 25
+  candidates read); an alumnus nobody matches is LISTED on the page (to attach by hand, or "Pas un
+  doublon") but never flagged, announced, pushed or counted. EVERY global admin
   is told (nobody asked for it, so nobody is excluded), ONCE per duplicate: core-service's
   `AlumniDuplicateQueue.flag` writes the `alumni_duplicate_flags` row and tells social-service through
   ONE door, `POST /internal/notifications/alumni-duplicates-found` (1 to 200 uuids): ONE push and ONE
-  bell row for the whole batch, keyed on its first duplicate - a backlog found by a first reading is a
+  bell row for the whole batch, keyed on its first duplicate and listing every one in `meta.duplicateUuids`
+  (it stays while ANY of them waits; `BELL_ROW_GATE`), idempotent on a `batchId` recorded in
+  `alumni_duplicate_announcements` (a lost answer replayed rings nothing) - a backlog found by a first reading is a
   push and a badge, never one row per duplicate in every admin's bell. A row that exists is never
   announced again, however often the page is read or a mark is cancelled (charter principle 3, "your
   attention is not for sale"); the notice is DURABLE: `announcedAt` is written only after social
   accepted it, so a refused or failed call (a 400, a 5xx) leaves it null and the next reading tells
-  again, batch by batch (one failing batch never drops the others). The push is content-free as the
+  again, batch by batch (one failing batch never drops the others), at the next reading or the next
+  sign-in (which flushes one batch at most). The push is content-free as the
   other two (`social_admin_alumni_duplicate`, "Doublon Alumni à rattacher", no name) and opens
   `/admin/alumni-duplicates`; floor `1.8.3` (`ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION`). Its text
   ("looks like an existing one") is true of EVERY flagged item, since a flag needs a candidate.
@@ -152,10 +156,10 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   next reading; a push at MiConnect's creation of it is a MiConnect-side event, not built.
   **"Pas un doublon"** (`POST /users/admin/alumni-duplicates/:uuid/dismiss`) is the admin's TERMINAL
   answer: `dismissedAt` is durable and never cleared, so no later reading or sign-in flags the account
-  again, and it leaves every admin's list and count. **It clears for every admin when one marks it for
+  again, and it leaves every admin's list and count; it is refused for an account a non-cancelled merge names or that is not duplicate-shaped, and survives the erasure of either account. **It clears for every admin when one marks it for
   a merge** (the marked `alumni_merges` row is the state; no write to the flag), and the badges are
   told by `POST /internal/notifications/alumni-duplicates-changed` (mark, cancel, dismiss,
-  resolution) with NO push. **What the badge counts** is what the page lists as duplicates, plus a
+  resolution) with NO push. **What the badge counts** is the flagged duplicates (the page's subset with a candidate), plus a
   merge only REQUESTED whose mark was interrupted (listed under the open merges, "Reprendre"): both
   need an admin. When MiConnect completes the merge nothing is announced: the item has been gone since
   the mark. The flag is DELETED then - on the main path by the erasure of the duplicate's Canari

@@ -25,6 +25,8 @@ describe('erasure policy', () => {
     expect(sql).toContain('"targetUserId" = $1');
     // A CANCELLED merge ties nothing: its duplicate waits again and is not the erased target's.
     expect(sql).toContain('"cancelledAt" IS NULL');
+    // A DISMISSED flag ("Pas un doublon") is kept: deleting it would put the account back in the queue.
+    expect(sql).toContain('"dismissedAt" IS NULL');
   });
 
   it("erases core's own part in-process and reaches the three services by their internal DELETE", () => {
