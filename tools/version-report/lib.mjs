@@ -8,9 +8,8 @@
 const CORE_VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/;
 
 /**
- * Reads `major.minor.patch` out of a reported version. A pre-release suffix is ignored, exactly as
- * the server's floor check does (`compareSemver` parses `7-alpha.1` as 7), so this report names the
- * devices the floor would name.
+ * Reads `major.minor.patch` out of a reported version. The pre-release suffix is not part of the
+ * triple (see {@link compareVersions}, which ranks it).
  * @returns the three integers, or `null` when the string is not a version.
  */
 export function parseVersion(raw) {
@@ -18,12 +17,38 @@ export function parseVersion(raw) {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-/** @returns -1, 0 or 1 like `compareSemver`; both arguments must parse. */
+/** The pre-release identifiers of a version (`alpha.7` gives `['alpha', '7']`), `[]` for a stable. */
+function preRelease(raw) {
+  const v = (raw ?? '').trim();
+  const dash = v.indexOf('-');
+  return dash === -1 ? [] : v.slice(dash + 1).split('.');
+}
+
+/**
+ * @returns -1, 0 or 1 like the server's `compareSemver` (semver precedence: a pre-release ranks
+ * BELOW its stable, `alpha.2` above `alpha.1`); both arguments must parse. A floor may name an alpha
+ * (`1.8.3-alpha.1`), so ignoring the suffix would report as current a device the floor locks out.
+ */
 export function compareVersions(a, b) {
   const pa = parseVersion(a);
   const pb = parseVersion(b);
   if (!pa || !pb) throw new Error(`compareVersions: unreadable version (${a}, ${b})`);
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  const ra = preRelease(a);
+  const rb = preRelease(b);
+  if (ra.length === 0 && rb.length === 0) return 0;
+  if (ra.length === 0) return 1;
+  if (rb.length === 0) return -1;
+  for (let i = 0; i < Math.max(ra.length, rb.length); i++) {
+    if (ra[i] === undefined) return -1;
+    if (rb[i] === undefined) return 1;
+    if (ra[i] === rb[i]) continue;
+    const na = /^\d+$/.test(ra[i]);
+    const nb = /^\d+$/.test(rb[i]);
+    if (na && nb) return Number(ra[i]) < Number(rb[i]) ? -1 : 1;
+    if (na !== nb) return na ? -1 : 1;
+    return ra[i] < rb[i] ? -1 : 1;
+  }
   return 0;
 }
 

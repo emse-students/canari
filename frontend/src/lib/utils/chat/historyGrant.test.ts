@@ -2,6 +2,7 @@
 import {
   canOfferHistoryTo,
   grantSinceFor,
+  floorDrawsGrantNotice,
   HISTORY_GRANT_NOTICE_FIRST_VERSION,
   grantSinceForDate,
   historyGrantPayload,
@@ -129,9 +130,8 @@ describe('the button - offered for a newcomer of a private group only', () => {
   // Principle 1: the exception rests on the notice every member reads, so it is offered only while
   // no build admitted by the server's floor would receive the hand-over without drawing it.
   it('is hidden while the served client floor is below the first build that draws the notice', () => {
-    expect(HISTORY_GRANT_NOTICE_FIRST_VERSION).toBe('1.8.3');
+    expect(HISTORY_GRANT_NOTICE_FIRST_VERSION).toBe('1.8.3-alpha.1');
     expect(canOfferHistoryTo({ ...base, minClientVersion: '1.7.0' })).toBe(false);
-    expect(canOfferHistoryTo({ ...base, minClientVersion: '1.8.3-alpha.1' })).toBe(false);
     expect(canOfferHistoryTo({ ...base, minClientVersion: null })).toBe(false);
     expect(canOfferHistoryTo({ ...base, minClientVersion: '1.8.3' })).toBe(true);
     expect(canOfferHistoryTo({ ...base, minClientVersion: '1.9.0' })).toBe(true);
@@ -249,5 +249,22 @@ describe('the answer and the receiver - lifted from the grant date, gaps still w
     expect(lifted?.map((m) => m.id)).toEqual(['granted', 'after']);
     const plain = await dropOwnExcludedMessages(GROUP, 'newbie', all, deps());
     expect(plain?.map((m) => m.id)).toEqual(['after']);
+  });
+});
+
+describe('floorDrawsGrantNotice - the floor names the first BUILD, pre-release included', () => {
+  it.each([
+    ['1.7.0', false],
+    ['1.8.3-alpha.1', true],
+    ['1.8.3-alpha.2', true],
+    ['1.8.3', true],
+    ['1.9.0', true],
+    ['1.8.2', false],
+    ['1.8.3-alpha.0', false],
+    ['', false],
+    [null, false],
+    [undefined, false],
+  ] as const)('floor %s draws the button: %s', (floor, expected) => {
+    expect(floorDrawsGrantNotice(floor)).toBe(expected);
   });
 });
