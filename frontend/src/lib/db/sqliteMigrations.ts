@@ -15,7 +15,11 @@
  *    has, so dropping a column can never again break the migration that mentions it.
  */
 
-import { retainedName, retainTableStatements } from './sqliteRetained';
+import {
+  retainedFollowsDeletesStatement,
+  retainedName,
+  retainTableStatements,
+} from './sqliteRetained';
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
 export const SCHEMA_VERSION = 23;
@@ -510,7 +514,9 @@ const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
  * back on its own, and sqlx never checks a pooled connection for a transaction raw SQL opened: such a
  * failure leaves the transaction open, uncommitted, on one pooled connection - nothing committed, so
  * nothing lost - until the failed open's retry calls `Database.load`, whose new pool replaces the old
- * one (read in the plugin's source, not measured), or the app restarts.
+ * one (read in the plugin's source, not measured), or the app restarts. THE CALLER THEREFORE RUNS IT
+ * THROUGH `executeOwnTransaction` (`sqliteRetained.ts`), which recycles the pool on any failure, so no
+ * transaction stays open on a connection the session keeps using.
  */
 export function messageRekeySteps(state: MessageRekeyState): {
   copy: string[];
@@ -552,6 +558,7 @@ function messagesRekeySwapStatement(indexes: readonly string[]): string {
     MESSAGE_ORDER_INDEX_STATEMENT,
     MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
     MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
+    retainedFollowsDeletesStatement('messages', ['conversation_id', 'id']),
     `DELETE FROM temp.${MESSAGES_REKEY_GUARD}`,
     'COMMIT',
   ].join(';\n');

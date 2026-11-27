@@ -147,7 +147,7 @@ The preview decoder knew five entities; it now decodes the full HTML5 set and nu
 
 ### Fixed - a login that did not complete is logged once, at its level
 
-It was printed twice, once plain and once as a warning or error; the cancelled-sheet label is [filed](docs/wiki/backlog.d/p3-a-cancelled-biometric-sheet-is-logged-as-an-empty-keystore.md).
+It was printed twice, once plain and once as a warning or error; the cancelled-sheet label is [fixed in 1.8.3](docs/wiki/frontend/modules/auth.md).
 
 ### Added - the media cache has a cap: 500 MB by default, 250 MB, 1 GB or unlimited in Settings, least recently used first and never a copy the server may no longer hold
 

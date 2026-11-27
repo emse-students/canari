@@ -7,7 +7,7 @@
 
 use crate::commands::at_rest_key::{EntryRead, EntryReadError};
 use base64::Engine;
-use mls_core::keystore::DeviceKeyStore;
+use mls_core::keystore::{DeviceKeyRead, DeviceKeyStore};
 use tauri::Runtime;
 use tauri_plugin_keystore::{BiometricPromptText, KeystoreExt};
 
@@ -140,6 +140,11 @@ fn run_guarded_store(
 /// key could be read beside it" (`KeystorePlugin.kt`, `KEY_NOT_WRAPPED`). Kept in step with it.
 pub(crate) const KEY_NOT_WRAPPED: &str = "KEY_NOT_WRAPPED";
 
+/// The rejection code both plugins answer for "the user dismissed the biometric sheet" (Android:
+/// `BiometricPrompt.ERROR_USER_CANCELED` / `ERROR_NEGATIVE_BUTTON` / `ERROR_CANCELED`; iOS:
+/// `errSecUserCanceled`). Kept in step with `KeystorePlugin.kt` and `KeystorePlugin.swift`.
+pub(crate) const PROMPT_DISMISSED: &str = "PROMPT_DISMISSED";
+
 /// A rejected plugin call: its typed code, if the platform gave one, and its message for the log.
 #[derive(Debug)]
 struct PluginRejection {
@@ -270,7 +275,7 @@ impl<R: Runtime> DeviceKeyStore for PluginDeviceKeyStore<R> {
             .map_err(|e| e.to_string())
     }
 
-    fn retrieve_device_key(&self, alias: &str) -> Option<[u8; 32]> {
+    fn read_device_key(&self, alias: &str) -> DeviceKeyRead {
         let keystore = self.app.keystore();
         let read = if self.unattended {
             log::debug!("[KEYSTORE] retrieve_device_key: unattended read (no biometric sheet)");
@@ -283,27 +288,33 @@ impl<R: Runtime> DeviceKeyStore for PluginDeviceKeyStore<R> {
                 prompt: self.prompt.clone(),
             })
         };
-        let resp = read
-            // Info, not warn: a user cancelling the sheet lands here too, and that is not a defect.
-            .map_err(|e| {
+        let resp = match read {
+            Ok(resp) => resp,
+            // THE DISMISSAL IS TYPED AT THE PLUGIN (a rejection code), never read from its message.
+            // Info: a user closing the sheet is expected, and it is not an empty keystore.
+            Err(e) if e.rejection_code() == Some(PROMPT_DISMISSED) => {
+                log::info!("[KEYSTORE] the biometric sheet was dismissed - the key was not read");
+                return DeviceKeyRead::PromptDismissed;
+            }
+            Err(e) => {
                 log::info!(
-                    "[KEYSTORE] retrieve_device_key refused (unattended={}): {e}",
+                    "[KEYSTORE] read_device_key refused (unattended={}): {e}",
                     self.unattended
-                )
-            })
-            .ok()?;
+                );
+                return DeviceKeyRead::Absent;
+            }
+        };
 
-        let b64 = resp.key_bytes?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .ok()?;
-
-        if bytes.len() == 32 {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            Some(key)
-        } else {
-            None
+        let Some(b64) = resp.key_bytes else {
+            return DeviceKeyRead::Absent;
+        };
+        match base64::engine::general_purpose::STANDARD.decode(&b64) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                DeviceKeyRead::Found(key)
+            }
+            _ => DeviceKeyRead::Absent,
         }
     }
 
