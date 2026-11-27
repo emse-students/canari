@@ -1,6 +1,6 @@
 ## P1 - the admission fix-forward, slices 4 and 5: an unfreeze path, no frame ever dropped, then the refusal re-armed behind its gate
 
-target: 1.10.0
+target: 1.9.2
 
 Slices 4 and 5 of [the admission fix-forward](../protocols/admission-fix-forward.md#the-slices-in-order),
 planned 2026-11-25. They come after slice 3 ([the emission side](p1-admission-fix-forward-the-emission-side.md),

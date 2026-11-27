@@ -1,6 +1,6 @@
 ## P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27
 
-target: 1.10.0
+target: 1.8.4
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

@@ -1,6 +1,6 @@
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
-target: 1.9.0
+target: 1.9.2
 
 - **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
   the community's private salons in one order (`ORDER BY id`) before the membership rows, and a grant

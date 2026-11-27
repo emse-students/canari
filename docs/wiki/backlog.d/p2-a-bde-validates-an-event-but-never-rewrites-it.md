@@ -1,6 +1,6 @@
 ## P2 - a BDE, a parent super-admin and the platform admin rewrite another body's event or form
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md), decision 8): a BDE
 validates, rejects or deletes an event, but never rewrites another body's event text. The same rule

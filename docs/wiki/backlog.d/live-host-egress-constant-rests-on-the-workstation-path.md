@@ -1,6 +1,6 @@
 ## `LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-19:** the app's own ceiling is **300 Mb/s** (half the ~600 measured from a near client),
 set in the app, nothing on the host, nothing asked of the IT department; and the broadcaster moves from

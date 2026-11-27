@@ -1,6 +1,6 @@
 ## P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)
 
-target: 1.9.0
+target: 1.8.6
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

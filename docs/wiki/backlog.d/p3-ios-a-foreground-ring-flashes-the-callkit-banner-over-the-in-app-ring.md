@@ -1,6 +1,6 @@
 ## P3 - iOS: a foreground ring flashes the CallKit banner over the in-app ring, because the server still sends the VoIP push
 
-target: 1.9.0
+target: 1.8.7
 
 **Seen 2026-11-15 on the iPhone 12** (TestFlight `1.6.12-alpha.2`, dev, Canari open in front past its
 PIN, Canari Test Delta calling from a web seat). The in-app ring filled the screen. A CallKit banner

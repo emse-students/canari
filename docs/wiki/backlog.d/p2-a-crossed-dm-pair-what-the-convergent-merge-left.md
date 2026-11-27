@@ -1,6 +1,6 @@
 ## P2 - a crossed 1:1 pair: what the 1.6.11 fix left (owner's decision of 2026-11-12)
 
-target: 1.10.0
+target: 1.9.1
 
 Found in the review of #3406 as a P1: the boot merge kept the newest `updatedAt` on each side, so
 two peers could each delete the other's choice on the server - both groups gone. **Fixed for

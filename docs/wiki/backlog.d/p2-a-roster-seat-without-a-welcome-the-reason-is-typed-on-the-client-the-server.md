@@ -1,6 +1,6 @@
 ## P2 - a roster seat without a Welcome: the reason is typed on the client, the server report cannot partition on it yet (prod 2026-09-01)
 
-target: 1.9.0
+target: 1.8.5
 
 Open: a client-to-server write (migration) so `reportStrandedDeviceMemberships` can join the reason; read
 the first real `skipped` lines before designing it

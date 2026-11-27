@@ -1,6 +1,6 @@
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 
-target: 1.9.0
+target: 1.9.2
 
 `deleteUserData` tombstones the DMs its discovery found. A DM opened with the account after that
 read (by the account while a token is valid) loses the

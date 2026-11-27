@@ -1,6 +1,6 @@
 ## P2 - a resume still re-registers the device and reloads mls.bin, whatever changed (2026-11-22)
 
-target: 1.9.0
+target: 1.8.7
 
 The owner's Android log (1.7.1, 2026-11-19..22, 131 resumes) named three costs per resume; the first,
 the key-group passes of unchanged communities, is closed by the key-group versions

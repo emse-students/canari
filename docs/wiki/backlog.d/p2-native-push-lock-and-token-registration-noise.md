@@ -1,6 +1,6 @@
 ## P2 - Native push: an unresolvable host reads as `Redis lock not acquired`, and the FCM token registration is retried into HTTP 429 (1.6.8 logs, 2026-11-09)
 
-target: 1.10.0
+target: 1.9.1
 
 Android native Kotlin, so not touched in the noise batch
 (`frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt`):

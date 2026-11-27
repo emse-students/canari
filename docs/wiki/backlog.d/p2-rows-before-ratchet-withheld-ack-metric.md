@@ -1,6 +1,6 @@
 ## P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)
 
-target: 1.9.0
+target: 1.8.5
 
 The follow-up the adversarial review of #3851 left once the decrypt half and the ack were built
 ([chat](../frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)).

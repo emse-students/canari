@@ -1,6 +1,6 @@
 ## P2 - no moderator sees what the other moderators of the same place did
 
-target: 1.9.0
+target: 1.8.6
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#the-journal-and-the-notice),
 decision 13): asked whether every act - hide, delete, unmask, a moderation read, a mute - should

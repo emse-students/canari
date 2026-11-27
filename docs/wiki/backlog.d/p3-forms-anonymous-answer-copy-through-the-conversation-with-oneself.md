@@ -1,6 +1,6 @@
 ## P3 - an anonymous form's answer, copied to its sender through the conversation with oneself
 
-target: 1.10.0
+target: 1.9.1
 
 An anonymous form's answer is shown back to nobody: the server keeps no link between the account and
 the answer (principle 1), and the owner refused a device-only copy on 2026-11-21 ("Attendre la
