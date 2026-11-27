@@ -602,6 +602,7 @@ dependencies = [
  "tauri-plugin-system-components",
  "tauri-plugin-websocket",
  "tokio",
+ "unicode-normalization",
  "wry",
 ]
 

@@ -427,6 +427,37 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
     json_to_c_string(value)
 }
 
+/// The title of a push for an UNNAMED group, from its members' first names as the app draws it
+/// (`mobile::unnamed_group_label`): `data_dir` is the App Group directory holding the extension's
+/// copies of `display_names.json` and `conversation_nicknames.json`, `members_json` the decrypt
+/// answer's `treeMembers` array, `locale` the tag in `push_context.json`. Answers `{"label": ...}` or
+/// `{"label": null, "reason": ...}`; free with `canari_free_string`. NULL arguments answer
+/// `null-argument`. FFI mirror of the Android JNI `nativeUnnamedGroupTitle`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_unnamed_group_title(
+    data_dir: *const c_char,
+    user_id: *const c_char,
+    group_id: *const c_char,
+    members_json: *const c_char,
+    locale: *const c_char,
+) -> *mut c_char {
+    if data_dir.is_null()
+        || user_id.is_null()
+        || group_id.is_null()
+        || members_json.is_null()
+        || locale.is_null()
+    {
+        return json_to_c_string(serde_json::json!({ "label": null, "reason": "null-argument" }));
+    }
+    json_to_c_string(super::unnamed_group_label::unnamed_group_title_from_json(
+        &path_from_c_str(data_dir),
+        &str_from_c_str(user_id),
+        &str_from_c_str(group_id),
+        &str_from_c_str(members_json),
+        &str_from_c_str(locale),
+    ))
+}
+
 /// The key of one message in the announced-messages ledger (`mobile::announced::announce_key`):
 /// `<conversation>:<sender>:<instant>`, built here only so the extension and the page's command
 /// spell it once. NULL when the message cannot be keyed (no conversation, no sender, no instant).

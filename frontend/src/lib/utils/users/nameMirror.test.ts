@@ -51,6 +51,7 @@ describe('the native name mirror', () => {
     expect(invoke).toHaveBeenCalledWith('store_display_names', {
       userId: me,
       names: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+      firstNames: {},
       removed: [],
     });
     await settle();
@@ -70,6 +71,33 @@ describe('the native name mirror', () => {
     expect(invoke).toHaveBeenLastCalledWith('store_display_names', {
       userId: me,
       names: { [BOB]: 'Bob' },
+      firstNames: {},
+      removed: [],
+    });
+  });
+
+  it('carries the first name beside the name, for an unnamed group drawn while the app is dead', async () => {
+    noteResolvedName(ALICE, 'Alice Martin', ' Alice ');
+    noteResolvedName(BOB, 'Bob Durand', '  ');
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('store_display_names', {
+      userId: me,
+      names: { [ALICE]: 'Alice Martin', [BOB]: 'Bob Durand' },
+      firstNames: { [ALICE]: 'Alice' },
+      removed: [],
+    });
+  });
+
+  it('keeps a pending first name a later name-only note of the SAME name lacks, drops it on a new name', async () => {
+    noteResolvedName(ALICE, 'Alice Martin', 'Alice');
+    noteResolvedName(ALICE, 'Alice Martin');
+    noteResolvedName(BOB, 'Bob Durand', 'Bob');
+    noteResolvedName(BOB, 'Robert Durand');
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('store_display_names', {
+      userId: me,
+      names: { [ALICE]: 'Alice Martin', [BOB]: 'Robert Durand' },
+      firstNames: { [ALICE]: 'Alice' },
       removed: [],
     });
   });
@@ -81,6 +109,7 @@ describe('the native name mirror', () => {
     expect(invoke).toHaveBeenCalledWith('store_display_names', {
       userId: me,
       names: {},
+      firstNames: {},
       removed: [BOB],
     });
   });
@@ -132,6 +161,7 @@ describe('the native name mirror', () => {
     expect(invoke).toHaveBeenLastCalledWith('store_display_names', {
       userId: me,
       names: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+      firstNames: {},
       removed: [],
     });
     warn.mockRestore();
@@ -141,7 +171,7 @@ describe('the native name mirror', () => {
     const rust = read('src/commands/display_names.rs');
     expect(rust).toMatch(/pub\(crate\) const DISPLAY_NAMES_FILE: &str = "display_names\.json";/);
     expect(rust).toMatch(
-      /fn store_display_names\(\s*app: tauri::AppHandle,\s*user_id: String,\s*names: HashMap<String, String>,\s*removed: Vec<String>,/
+      /fn store_display_names\(\s*app: tauri::AppHandle,\s*user_id: String,\s*names: HashMap<String, String>,\s*first_names: Option<HashMap<String, String>>,\s*removed: Vec<String>,/
     );
     expect(read('src/lib.rs')).toContain('store_display_names,');
     for (const native of [

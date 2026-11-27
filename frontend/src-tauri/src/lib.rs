@@ -539,6 +539,47 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string(r#"{"claimed":[],"held":0}"#).unwrap())
 }
 
+/// The title of a push for an UNNAMED group, from its members' first names as the app draws it
+/// (`mobile::unnamed_group_label`): `dataDir` holds `display_names.json` and
+/// `conversation_nicknames.json`, `membersJson` is the decrypt answer's `treeMembers` array,
+/// `locale` the tag in `push_context.json`. Answers `{"label": ...}` or `{"label": null, "reason":
+/// ...}`. JNI mirror of the iOS `canari_native_unnamed_group_title`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeUnnamedGroupTitle<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    members_json: jni::objects::JString<'a>,
+    locale: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let unreadable = r#"{"label":null,"reason":"jni-arguments"}"#;
+    let answer = (|| -> Option<String> {
+        let dir: String = env.get_string(&data_dir).ok()?.into();
+        let user: String = env.get_string(&user_id).ok()?.into();
+        let group: String = env.get_string(&group_id).ok()?.into();
+        let members: String = env.get_string(&members_json).ok()?.into();
+        let tag: String = env.get_string(&locale).ok()?.into();
+        Some(
+            mobile::unnamed_group_label::unnamed_group_title_from_json(
+                std::path::Path::new(&dir),
+                &user,
+                &group,
+                &members,
+                &tag,
+            )
+            .to_string(),
+        )
+    })()
+    .unwrap_or_else(|| unreadable.to_string());
+    env.new_string(&answer)
+        .unwrap_or_else(|_| env.new_string(unreadable).unwrap())
+}
+
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
 /// implementation both platforms share (`mobile::background::open_graine_push`). `signatureB64` is
 /// empty when the push carried none. Returns the same JSON as `nativeDecryptMessageWithKey`.
