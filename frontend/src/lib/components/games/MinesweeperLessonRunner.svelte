@@ -5,6 +5,8 @@
   import Select from '$lib/components/ui/Select.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import MinesweeperMiniGrid from '$lib/components/games/MinesweeperMiniGrid.svelte';
+  import MinesweeperControlsChoice from '$lib/components/games/MinesweeperControlsChoice.svelte';
+  import { loadFlagPrimary, playedByTouch, saveFlagPrimary } from '$lib/minesweeper/controls';
   import type { Lesson } from '$lib/minesweeper/tutorial/lessons';
   import { m } from '$lib/paraglide/messages';
 
@@ -36,6 +38,21 @@
   let outcome = $state<Outcome>('playing');
 
   const lesson = $derived(index < lessons.length ? lessons[index] : null);
+
+  /**
+   * THE GESTURES (owner, 2026-11-27): asked once, before the first lesson, and stored where the game reads
+   * them; the grid says them in one quiet line, with a way to swap them.
+   */
+  const stored = loadFlagPrimary();
+  let chosen = $state(stored !== null);
+  let flagPrimary = $state(stored ?? false);
+  const touch = playedByTouch();
+
+  function chooseGestures(value: boolean) {
+    flagPrimary = value;
+    chosen = true;
+    saveFlagPrimary(value);
+  }
   /** The family a catalogue entry belongs to, then a separator: a string, so no whitespace is lost in markup. */
   const sectionPrefix = $derived(lesson?.section ? `${lesson.section()} · ` : '');
 
@@ -62,6 +79,10 @@
   );
 </script>
 
+{#if lesson && !chosen}
+  <MinesweeperControlsChoice {touch} onChoose={chooseGestures} />
+{/if}
+
 {#if lesson}
   <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-4">
     {#if jump}
@@ -86,6 +107,9 @@
         {hintStep}
         onSolved={() => (outcome = 'solved')}
         onLost={() => (outcome = 'lost')}
+        {flagPrimary}
+        {touch}
+        onInvert={() => chooseGestures(!flagPrimary)}
       />
     {/key}
 

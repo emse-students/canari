@@ -4039,10 +4039,10 @@
   "minesweeper_tutorial_legend_group": "Groupe de cases (et son nombre de mines)",
   "minesweeper_tutorial_legend_safe": "Case sûre",
   "minesweeper_tutorial_lesson_reveal_title": "Révéler une case",
-  "minesweeper_tutorial_lesson_reveal_body": "Le but : ouvrir toutes les cases qui ne cachent pas de mine. Touche une case pour la révéler. Un chiffre indique combien de mines touchent la case, en diagonale aussi ; une case à 0 ouvre ses voisines toute seule. Touche la case entourée en vert : elle est sûre.",
+  "minesweeper_tutorial_lesson_reveal_body": "Le but : ouvrir toutes les cases qui ne cachent pas de mine. Creuse une case pour la révéler, avec le geste indiqué sous la grille. Un chiffre indique combien de mines touchent la case, en diagonale aussi ; une case à 0 ouvre ses voisines toute seule. Creuse la case entourée en vert : elle est sûre.",
   "minesweeper_tutorial_lesson_reveal_hint_1": "Cette case est entourée de cases sans mine : elle affichera 0 et ouvrira ses voisines.",
   "minesweeper_tutorial_lesson_flag_title": "Poser un drapeau",
-  "minesweeper_tutorial_lesson_flag_body": "Quand tu es sûr qu'une case cache une mine, marque-la d'un drapeau pour ne pas la toucher par erreur. Passe en mode Drapeau (ou clic droit sur ordinateur), puis touche la case. Le compteur de mines, en haut, baisse de 1 à chaque drapeau : il compte les mines moins tes drapeaux, il ne sait pas si tu as raison.",
+  "minesweeper_tutorial_lesson_flag_body": "Quand tu es sûr qu'une case cache une mine, marque-la d'un drapeau pour ne pas la creuser par erreur : c'est l'autre geste, indiqué sous la grille. Le compteur de mines, en haut, baisse de 1 à chaque drapeau : il compte les mines moins tes drapeaux, il ne sait pas si tu as raison.",
   "minesweeper_tutorial_lesson_flag_hint_1": "Ce 1 ne touche qu'une seule case cachée, et il compte une mine.",
   "minesweeper_tutorial_lesson_flag_hint_2": "Cette case est donc une mine sûre : pose un drapeau dessus.",
   "minesweeper_tutorial_lesson_autoflag_title": "Les drapeaux automatiques",
@@ -7389,5 +7389,14 @@
   "form_seat_hold_released": "Place libérée.",
   "form_seat_hold_expired": "Votre réservation a expiré : la place a peut-être été prise.",
   "form_seat_hold_failed": "Impossible de réserver une place pour le moment.",
-  "form_seat_hold_release_failed": "Impossible de libérer la place pour le moment."
+  "form_seat_hold_release_failed": "Impossible de libérer la place pour le moment.",
+  "minesweeper_controls_choice_title": "Comment préfères-tu jouer ?",
+  "minesweeper_controls_choice_body": "Deux gestes suffisent : l'un creuse une case, l'autre y pose un drapeau. Choisis celui qui sera le plus rapide pour toi : le jeu s'en souviendra, et tu pourras inverser à tout moment.",
+  "minesweeper_controls_dig_first": "Creuser d'abord",
+  "minesweeper_controls_flag_first": "Drapeau d'abord",
+  "minesweeper_controls_action_dig": "creuser",
+  "minesweeper_controls_action_flag": "drapeau",
+  "minesweeper_controls_touch": "Appui court : {short} · appui long : {long}",
+  "minesweeper_controls_mouse": "Clic gauche : {short} · clic droit : {long}",
+  "minesweeper_controls_invert": "Inverser"
 }
