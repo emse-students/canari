@@ -481,13 +481,12 @@ association's columns, the code, the panel, the wording, the strip and this entr
 **What it humours:** upstream's newest image, `adminer:6.3.0` (`sha256:3a07decd...`, 2026-11-06), carries
 Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.24's `18.7-r0`; the
 image scan failed every pull request from 2026-11-13. The owner chose a patched image over an allowlist
-and over removing the console: that same digest, `apk upgrade --no-cache libpq`, back to `USER adminer`.
+and over removing the console: that same digest, `apk upgrade --no-cache libpq` (the `libpq` half left on 2026-11-27, the base carries it; only `libxml2` is moved now), back to `USER adminer`.
 The scan builds it and reads the result ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
 **The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
 gap on a console only a global admin opens) where a pinned image moved only with its digest.
 **Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
-to an upstream build whose own `libpq` is `>= 18.7-r0` and, since 2026-11-20, whose `libxml2` is
-`>= 2.13.9-r3` (`CVE-2026-86144`, the second package the `RUN` moves) - read in the scan of that pull
+to an upstream build whose `libxml2` is `>= 2.13.9-r5` (the one package the `RUN` moves) - read in the scan of that pull
 request, or with `trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and

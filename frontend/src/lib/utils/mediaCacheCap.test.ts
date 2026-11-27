@@ -66,6 +66,31 @@ describe('planEviction', () => {
     ]);
     expect(planEviction(records, 250 * MB, NOW).evict).toEqual(['inside']);
   });
+
+  it('compares a confirmation to the window the server named, whatever the constant says', () => {
+    const named = (
+      mb: number,
+      usedDaysAgo: number,
+      confirmedDaysAgo: number,
+      windowDays: number | null
+    ) => ({
+      ...copy(mb, usedDaysAgo, confirmedDaysAgo),
+      holdWindowMs: windowDays === null ? null : windowDays * DAY,
+    });
+    const records = new Map([
+      // 20 days ago is inside the 30-day constant, but the server named a 10-day window: kept.
+      ['short-window-lapsed', named(300, 1, 20, 10)],
+      // 60 days ago is outside the constant, but the server named 90 days: evictable.
+      ['long-window-inside', named(300, 2, 60, 90)],
+      // No sweep takes it: evictable however long ago it was confirmed.
+      ['never-swept', named(300, 3, 400, null)],
+      // Never confirmed stays a sole copy even when a window is recorded.
+      ['unconfirmed', { ...copy(300, 4, null), holdWindowMs: 90 * DAY }],
+    ]);
+    const plan = planEviction(records, 100 * MB, NOW);
+    expect(plan.evict).toEqual(['never-swept', 'long-window-inside']);
+    expect(plan.keptSole).toBe(2);
+  });
 });
 
 describe('the member cap', () => {

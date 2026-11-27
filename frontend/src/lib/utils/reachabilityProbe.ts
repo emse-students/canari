@@ -23,12 +23,21 @@ import { coreUrl } from '$lib/utils/apiUrl';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { pluginFetch } from '$lib/utils/fetchRouting';
+import type { NetworkStack } from '$lib/utils/transportFailure';
 
-/** One probe. Resolves true when our API answered (whatever it said), false when it did not. */
-export async function probeReachability(): Promise<boolean> {
+/**
+ * One probe. Resolves true when our API answered (whatever it said), false when it did not.
+ *
+ * @param stack The HTTP stack the "unreachable" verdict was earned on: a probe through the WebView's
+ *   own `fetch` would measure the other stack (a read the plugin's resolver never sees), so a verdict
+ *   the PLUGIN earned is probed through the plugin. Absent (or no plugin installed) = the default
+ *   `fetch`, which is the only stack there is.
+ */
+export async function probeReachability(stack?: NetworkStack): Promise<boolean> {
   try {
     const res = await trackedFetch(
-      fetch,
+      (stack === 'plugin' ? pluginFetch() : null) ?? fetch,
       `${coreUrl()}/api/version`,
       { method: 'GET', cache: 'no-store' },
       { requestClass: 'probe' }

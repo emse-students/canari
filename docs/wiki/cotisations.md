@@ -1203,8 +1203,9 @@ product's `webhookUrl`:
   ladder on a lengthening backoff (`CERCLE_AUTO_RETRY_BACKOFF = [5min, 30min, 2h, 6h, 24h]`) driven
   by `CercleDeliveryScheduler` every 5 minutes, then a manual retry from `/admin/cercle`.
 - **The answer is classified at the read, as a type** (`CercleSendOutcome` in `products.service.ts`):
-  `delivered` (2xx), **`parked`** (HTTP **202**) or `failed` (anything else, with its error). Never
-  by a message.
+  `delivered` (2xx), **`parked`** (HTTP **202**) or `failed` (anything else, with its error, and
+  `httpStatus`: the Cercle's answer when it gave one, null for a transport failure - read from the
+  axios error's `response`). Never by a message.
 - **`parked` (decided 2026-11-26).** A member who has never signed in to Le Cercle has no row there,
   and a top-up for them used to answer `404`, which sat on the ladder until the retry after their
   first sign-in (measured: 9.5 minutes in one case, 2 h 48 min in another). That is an expected
@@ -1212,9 +1213,44 @@ product's `webhookUrl`:
   the first sign-in ([Le Cercle side](https://gitlab.emse.fr/rootz/le-cercle) `canari-integration.md`,
   "A top-up for a member not yet here"). Canari records the row as **`parked`**, a state of its
   own rather than `delivered`: the money is not yet on the balance, and a reading of "what reached
-  the Cercle" must be able to tell the two apart. It is terminal here - `nextAttemptAt` null, never
-  retried, not in the `/admin/cercle` failure list, swept by the weekly GC like `delivered`. A `404`
+  the Cercle" must be able to tell the two apart. It is off the failure ladder and out of the
+  `/admin/cercle` failure list, and re-sent slowly until it ends (below). A `404`
   stays a failure: it now means a route or host that is not the receiver.
+- **A park ends by Le Cercle's answer to a re-send (2026-11-27, review of #4177).** The sweep
+  (`CercleDeliveryScheduler`, every 5 minutes) also picks `parked` rows whose `nextAttemptAt` is due
+  - or null, as rows parked before this carry - and re-sends the SAME signed payload and payment
+  intent: `202` (still parked, a duplicate there) keeps the row parked with its next step
+  `CERCLE_PARKED_RESEND_MS` (6 h) on; `200`, new or duplicate (the first sign-in applied it), settles
+  it `delivered`. A re-send that does not get THROUGH (timeout, network: no HTTP answer) keeps the
+  park, with its `lastError`: the money is held there. A re-send the Cercle ANSWERS with an error
+  (`410` for an account deleted there with this payment never credited, any other 4xx, a 5xx) is an
+  answer, not silence: the row moves `parked` -> `failed` at ERROR with the status, onto the failure
+  ladder and the admin's retry and delete. Le Cercle asks its ledger first, so a payment it ever
+  credited is answered `200` duplicate even once the account is deleted. Termination comes from Le Cercle's answer,
+  never from a clock; the six hours only bound how long a credited top-up still reads as waiting,
+  well inside the report's seven days, at four requests a day per parked row. Le Cercle never calls
+  Canari for this (a push sent once, after its pending row was deleted, could not be recovered).
+- **Every status change is conditional** (`ProductsService.settleDelivery`):
+  `UPDATE ... SET status = $new WHERE id = $1 AND status = <the status the attempt READ>`, the
+  counters in the same statement: `pending` for the initial dispatch, `failed` or `parked` for the
+  sweep, `failed` for a manual retry, which refuses any other row (400). A manual retry and the sweep
+  can hold the same row; a full-entity save of a stale copy wrote `parked` or `failed` over
+  `delivered`. No attempt reads `delivered`, so nothing overwrites it. A write matching no row leaves
+  it as found and RE-READS it to say which miss it was: still there, another attempt settled it first
+  (WARN, naming its status now); gone after a `200`, the Cercle credited a top-up with no record left
+  here (ERROR, naming the intent prefix); gone otherwise, deleted meanwhile (WARN). The delete of a
+  failed row is conditional the same way. The sweep returns `delivered`, `parked` and `failed`
+  apart (`[CERCLE] automatic retry: delivered=X parked=Y failed=Z of N due`); a lost write, and a
+  row not sent for want of a webhook, count in none.
+- **A parked top-up is SEEN, not swept.** `/admin/cercle` lists the parked rows
+  in their own section (`GET /associations/:id/webhook-parked`), each with its age since the payment
+  (`createdAt`; `lastAttemptAt` moves at every re-send), amber past `LONG_PARKED_DAYS` (7); the weekly
+  GC never deletes them; and
+  `CercleDeliveryScheduler.reportLongParked` prints one line daily at 03:25, counts only
+  (`[CERCLE_PARKED] parked=N older_than_7d=M`): `log` at zero, `warn` while any has waited longer,
+  `error` when it cannot count. The seven days are a reading threshold, not a timeout: nothing is
+  retried or moved when they elapse. Since a credited park turns `delivered` at its next re-send,
+  a row the WARN names has really not been credited.
   **Deploy order does not matter**: an old Canari reads the `202` as a 2xx (delivered), and an old
   Le Cercle keeps answering `404`, which this client still retries.
 
@@ -1239,8 +1275,8 @@ visible one. Consequences worth knowing:
 - A **manual** retry is exactly ONE attempt: re-running the 3-attempt ladder sleeps 5s then 15s with
   a 10s timeout each, so the admin's request could hang for the better part of a minute and time out
   at the proxy. It also resets `autoRetryCount`, since pressing it means something was fixed.
-- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` and `parked` rows older than 30 days, so a
-  failure is never swept out from under the ladder.
+- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` rows older than 30 days, so a
+  failure is never swept out from under the ladder, nor a parked top-up out of the admin's sight.
 
 `listWebhookFailures` returns a `FailedDelivery` DTO, not the entity: the row carries two uuids and
 neither tells an admin whose top-up is stuck, so the member's name and the product's are joined in.
@@ -1287,8 +1323,8 @@ timestamp are refused (401/400/422) with no ledger write. See
 - **An undeployed SvelteKit route answers an HTML 404**, which is indistinguishable from a broken
   receiver: for a webhook, "not working" and "not deployed" are the same status code. Probe the route
   before reading the code.
-- **A 404 from a real receiver is a failed delivery, not a lost payment**: a user who has never
-  signed into the Cercle does not exist there yet, and the manual retry is what fixes it once they do.
+- **A 404 from a real receiver is a failed delivery, not a lost payment**: it means a route or host
+  that is not the receiver (a member not there yet is answered `202`, parked, since 2026-11-26).
 - **Compare secret FINGERPRINTS before anything else.** Every mismatch on this path presents as "the
   secrets differ", including the ones that are not - the `sha256=` prefix bug above presented exactly
   that way while both secrets were identical.

@@ -18,7 +18,7 @@
  */
 
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { TransportFailureError } from '$lib/utils/transportFailure';
+import { TransportFailureError, stackOfAnswer } from '$lib/utils/transportFailure';
 import { responseOrigin } from '$lib/utils/apiJson';
 import {
   bodyByteLength,
@@ -71,8 +71,9 @@ export async function trackRequestOutcome(
   const tracked = connectivity.trackRequest({ transfer: bytes >= LATENCY_BODY_CEILING_BYTES });
   try {
     const res = await send();
-    if (responseOrigin(res) === 'gateway') tracked.answered(bytes < LATENCY_BODY_CEILING_BYTES);
-    else {
+    if (responseOrigin(res) === 'gateway') {
+      tracked.answered(bytes < LATENCY_BODY_CEILING_BYTES, stackOfAnswer(res));
+    } else {
       tracked.unproven(
         `${method} ${url} answered ${res.status} with ${res.headers.get('content-type') ?? 'no content type'}`
       );

@@ -19,7 +19,11 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
-import { TransportFailureError, transportFailureEvidence } from '$lib/utils/transportFailure';
+import {
+  TransportFailureError,
+  transportFailureEvidence,
+  type NetworkStack,
+} from '$lib/utils/transportFailure';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { createChangeLatch } from '$lib/utils/changeLatch';
 
@@ -73,7 +77,7 @@ export const STALLS_BEFORE_UNREACHABLE = 2;
  * Asks the server whether it is there. Resolves true when ANY answer came back, false when none did.
  * Supplied from outside (`reachabilityProbe.ts`) so this store imports no URL and no network code.
  */
-export type ReachabilityProbe = () => Promise<boolean>;
+export type ReachabilityProbe = (stack?: NetworkStack) => Promise<boolean>;
 
 /**
  * Pauses (ms) between the probes of one resume, and so also how many there are. BOUNDED ON PURPOSE:
@@ -96,9 +100,10 @@ export interface TrackRequestOptions {
 export interface TrackedRequest {
   /**
    * OUR API answered (any status, its JSON - see `responseOrigin`). `latencyMs` is excluded from the
-   * average when `measured` is false.
+   * average when `measured` is false. `stack` is the HTTP stack that delivered the answer, when the
+   * routing knows it: an unreachable verdict earned on the OTHER stack is not lifted by it.
    */
-  answered(measured?: boolean): void;
+  answered(measured?: boolean, stack?: NetworkStack): void;
   /**
    * Something answered that is not proven to be our API (no JSON type): a captive portal's `511`, a
    * WAF's HTML `403`, an edge's 5xx page - and equally our own non-JSON answers, which the header
@@ -154,6 +159,12 @@ class ConnectivityStore {
   private unreachableSpell = 0;
   /** Deadlines that expired AFTER the first one of the current spell was said; reported when it ends. */
   private deadlinesWhileUnreachable = 0;
+  /** The stack the standing "unreachable" verdict was earned on; `null` when it names none. */
+  private unreachableStack: NetworkStack | null = null;
+  /** Answers from the other stack since the verdict, reported once when the spell closes. */
+  private answersFromOtherStack = 0;
+  /** Whether a spent probe run was already said at warn in the current unreachable spell. */
+  private spentRunSaidThisSpell = false;
   private readonly spellLatch = createChangeLatch();
   private nextRequestId = 0;
   private readonly inFlight = new Map<number, ReturnType<typeof setTimeout>>();
@@ -242,17 +253,52 @@ class ConnectivityStore {
     return !this.isOnline;
   }
 
-  /** Records that a request reached the server (whatever it answered). */
-  notifyServerReachable(): void {
+  /**
+   * Records that a request reached the server (whatever it answered).
+   *
+   * @param stack The HTTP stack that delivered the answer. A verdict earned on one stack is lifted
+   *   only by an answer from THAT stack: the WebView's resolver can answer reads while the plugin's
+   *   cannot resolve the host (owner's Android log, 2026-11-25: four flaps in four seconds), and a
+   *   lift by the wrong stack flushed the outbox into the same failure. Absent = unknown, which
+   *   lifts as it always did (one stack).
+   */
+  notifyServerReachable(stack?: NetworkStack): void {
     this.ensureGlobalListeners();
     if (this.serverReachable && this.isOnline) return;
+    if (
+      !this.serverReachable &&
+      this.isOnline &&
+      this.unreachableStack !== null &&
+      stack !== undefined &&
+      stack !== this.unreachableStack
+    ) {
+      // Counted, said once on the line that closes the spell: an answer that proves nothing about
+      // the stack that failed is expected here, and one line each would be the noise.
+      this.answersFromOtherStack++;
+      // BUT IT IS THE REASON TO ASK THE FAILED STACK AGAIN. The probe run the verdict started is
+      // bounded and may be spent, and the requests that would otherwise lift the verdict - the
+      // outbox's writes - wait on this very verdict (`isOffline`): without this, a plugin outage
+      // longer than one run left the app offline while every read answered, until an `online`
+      // event. An event, not a clock: SINGLE-FLIGHT, so a run in progress is joined and this adds
+      // nothing while one runs.
+      void this.probeUntilReachable(PROBE_DELAYS_AFTER_FAILURE_MS, 'an answer on the other stack');
+      return;
+    }
     const extra = this.deadlinesWhileUnreachable;
+    const other = this.answersFromOtherStack;
+    const notes = [
+      extra > 0 ? `${extra} more request deadline(s) expired while it was unreachable` : '',
+      other > 0
+        ? `${other} answer(s) from the ${this.unreachableStack === 'plugin' ? 'webview' : 'plugin'} stack did not lift it`
+        : '',
+    ].filter(Boolean);
     console.log(
-      extra > 0
-        ? `[CONNECTIVITY] server reachable again (${extra} more request deadline(s) expired while it was unreachable)`
+      notes.length > 0
+        ? `[CONNECTIVITY] server reachable again (${notes.join('; ')})`
         : '[CONNECTIVITY] server reachable again'
     );
     this.deadlinesWhileUnreachable = 0;
+    this.unreachableStack = null;
     const wasOffline = this.isOffline;
     // A new count starts with the server back, whichever answer brought it back.
     this.consecutiveStalls = 0;
@@ -271,10 +317,15 @@ class ConnectivityStore {
    *   (`2 request deadlines in a row`) from a refused socket (`transport failure: <error type>`) -
    *   the distinction the stall counter exists for. The caller states it; this never guesses.
    */
-  notifyServerUnreachable(evidence: string): void {
+  notifyServerUnreachable(evidence: string, stack?: NetworkStack): void {
     this.ensureGlobalListeners();
     if (!this.serverReachable) return;
-    console.log(`[CONNECTIVITY] server unreachable (${evidence})`);
+    console.log(
+      `[CONNECTIVITY] server unreachable (${evidence}${stack ? `, ${stack} stack` : ''})`
+    );
+    this.unreachableStack = stack ?? null;
+    this.answersFromOtherStack = 0;
+    this.spentRunSaidThisSpell = false;
     this.serverReachable = false;
     this.unreachableSpell++;
     this.deadlinesWhileUnreachable = 0;
@@ -321,15 +372,19 @@ class ConnectivityStore {
         // Someone else answered, or the link left again: nothing left to find out.
         if (this.serverReachable || !this.isOnline) return;
         if (this.stopProbingOffScreen(reason)) return;
-        const answered = await this.probe().catch(() => false);
+        // THROUGH THE STACK THAT EARNED THE VERDICT: only its answer can lift it.
+        const answered = await this.probe(this.unreachableStack ?? undefined).catch(() => false);
         if (answered) {
           console.log(`[CONNECTIVITY] probe answered (${reason}, attempt ${attempt + 1})`);
           return;
         }
       }
-      console.warn(
-        `[CONNECTIVITY] ${delaysMs.length} probe(s) after ${reason} got no answer - waiting for the next online event or any successful request`
-      );
+      // Said at warn ONCE per spell: the runs an answer on the other stack re-arms (above) would
+      // otherwise repeat the same accusation for as long as the failed stack stays down.
+      const line = `[CONNECTIVITY] ${delaysMs.length} probe(s) after ${reason} got no answer - waiting for the next online event or any successful request${this.unreachableStack ? ` on the ${this.unreachableStack} stack` : ''}`;
+      if (this.spentRunSaidThisSpell) console.debug(line);
+      else console.warn(line);
+      this.spentRunSaidThisSpell = true;
     } finally {
       this.probing = false;
     }
@@ -413,12 +468,12 @@ class ConnectivityStore {
       if (this.inFlight.size === 0) this.inFlightSlow = false;
     };
     return {
-      answered: (measured = true) => {
+      answered: (measured = true, stack) => {
         if (!this.inFlight.has(id)) return;
         settle();
         this.consecutiveStalls = 0;
         this.noteAnswer();
-        this.notifyServerReachable();
+        this.notifyServerReachable(stack);
         if (measured) this.observeLatency(Date.now() - startedAt);
         this.recomputeSlow();
       },
@@ -467,7 +522,7 @@ class ConnectivityStore {
             }
           }
         } else if (error instanceof TransportFailureError) {
-          this.notifyServerUnreachable(transportFailureEvidence(error));
+          this.notifyServerUnreachable(transportFailureEvidence(error), error.networkStack);
         }
         this.recomputeSlow();
       },
@@ -540,6 +595,9 @@ class ConnectivityStore {
     this.consecutiveStalls = 0;
     this.unreachableSpell = 0;
     this.deadlinesWhileUnreachable = 0;
+    this.unreachableStack = null;
+    this.answersFromOtherStack = 0;
+    this.spentRunSaidThisSpell = false;
     this.spellLatch.reset();
   }
 }
