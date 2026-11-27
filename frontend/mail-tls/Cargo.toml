@@ -1,6 +1,6 @@
 [package]
 name = "mail-tls"
-version = "1.8.2-alpha.9"
+version = "1.8.3-alpha.1"
 edition = "2021"
 description = "Sans-IO TLS client for the school mailbox (partage.emse.fr), for WASM and native"
 
