@@ -18,6 +18,7 @@ import {
   alumniReasonState,
   alumniSiteLine,
   cancelAlumniMerge,
+  dismissAlumniDuplicate,
   fetchAlumniClosedMerges,
   fetchAlumniMergeTargets,
   fetchAlumniOpenMerges,
@@ -147,6 +148,17 @@ describe('the Alumni merge client', () => {
       `https://core.test/api/users/admin/alumni-duplicates/${DUP}/cancel`,
       expect.objectContaining({ method: 'POST' })
     );
+  });
+
+  it('dismisses ("Pas un doublon") by POST on the duplicate, and throws a refusal', async () => {
+    apiFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await dismissAlumniDuplicate(DUP);
+    expect(apiFetch).toHaveBeenCalledWith(
+      `https://core.test/api/users/admin/alumni-duplicates/${DUP}/dismiss`,
+      expect.objectContaining({ method: 'POST' })
+    );
+    apiFetch.mockResolvedValue(answer(403, { code: 'ALUMNI_MERGE_NOT_FOUND' }));
+    await expect(dismissAlumniDuplicate(DUP)).rejects.toBeDefined();
   });
 
   it('lists the open merges', async () => {

@@ -130,15 +130,17 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   },
   // The Alumni duplicates' queue flags (migration 031), BEFORE the merge rows below are deleted or
   // blanked: the flag of the erased account as a DUPLICATE (found by its MiConnect uuid, read from the
-  // `users` row), and the flag of any duplicate that a merge names this account the TARGET of. A
-  // flag holds only a MiConnect uuid, and goes with either account (register M1).
+  // `users` row), and the flag of any duplicate that a LIVE merge names this account the TARGET of (a
+  // cancelled merge ties nothing: that duplicate waits again, and is not this account's). A flag
+  // holds only a MiConnect uuid, and goes with either account (register M1).
   {
     label: 'alumni_duplicate_flags',
     sql: `DELETE FROM alumni_duplicate_flags
             WHERE "duplicateUuid"::text = (SELECT "miconnectUuid" FROM users WHERE id = $1)
                OR "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM alumni_merges
-                    WHERE "targetUserId" = $1
-                       OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+                    WHERE ("targetUserId" = $1
+                       OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))
+                      AND "cancelledAt" IS NULL)`,
   },
   {
     label: 'alumni_merges',

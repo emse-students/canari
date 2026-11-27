@@ -4,11 +4,9 @@ import type { AdminQueuesService } from '../admin-queues/admin-queues.service';
 
 describe('InternalAlumniDuplicatesController', () => {
   const env = { ...process.env };
-  const announceAlumniDuplicate = jest.fn().mockResolvedValue(3);
   const announceAlumniDuplicates = jest.fn().mockResolvedValue(2);
   const queueChanged = jest.fn().mockResolvedValue(undefined);
   const controller = new InternalAlumniDuplicatesController({
-    announceAlumniDuplicate,
     announceAlumniDuplicates,
     queueChanged,
   } as unknown as AdminQueuesService);
@@ -16,7 +14,6 @@ describe('InternalAlumniDuplicatesController', () => {
 
   beforeEach(() => {
     process.env.INTERNAL_SECRET = 'shared-secret';
-    announceAlumniDuplicate.mockClear();
     announceAlumniDuplicates.mockClear();
     queueChanged.mockClear();
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -24,25 +21,6 @@ describe('InternalAlumniDuplicatesController', () => {
   afterEach(() => {
     process.env = { ...env };
     jest.restoreAllMocks();
-  });
-
-  it('announces a flagged duplicate to the admins and answers how many were told', async () => {
-    expect(await controller.flagged('shared-secret', { duplicateUuid: duplicate })).toEqual({
-      told: 3,
-    });
-    expect(announceAlumniDuplicate).toHaveBeenCalledWith(duplicate);
-  });
-
-  it('refuses a malformed duplicate id, and a caller without the internal secret', async () => {
-    await expect(
-      controller.flagged('shared-secret', { duplicateUuid: 'not-a-uuid' })
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(controller.flagged('wrong', { duplicateUuid: duplicate })).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
-    await expect(controller.changed('wrong')).rejects.toBeInstanceOf(ForbiddenException);
-    expect(announceAlumniDuplicate).not.toHaveBeenCalled();
-    expect(queueChanged).not.toHaveBeenCalled();
   });
 
   it('a reading that found several announces them together, and refuses an empty, oversized or malformed list', async () => {
@@ -64,9 +42,14 @@ describe('InternalAlumniDuplicatesController', () => {
     expect(announceAlumniDuplicates).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a full batch of 200 and refuses the 201st', async () => {
+    await controller.found('shared-secret', { duplicateUuids: Array(200).fill(duplicate) });
+    expect(announceAlumniDuplicates).toHaveBeenCalledTimes(1);
+  });
+
   it('a change tells the badges and writes NO notice: the push is once per duplicate', async () => {
     expect(await controller.changed('shared-secret')).toEqual({ ok: true });
     expect(queueChanged).toHaveBeenCalledWith({ queue: 'alumni-duplicates' });
-    expect(announceAlumniDuplicate).not.toHaveBeenCalled();
+    expect(announceAlumniDuplicates).not.toHaveBeenCalled();
   });
 });

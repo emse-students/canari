@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
-import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
+import { ALUMNI_FOUND_BATCH, AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 
 jest.mock('axios');
 
@@ -14,20 +14,50 @@ const OTHER = '22222222-2222-4222-8222-222222222222';
  * The SQL itself - what "pending" means once a merge stands - is proved against PostgreSQL in
  * social-service's `bell-target-rows.integration.spec`.
  */
-function make(initial: { uuid: string; resolved?: boolean; flaggedAt?: Date }[] = []) {
+function make(
+  initial: {
+    uuid: string;
+    resolved?: boolean;
+    dismissed?: boolean;
+    announced?: boolean;
+    flaggedAt?: Date;
+  }[] = []
+) {
   const flags = initial.map((f) => ({
     uuid: f.uuid,
     resolved: f.resolved ?? false,
+    dismissed: f.dismissed ?? false,
+    announced: f.announced ?? true,
     flaggedAt: f.flaggedAt ?? new Date(0),
   }));
   const query = jest.fn(async (sql: string, params: unknown[]) => {
+    if (sql.startsWith('SELECT now()')) return [{ t: new Date('2026-11-27T10:00:00Z') }];
+    if (sql.includes('ON CONFLICT ("duplicateUuid") DO UPDATE')) {
+      const flag = flags.find((f) => f.uuid === params[0]);
+      if (flag) Object.assign(flag, { dismissed: true, resolved: true });
+      else
+        flags.push({
+          uuid: params[0] as string,
+          resolved: true,
+          dismissed: true,
+          announced: false,
+          flaggedAt: new Date(),
+        });
+      return [];
+    }
     if (sql.startsWith('INSERT INTO alumni_duplicate_flags')) {
       if (flags.some((f) => f.uuid === params[0])) return [];
-      flags.push({ uuid: params[0] as string, resolved: false, flaggedAt: new Date() });
+      flags.push({
+        uuid: params[0] as string,
+        resolved: false,
+        dismissed: false,
+        announced: false,
+        flaggedAt: new Date(),
+      });
       return [{ duplicateUuid: params[0] }];
     }
     if (sql.includes('SET "resolvedAt" = NULL')) {
-      const flag = flags.find((f) => f.uuid === params[0] && f.resolved);
+      const flag = flags.find((f) => f.uuid === params[0] && f.resolved && !f.dismissed);
       if (flag) flag.resolved = false;
       return [{ n: flag ? 1 : 0 }];
     }
@@ -39,6 +69,18 @@ function make(initial: { uuid: string; resolved?: boolean; flaggedAt?: Date }[] 
       );
       gone.forEach((f) => (f.resolved = true));
       return [{ n: gone.length }];
+    }
+    if (sql.startsWith('SELECT f."duplicateUuid"')) {
+      return flags.filter((f) => !f.announced && !f.resolved).map((f) => ({ uuid: f.uuid }));
+    }
+    if (sql.includes('SET "announcedAt" = now()')) {
+      for (const f of flags) if ((params[0] as string[]).includes(f.uuid)) f.announced = true;
+      return [];
+    }
+    if (sql.includes('"dismissedAt" IS NOT NULL')) {
+      return flags
+        .filter((f) => f.dismissed && (params[0] as string[]).includes(f.uuid))
+        .map((f) => ({ uuid: f.uuid }));
     }
     throw new Error(`unexpected query: ${sql}`);
   });
@@ -64,10 +106,15 @@ describe('AlumniDuplicateQueue', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('tells the admins of a duplicate ONCE, at the first finding, naming only its uuid', async () => {
-    const { queue } = make();
+  it('tells the admins of a duplicate ONCE, at the first finding, naming only its uuid, and records it', async () => {
+    const { queue, flags } = make();
     await queue.flag(DUP);
     expect(found()).toEqual([[DUP]]);
+    expect(flags[0].announced).toBe(true);
+  });
+
+  it('reads the database clock for a reading start', async () => {
+    expect((await make().queue.databaseNow()).toISOString()).toBe('2026-11-27T10:00:00.000Z');
   });
 
   it('never tells them again of a duplicate it already holds, however often the page is read', async () => {
@@ -104,7 +151,7 @@ describe('AlumniDuplicateQueue', () => {
     expect(flags.find((f) => f.uuid === OTHER)?.resolved).toBe(false);
   });
 
-  it('a reading that flags several duplicates sends ONE announcement for all of them, never one each', async () => {
+  it('a reading that flags several duplicates sends ONE announcement for all of them (one bell row, social decides), never one each', async () => {
     const third = '33333333-3333-4333-8333-333333333333';
     const { queue, flags } = make();
     await queue.reconcile([DUP, OTHER, third], NOW());
@@ -129,12 +176,58 @@ describe('AlumniDuplicateQueue', () => {
     expect(resolve).toContain('"flaggedAt" < $2');
   });
 
-  it('says a notice social did not confirm at error, and keeps the flag counted', async () => {
+  it('says a notice social did not confirm at error, keeps the flag counted, and tells it AGAIN at the next reading', async () => {
     (axios.post as jest.Mock).mockRejectedValueOnce(new Error('social down'));
     const { queue, flags } = make();
     await expect(queue.flag(DUP)).resolves.toBe('created');
     expect(flags).toHaveLength(1);
+    expect(flags[0].announced).toBe(false);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT confirmed'));
+    await queue.reconcile([DUP], NOW());
+    expect(found()).toEqual([[DUP], [DUP]]);
+    expect(flags[0].announced).toBe(true);
+    await queue.reconcile([DUP], NOW());
+    expect(found()).toHaveLength(2);
+  });
+
+  it('a backlog goes out in batches of at most ALUMNI_FOUND_BATCH, and a failing batch drops neither the others nor itself for good', async () => {
+    const uuids = Array.from(
+      { length: ALUMNI_FOUND_BATCH + 5 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    (axios.post as jest.Mock).mockRejectedValueOnce(new Error('400'));
+    const { queue, flags } = make();
+    await queue.reconcile(uuids, NOW());
+    const sent = found();
+    expect(sent.map((b) => b.length)).toEqual([ALUMNI_FOUND_BATCH, 5]);
+    // The first batch failed: its 200 stay owed, the 5 of the second landed.
+    expect(flags.filter((f) => f.announced)).toHaveLength(5);
+    await queue.reconcile(uuids, NOW());
+    expect(found().map((b) => b.length)).toEqual([ALUMNI_FOUND_BATCH, 5, ALUMNI_FOUND_BATCH]);
+    expect(flags.every((f) => f.announced)).toBe(true);
+  });
+
+  it('"Pas un doublon" is TERMINAL: a later reading or sign-in neither flags nor reopens it, and it is never told', async () => {
+    const { queue, flags } = make([{ uuid: DUP }]);
+    await queue.dismiss(DUP);
+    expect(flags[0]).toMatchObject({ dismissed: true, resolved: true });
+    (axios.post as jest.Mock).mockClear();
+    expect(await queue.flag(DUP)).toBe('known');
+    await queue.reconcile([DUP], NOW());
+    expect(flags[0]).toMatchObject({ dismissed: true, resolved: true });
+    expect(found()).toEqual([]);
+    expect([...(await queue.dismissedAmong([DUP, OTHER]))]).toEqual([DUP]);
+  });
+
+  it('dismisses an account never flagged: the row is written dismissed, never told', async () => {
+    const { queue, flags } = make();
+    await queue.dismiss(DUP);
+    expect(flags).toEqual([
+      expect.objectContaining({ uuid: DUP, dismissed: true, resolved: true }),
+    ]);
+    await queue.reconcile([DUP], NOW());
+    expect(found()).toEqual([]);
+    expect(posted().every((u) => u.includes('alumni-duplicates-changed'))).toBe(true);
   });
 
   it('never throws on a failed read of the table: the page is answered, the failure accused', async () => {

@@ -256,6 +256,18 @@ export async function cancelAlumniMerge(duplicateUuid: string): Promise<void> {
 }
 
 /**
+ * "Pas un doublon": the admins' TERMINAL answer for an Alumni account that is not a duplicate - it
+ * leaves every admin's list and count for good and is never flagged again.
+ */
+export async function dismissAlumniDuplicate(duplicateUuid: string): Promise<void> {
+  Log.d('alumniMerge.dismiss', { dup: duplicateUuid.slice(0, 8) });
+  const res = await apiFetch(`${base()}/${encodeURIComponent(duplicateUuid)}/dismiss`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res);
+}
+
+/**
  * "Rattacher" (D48): marks the duplicate for MiConnect, which merges it at its next Alumni sign-in,
  * and erases its Canari account. Called again, it resumes an interrupted one. A target that is not
  * the unique match needs `reason` (D55): the server decides the mode, never the client.

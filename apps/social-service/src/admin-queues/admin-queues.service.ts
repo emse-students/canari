@@ -161,27 +161,18 @@ export class AdminQueuesService {
   }
 
   /**
-   * Core-service flagged an Alumni duplicate that waits for an attachment (`AlumniDuplicateQueue`,
-   * once per duplicate): EVERY global admin is told - no one asked for it, so no one is excluded.
-   * Throws on a failed write: the internal caller logs it.
-   */
-  async announceAlumniDuplicate(duplicateUuid: string): Promise<number> {
-    return this.announceAlumniDuplicates([duplicateUuid]);
-  }
-
-  /**
-   * A reading flagged several duplicates at once: each has its bell row, but the admins get ONE push
-   * for all of them (carried by the first row, none by the others) - never a burst. Answers how many
-   * admins have the bell rows.
+   * Core-service found Alumni duplicates that wait for an attachment (`AlumniDuplicateQueue`, a
+   * sign-in's one or a reading's backlog - ONCE per duplicate, never again): EVERY global admin is
+   * told - no one asked for it, so no one is excluded - by ONE push and ONE bell row for the whole
+   * batch, however many it holds (a backlog found at once is not a flood in every admin's bell). The
+   * row is keyed on the batch's first duplicate and follows ITS state (`BELL_ROW_GATE`); the live
+   * count carries the rest. Throws on a failed write: the internal caller keeps the notice owed and
+   * tells again at its next reading. Answers how many admins have the bell row.
    */
   async announceAlumniDuplicates(duplicateUuids: readonly string[]): Promise<number> {
-    let told = 0;
+    this.logger.log(`[ADMIN_QUEUES] ${duplicateUuids.length} Alumni duplicate(s) to announce`);
     try {
-      for (const [index, uuid] of duplicateUuids.entries()) {
-        const n = await this.announce('alumni-duplicates', uuid, null, index > 0);
-        told = Math.max(told, n);
-      }
-      return told;
+      return await this.announce('alumni-duplicates', duplicateUuids[0], null);
     } finally {
       await this.signal.changed({ queue: 'alumni-duplicates' });
     }
@@ -232,8 +223,7 @@ export class AdminQueuesService {
   private async announce(
     queue: AnnouncedQueue,
     itemId: string,
-    excludeId: string | null,
-    skipPush = false
+    excludeId: string | null
   ): Promise<number> {
     const { type, target } = ANNOUNCED[queue];
     const admins: { id: string }[] = await this.reports.manager.query(
@@ -254,7 +244,6 @@ export class AdminQueuesService {
         actorName: SYSTEM_ACTOR_NAME,
         text: '',
         pushData: { target },
-        ...(skipPush ? { skipPush } : {}),
       });
     } catch (err) {
       if (!(err instanceof NotificationPushFailedError)) throw err;

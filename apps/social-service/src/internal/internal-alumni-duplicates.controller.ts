@@ -28,28 +28,11 @@ export class InternalAlumniDuplicatesController {
   constructor(private readonly adminQueues: AdminQueuesService) {}
 
   /**
-   * An Alumni duplicate was FLAGGED, for the first time (`AlumniDuplicateQueue.reconcile`): every
-   * global admin gets the bell row and the push, which clears for all of them once one marks it for a
-   * merge. Answers how many admins have the bell row; a failure to write the rows is a 500 the
-   * caller logs at ERROR - the flag itself is saved and counted.
-   */
-  @Post('alumni-duplicate-flagged')
-  @HttpCode(200)
-  async flagged(
-    @Headers('x-internal-secret') secret: string | undefined,
-    @Body() body: { duplicateUuid?: string }
-  ): Promise<{ told: number }> {
-    assertInternalSecret(secret);
-    if (!body?.duplicateUuid || !UUID_RE.test(body.duplicateUuid)) {
-      this.logger.warn('[ALUMNI_QUEUE] flagged notice refused: malformed body');
-      throw new BadRequestException('duplicateUuid must be a uuid');
-    }
-    return { told: await this.adminQueues.announceAlumniDuplicate(body.duplicateUuid) };
-  }
-
-  /**
-   * A page reading flagged several Alumni duplicates (`AlumniDuplicateQueue.reconcile`): a bell row
-   * for each and ONE push for all, so a backlog found at once is never a burst on the admins' phones.
+   * Alumni duplicates were found (`AlumniDuplicateQueue`: a sign-in's one, a reading's backlog, a
+   * retry of a notice that was not confirmed): ONE push and ONE bell row to every global admin for the
+   * whole batch (`AdminQueuesService.announceAlumniDuplicates`), so a backlog found at once is
+   * never a burst on the admins' phones nor a flood in their bells. A failure to write the row is a
+   * 500 the caller logs at ERROR and tries again - its flags are saved and counted.
    */
   @Post('alumni-duplicates-found')
   @HttpCode(200)

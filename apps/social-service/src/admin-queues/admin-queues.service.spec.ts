@@ -129,10 +129,10 @@ describe('AdminQueuesService', () => {
       );
     });
 
-    it('tells EVERY global admin of a flagged Alumni duplicate - once, as the platform, with no name', async () => {
+    it('tells EVERY global admin of a found Alumni duplicate - once, as the platform, with no name', async () => {
       const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
-      expect(await service.announceAlumniDuplicate(duplicate)).toBe(2);
+      expect(await service.announceAlumniDuplicates([duplicate])).toBe(2);
       expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
       expect(notifications.createNotifications).toHaveBeenCalledWith({
         recipientIds: ['a1', 'a2'],
@@ -150,19 +150,28 @@ describe('AdminQueuesService', () => {
       expect(signal.changed).toHaveBeenCalledWith({ queue: 'alumni-duplicates' });
     });
 
-    it('a batch is one push: only the first row carries it, and the badges recount once', async () => {
-      const { service, notifications, signal } = make({ admins: ['a1'] });
+    it('a batch is ONE push and ONE bell row, keyed on its first duplicate: a backlog is no flood in every bell', async () => {
+      const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const ids = [
         '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10',
         '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11',
         '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12',
       ];
       await service.announceAlumniDuplicates(ids);
-      const calls = notifications.createNotifications.mock.calls.map(
-        (c) => c[0] as unknown as { postId: string; skipPush?: boolean }
-      );
-      expect(calls.map((c) => c.postId)).toEqual(ids);
-      expect(calls.map((c) => c.skipPush ?? false)).toEqual([false, true, true]);
+      expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
+      expect(notifications.createNotifications.mock.calls[0][0]).toMatchObject({
+        postId: ids[0],
+        recipientIds: ['a1', 'a2'],
+      });
+      expect(signal.changed).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failed write still tells the badges, and the failure reaches the caller to retry', async () => {
+      const { service, notifications, signal } = make({ admins: ['a1'] });
+      notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
+      await expect(
+        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
+      ).rejects.toThrow('db down');
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });
 

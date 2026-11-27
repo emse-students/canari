@@ -153,8 +153,8 @@ describe('AlumniMergeService', () => {
       ...r,
     }));
     const isOpen = (r: Row) => !r.completedAt;
-    /** The duplicates whose admin-queue flag a closing resolved (RESOLVE_DUPLICATE_FLAG_SQL). */
-    const flagsResolved: string[] = [];
+    /** The duplicates whose admin-queue flag a closing dropped (DROP_DUPLICATE_FLAG_SQL). */
+    const flagsDropped: string[] = [];
     const editor = {
       assertAvailable: jest.fn(() => ({ baseUrl: 'https://mc', token: 't' })),
       searchUsers: jest.fn(async (q: string) =>
@@ -187,8 +187,8 @@ describe('AlumniMergeService', () => {
       ),
     };
     const query = jest.fn(async (sql: string, params: unknown[] = []): Promise<unknown> => {
-      if (sql.includes('UPDATE alumni_duplicate_flags')) {
-        flagsResolved.push(params[0] as string);
+      if (sql.includes('DELETE FROM alumni_duplicate_flags')) {
+        flagsDropped.push(params[0] as string);
         return [];
       }
       if (sql.includes('FROM users')) {
@@ -280,7 +280,7 @@ describe('AlumniMergeService', () => {
       erasure as unknown as AccountErasureService,
       siteJobs as unknown as AlumniMergeSiteJobsService
     );
-    return { service, editor, erasure, rows, accounts, siteJobs, flagsResolved };
+    return { service, editor, erasure, rows, accounts, siteJobs, flagsDropped };
   }
 
   const holdingsAnswer = () =>
@@ -298,9 +298,21 @@ describe('AlumniMergeService', () => {
   });
 
   it('lists an Alumni-created account matching a CAS account, with what tells homonyms apart', async () => {
-    const stranger = person({ pk: 3, uuid: 'x', username: 'alumni-0002', name: 'Other One' });
+    // Same name, another promo: no name-and-promo match, but a candidate to attach it to by hand.
+    const late = person({
+      pk: 3,
+      uuid: 'x',
+      username: 'alumni-0002',
+      attributes: { profile: { cursus: [{ formation: 'ICM', promo: 1999 }] } },
+    });
+    // Nobody on the CAS side bears this name: no candidate, so no duplicate (lead's reading of D55).
+    const stranger = person({ pk: 4, uuid: 'y', username: 'alumni-0003', name: 'Other One' });
     const { service } = make({
-      accounts: { ...world(), x: { user: stranger, slugs: ['alumni'] } },
+      accounts: {
+        ...world(),
+        x: { user: late, slugs: ['alumni'] },
+        y: { user: stranger, slugs: ['alumni'] },
+      },
       canari: { [TARGET_UUID]: 'canari-target' },
     });
     expect(await service.listDuplicates()).toEqual([
@@ -315,7 +327,7 @@ describe('AlumniMergeService', () => {
           }),
         ],
       },
-      // D55: one that matches nobody is listed after, with no target, for a manual merge.
+      // D55: one with a candidate but no name-and-promo match is listed after, for a manual merge.
       { duplicate: expect.objectContaining({ uuid: 'x' }), targets: [] },
     ]);
   });
@@ -885,7 +897,7 @@ describe('AlumniMergeService', () => {
       expect(erasure.requestErasure).toHaveBeenCalledWith('canari-dup');
     });
 
-    it('resolves the admin-queue flag of the duplicate in the closing transaction, by EVERY path that completes a merge', async () => {
+    it('drops the admin-queue flag of the duplicate in the closing transaction, by EVERY path that completes a merge', async () => {
       const closing = (): Parameters<typeof make>[0] => ({
         accounts: merged(),
         canari: { [DUP_UUID]: 'canari-dup' },
@@ -894,34 +906,34 @@ describe('AlumniMergeService', () => {
       // The reconciler: a page reading finds the duplicate gone.
       const byReading = make(closing());
       await byReading.service.listOpenMerges();
-      expect(byReading.flagsResolved).toEqual([DUP_UUID]);
+      expect(byReading.flagsDropped).toEqual([DUP_UUID]);
       // MiConnect's push.
       const byPush = make(closing());
       await byPush.service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0');
-      expect(byPush.flagsResolved).toEqual([DUP_UUID]);
+      expect(byPush.flagsDropped).toEqual([DUP_UUID]);
       // A "Rattacher" over a duplicate MiConnect already merged.
       const byResume = make(closing());
       await expect(byResume.service.merge(DUP_UUID, TARGET_UUID, 'admin-1')).rejects.toBeInstanceOf(
         AlumniMergeAlreadyMergedError
       );
-      expect(byResume.flagsResolved).toEqual([DUP_UUID]);
+      expect(byResume.flagsDropped).toEqual([DUP_UUID]);
       // A row that left MiConnect unmarked and not merged is closed too: the duplicate is gone.
       const unmerged = make({ rows: [{ markedAt: null, ...subjects }] });
       await unmerged.service.listOpenMerges();
-      expect(unmerged.flagsResolved).toEqual([DUP_UUID]);
+      expect(unmerged.flagsDropped).toEqual([DUP_UUID]);
       // A replayed completion closes nothing, so it resolves nothing.
       expect(byPush.rows[0].completedAt).not.toBeNull();
       await byPush.service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0');
-      expect(byPush.flagsResolved).toEqual([DUP_UUID]);
+      expect(byPush.flagsDropped).toEqual([DUP_UUID]);
     });
 
-    it('a cancelled mark resolves no flag: the duplicate waits again', async () => {
-      const { service, flagsResolved } = make({
+    it('a cancelled mark drops no flag: the duplicate waits again', async () => {
+      const { service, flagsDropped } = make({
         accounts: world(),
         rows: [{ markedAt: new Date(), ...subjects }],
       });
       await service.cancel(DUP_UUID, 'admin-1');
-      expect(flagsResolved).toEqual([]);
+      expect(flagsDropped).toEqual([]);
     });
 
     it('lists a closed merge with its site states', async () => {

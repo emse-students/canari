@@ -155,6 +155,17 @@ maybe('account erasure queue against PostgreSQL', () => {
         [FLAG_OF(id), `mc-${id.slice(0, 8)}`]
       );
     }
+    // A merge CANCELLED earlier ties nothing: its duplicate waits again and is not the target's.
+    const CANCELLED_FLAG = '00000000-0000-4000-8000-000000000003';
+    await ds.query(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [
+      CANCELLED_FLAG,
+    ]);
+    await ds.query(
+      `INSERT INTO alumni_merges ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held,
+         "markedAt", "cancelledAt", "completedAt")
+       VALUES ('admin', $1, 'alumni-4', $2, '{}'::jsonb, now(), now(), now())`,
+      [CANCELLED_FLAG, `mc-${SUBJECT.slice(0, 8)}`]
+    );
     // The first-time helps both accounts have seen (migration 019).
     for (const id of [SUBJECT, OTHER]) {
       await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'welcome-tour')`, [id]);
@@ -201,6 +212,11 @@ maybe('account erasure queue against PostgreSQL', () => {
         `00000000-0000-4000-8000-000000000002`,
       ])
     ).toBe(1);
+    expect(
+      await count(`alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [
+        '00000000-0000-4000-8000-000000000003',
+      ])
+    ).toBe(1);
     // The closed merge is gone; the open one stays with the target blanked, so the duplicate's own
     // erasure still runs once MiConnect merges.
     const merges = (dup: string) => count(`alumni_merges WHERE "duplicateUuid" = $1`, [dup]);
@@ -213,8 +229,9 @@ maybe('account erasure queue against PostgreSQL', () => {
         `open-${SUBJECT.slice(0, 8)}`,
       ])
     ).toBe(1);
+    // (its closed, its open and the one the queue-flag fixture added)
     expect(await count(`alumni_merges WHERE "targetUuid" = $1`, [`mc-${OTHER.slice(0, 8)}`])).toBe(
-      2
+      3
     );
     // ...and the other account untouched, its history kept without the erased admin's id.
     expect(await count(`users WHERE id = $1`, [OTHER])).toBe(1);

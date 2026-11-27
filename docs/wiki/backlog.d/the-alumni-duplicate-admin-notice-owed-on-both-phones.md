@@ -5,7 +5,7 @@ target: 1.8.3
 Built: the Alumni duplicates are the fourth admin queue
 ([admin](../frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)): a push
 ("Doublon Alumni à rattacher", no name) and a bell row to every global admin ONCE when an account an
-Alumni sign-in created is one an admin can attach (matching an existing account or not, D55), a live count on the Administration entry and on the
+Alumni sign-in created has an existing account an admin can attach it to (a search by its name finds an eligible one, homonyms included: the lead's reading of D55, [decisions](../decisions/owner-decisions-of-2026-11-27.md)), a live count on the Administration entry and on the
 `/admin/alumni-duplicates` row, the item cleared for every admin as soon as one marks it for a merge.
 The native side (`social_admin_alumni_duplicate` on Android and iOS, the `admin-alumni-duplicates`
 deep-link host) is NOT compiled by the gates that ran here: a `1.8.3` pre-release is what compiles it.

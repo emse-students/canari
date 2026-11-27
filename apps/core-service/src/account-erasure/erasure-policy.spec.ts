@@ -23,6 +23,8 @@ describe('erasure policy', () => {
     // As the duplicate (its own uuid) and as the target of a merge that names the duplicate.
     expect(sql).toContain('"miconnectUuid" FROM users WHERE id = $1');
     expect(sql).toContain('"targetUserId" = $1');
+    // A CANCELLED merge ties nothing: its duplicate waits again and is not the erased target's.
+    expect(sql).toContain('"cancelledAt" IS NULL');
   });
 
   it("erases core's own part in-process and reaches the three services by their internal DELETE", () => {

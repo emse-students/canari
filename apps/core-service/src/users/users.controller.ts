@@ -668,28 +668,47 @@ export class UsersController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Get('admin/alumni-duplicates')
   async listAlumniDuplicates() {
-    const readStartedAt = new Date();
-    const duplicates = await this.alumniMerge.listDuplicates();
-    // The admins' queue converges on what this page lists - but only what an admin can ACT ON
-    // (`duplicateShapeRefusal`: links exactly [alumni]; since D55 a homonym or a differently spelled
-    // name is attached by hand, so it is flagged too, and nothing is merged by itself). A duplicate
-    // accepted is flagged (and told, once), one no longer listed is resolved if the reading began
-    // after it was flagged (`AlumniDuplicateQueue`). Never throws.
-    const accepted: string[] = [];
+    // The reading's start is the DATABASE's clock, the one that writes `flaggedAt`. If it cannot be
+    // read the page is answered and the queue waits for the next reading (said at error).
+    let readStartedAt: Date;
     try {
-      for (const d of duplicates) {
-        if (await this.alumniMerge.isFlaggable(d.duplicate.uuid)) accepted.push(d.duplicate.uuid);
-      }
+      readStartedAt = await this.alumniQueue.databaseNow();
     } catch (err) {
-      // An unread duplicate is not "no longer listed": reconciling on a partial answer would resolve
-      // its flag. The page is answered, the queue waits for the next reading.
       this.logger.error(
-        `[ALUMNI_QUEUE] the duplicates were NOT checked, the queue is not reconciled: ${String(err)}`
+        `[ALUMNI_QUEUE] the reading's start was NOT read, the queue is not reconciled: ${String(err)}`
       );
-      return duplicates;
+      return this.alumniMerge.listDuplicates();
     }
-    await this.alumniQueue.reconcile(accepted, readStartedAt);
+    // What the page lists IS what the queue holds as pending (`AlumniMergeService.listDuplicates`:
+    // an account with a candidate to attach to, not dismissed, not in an open merge): the admins'
+    // queue converges on it - a listed duplicate is flagged (and told, once), a flag no longer listed
+    // is resolved if the reading began after it was flagged (`AlumniDuplicateQueue`). A failed
+    // reading is not "no longer listed": it throws before any reconcile. Never throws after it.
+    const duplicates = await this.alumniMerge.listDuplicates();
+    await this.alumniQueue.reconcile(
+      duplicates.map((d) => d.duplicate.uuid),
+      readStartedAt
+    );
     return duplicates;
+  }
+
+  /**
+   * "Pas un doublon": the admins' TERMINAL answer for an Alumni-created account that is not a
+   * duplicate - closed for every admin for good, never flagged again by a later reading or sign-in.
+   * Global admin only; the write is durable (`alumni_duplicate_flags.dismissedAt`).
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/alumni-duplicates/:duplicateUuid/dismiss')
+  @HttpCode(204)
+  async dismissAlumniDuplicate(
+    @Param('duplicateUuid') duplicateUuid: string,
+    @Headers('x-user-id') actorId: string
+  ): Promise<void> {
+    if (!UUID_RE.test(duplicateUuid)) throw new BadRequestException('duplicateUuid must be a uuid');
+    this.logger.log(
+      `[ALUMNI_QUEUE] "not a duplicate" by ${actorId?.slice(0, 8)} for ${duplicateUuid.slice(0, 8)}`
+    );
+    await this.alumniQueue.dismiss(duplicateUuid);
   }
 
   /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */
