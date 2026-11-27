@@ -46,7 +46,7 @@ function shell(opts: { fullScreen: boolean; banner: boolean }) {
     <div class="app-shell">
       <div class="app-banner-column">
         <span role="status" class="sr-only"></span>
-        ${opts.banner ? '<div data-app-banner role="status">Alumni</div>' : ''}
+        ${opts.banner ? '<div data-app-banner role="status">A banner</div>' : ''}
       </div>
       <div class="app-content-row"></div>
     </div>`;

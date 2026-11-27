@@ -2283,7 +2283,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   --safe-area-inset-top: 0px;
 }
 
-/* THE BANNERS ON A FULL-SCREEN PLACE (Mi 9T, 2026-11-27: the Alumni banner drew over the clock on
+/* THE BANNERS ON A FULL-SCREEN PLACE (Mi 9T, 2026-11-27: an info banner drew over the clock on
    `/games/play`). The shell gave its status-bar padding back above, and the banner column sits in the
    shell, so a banner was painted from y = 0. WHEN THE COLUMN HOLDS A VISIBLE BANNER (`data-app-banner`,
    set by `Banner` and `CallBanner`; the sr-only `ConnectionAnnouncer` is always in the column and is
