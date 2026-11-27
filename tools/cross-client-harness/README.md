@@ -1231,6 +1231,26 @@ signs in as the owner**, so ADM-5 and ADM-7 run in a group of W2's and W4's. The
 recorded, only its length. Judgements in `admitrows.mjs`, pinned by `archive/admit-selftest.mjs`.
 
 ```sh
+bun archive/admitcard.mjs          # ADM-11 (Refuser) and ADM-12 (Accepter), W6 and W9, one revocation
+bun archive/admitcard.mjs --dry    # the subject account's devices, nothing changed
+```
+
+**THE CARD FOR A SEAT THAT IS NOT AN ASK IS READ ON A BUILT STATE, NOT ON A HOPED-FOR ONE** (slice 2 of
+[the admission fix-forward](../../docs/wiki/protocols/admission-fix-forward.md)). S15 revoked a
+member's devices three times through the product and never saw the card: the new device was added
+as a further device by a member whose tree still held the revoked leaf, or it entered by its own
+external commit first. `archive/admitcard.mjs` orders the three facts instead: W6 creates two groups
+with the fifth account (W9, its ONLY seat - the row revokes every device of that account, so no other
+row may rest on it) and the peer; W9's device is revoked and the run waits until no device of the
+person is active in either group while the roster seat stands (`noLeafPremise`); then a request-stage
+fault (`ADMIT_CARD_FAULT`, `status-unsent 503`, `keepBody`) keeps the NEW device's external commit
+from the server, so its fallback asks a member. W6 must show the card, raised on the `seat` branch
+(`askLinesFor`, `seatRemovedLines`); Refuser must remove the seat and the kept commit, sent again, be refused
+`403 NOT_A_MEMBER`; Accepter must bring the person back. It reads the MEMBER side only: the fault
+does what the emission side (slice 3) will make the client do. Judgements in `admitrows.mjs`
+(`ADMIT_CARD_ROWS`), pinned by `archive/admit-selftest.mjs`.
+
+```sh
 bun archive/devrows.mjs --row DEV-1|DEV-2|DEV-3|DEV-4|DEV-6|DUP-7   # browsers; mints on W3 (and W6)
 bun archive/devrows.mjs --row DEV-7 --variant cold|opened|stale     # A1 swiped away
 ```

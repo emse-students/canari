@@ -82,7 +82,7 @@ and says what it proves.
 | # | Slice | Proves | Version |
 | --- | --- | --- | --- |
 | 1 | **The entrant's own word**, classified at the throw (built 2026-11-25, below) | which legitimate path produces each entry, and how often; which member `new-person` rows a client at this build explains | 1.8.1 |
-| 2 | **The member side, read and floored** - the card for a seat that is not an ask (built 2026-11-19); its rig reading on a constructed state; `minClientVersion` raised to it once both stores serve it | every client allowed to connect can answer an ask, so an asker never waits for ever | 1.8.1 |
+| 2 | **The member side, read and floored** - the card for a seat that is not an ask (built 2026-11-19); its rig reading on a constructed state ([read 2026-11-26](#slice-2s-reading-on-a-built-state-2026-11-26)); `minClientVersion` raised to it once both stores serve it | every client allowed to connect can answer an ask, so an asker never waits for ever | 1.8.1 |
 | 3 | **The emission side**: `no-leaf-of-user` in a group conversation asks a member, never self-joins ([entry](../backlog.d/p1-admission-fix-forward-the-emission-side.md)); then its floor | the gate's TEST; after 14 days at its floor, the gate's MEASUREMENT | 1.9.0 |
 | 4 | **The unfreeze path**, designed here first ([entry](../backlog.d/p1-admission-fix-forward-unfreeze-and-never-drop.md)) | a refusal is lifted by a person or a fact, per account | 1.10.0 |
 | 5 | **Never drop frames, the floor at the refusing build, the re-arm** behind the gate ([same entry](../backlog.d/p1-admission-fix-forward-unfreeze-and-never-drop.md)) | the end state | 1.10.0 |
@@ -172,3 +172,44 @@ and never retried (the members' rule), so an unpaired member row is "not reporte
 legitimate", until slice 3's floor makes the legitimate emission impossible by construction. And a
 client that is not ours says what it wants: the entrant's word sizes the honest paths, it never
 excuses an entry.
+
+## Slice 2's reading on a built state (2026-11-26)
+
+**Why the state is built.** S15 (2026-11-20, [device-verification](../device-verification.md#the-readings-of-2026-11-20-s15-171-alpha7-content-free-push-on-the-mi-9t-the-miconnect-terms-stage-the-admission-card-not-reached))
+revoked a member's devices three times through the product and never saw the card: the new device was
+added as a FURTHER device by a member whose tree still held the revoked leaf, or it entered by its own
+external commit before anyone was asked. Both are the rule working - the card's precondition is a
+person with no leaf AND no automatic Add - so the reading needs that state made on purpose, each fact
+read before the next step is taken. `tools/cross-client-harness/archive/admitcard.mjs` does it (rows
+ADM-11 and ADM-12, judges in `admitrows.mjs`, [the rig's README](../../../tools/cross-client-harness/README.md)):
+
+1. W6 (an owner device) creates two group conversations with the fifth test account (W9, its only
+   seat) and the peer; the person's one device holds a leaf in both.
+2. W9's origin is wiped and the account signs in again WITHOUT unlocking: a session cannot revoke its
+   own device (`409 OWN_DEVICE`), and the web client mints and registers its device only past the PIN,
+   so this session revokes the old device while nothing of a new one exists to be added.
+3. The run waits until no device of the person is active in either group while the roster seat stands
+   (`noLeafPremise`; a member device's stray-leaf removal commits it).
+4. The PIN is entered: a new device enrols. A request-stage fault answers its external commit `503`
+   before the server sees it (and keeps the bytes), so it falls back to asking a member. This is what
+   slice 3 will make the client do by itself; the reading is of the MEMBER side only.
+
+**What was read** (dev, clients `1.8.2-alpha.9`; runs 7, 9, 10 and 11 of the evening, all reaching the
+same facts; run 11, the final one, judged both rows PASS-DIRTY - every own assertion and every invariant held, and the dirt is info and debug narration of the two web seats the rig has not catalogued, no warning or error. Run 10 failed only the no-unexplained-refusal invariant, on the identity provider answering `503` while it restarted during the sign-in):
+
+| Row | Read |
+| --- | --- |
+| ADM-11 | W6 showed the card in the group ("X veut rejoindre la conversation") and logged the ask (`[JOIN_REQUEST] ... asks to join`); Refuser was answered `removed` (the member's line: "declined - their seat, not an invitation-link ask, is removed"); the server's roster no longer held the person and no device of theirs was left; the kept external commit, sent again from the person's device, was refused `403 NOT_A_MEMBER` (`committer_not_member`), with the gate's `REJECT` line |
+| ADM-12 | W6 showed the card; Accepter admitted the person (an active device seat), their new device listed the conversation and read the message sent after, once |
+
+**What it showed beside the question.** The ask is raised for EVERY group the person holds a seat
+with no leaf in, at once: the member's first pass raised it for the earlier runs' groups too (eight
+in one sweep), which is the rule (a seat that is not an ask, absent from a confirmed tree), not a
+leak. And a navigation in the instant after a first PIN reloads an enrolment in flight: the next
+document finds a device id with no saved state and rotates it (`[MLS] Rotating device identity
+(saved state lost ...)`, then the abandoned id retired server-side) - the rig now waits for the new
+device's KeyPackage before leaving the page.
+
+**What it does not read.** The client's own door: the external commit is held back by the fault, so
+nothing here says the client stops building it - that is slice 3's TEST. Nor a phone: the card is the
+same component on every platform, and the reading owed was the rig's.
