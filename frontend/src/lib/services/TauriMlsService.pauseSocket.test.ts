@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', async () => ({
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 
-import { TauriMlsService } from './TauriMlsService';
+import { PAGE_LEAVING_CLOSE_CODE, TauriMlsService } from './TauriMlsService';
 import { flushMacrotask } from '../../test/flush';
 
 /**
@@ -188,7 +188,13 @@ describe('TauriMlsService.pauseSocket', () => {
     await flush();
 
     expect(unlisten).toHaveBeenCalledTimes(1);
-    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    // The release is a close coded "going away": it is what mutes the plugin's reader, so the
+    // server's answer is not forwarded into this dead page (`Couldn't find callback id`).
+    expect(ws.send).toHaveBeenLastCalledWith({
+      type: 'Close',
+      data: { code: PAGE_LEAVING_CLOSE_CODE, reason: expect.any(String) },
+    });
+    expect(ws.disconnect).not.toHaveBeenCalled();
     expect(svc.ws).toBeNull();
   });
 
@@ -214,8 +220,9 @@ describe('TauriMlsService.pauseSocket', () => {
 
     window.dispatchEvent(new Event('pagehide'));
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    // The `disconnect` frame, then the going-away close - both called, neither awaited.
+    expect(ws.send).toHaveBeenCalledTimes(2);
+    expect(ws.disconnect).not.toHaveBeenCalled();
     // No second listener: the release's watcher has nobody to report to.
     expect(ws.addListener.mock.calls.length).toBe(listenersBefore);
   });

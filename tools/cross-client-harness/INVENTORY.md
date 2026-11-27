@@ -155,11 +155,12 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-96 scripts.
+97 scripts.
 
 | script | what it is |
 |---|---|
 | `archive/admit.mjs` | THE ADMISSION ROWS OF THE 1.4.1 CAMPAIGN - a group link, the ask it raises, and who may answer it. |
+| `archive/admitcard.mjs` | ADM-11 AND ADM-12 - THE CARD FOR A SEAT THAT IS NOT AN ASK, read on a state built for it. |
 | `archive/big.mjs` | THE LARGE-GROUP ROWS OF THE 1.4.1 CAMPAIGN - every seat the rig has, in one conversation. |
 | `archive/callweb.mjs` | CALL-WEB-1..8 - IN-APP 1:1 AUDIO CALLS BETWEEN TWO BROWSERS, ONE ROW PER PROCESS. |
 | `archive/cc.mjs` | CC-1..4 OF THE 1.4.1 CAMPAIGN - two commits built on the SAME epoch, released together. |
@@ -394,4 +395,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-333 scripts in total.
+334 scripts in total.
