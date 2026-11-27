@@ -1,6 +1,6 @@
 ## P3 - Three Welcome paths still end in a conversation row or skip a key-group step (2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 What wrote and then probed a key group's conversation row is fixed
 ([channel-encryption](../protocols/channel-encryption.md#a-key-groups-welcome-wrote-a-conversation-row-and-discovery-asked-its-roster---fixed-2026-10-25)).

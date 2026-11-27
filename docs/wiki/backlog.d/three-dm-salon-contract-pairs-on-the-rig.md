@@ -1,6 +1,6 @@
 ## P3 - three DM/salon contract pairs owed on the rig (user, 2026-09-27: one contract for a salon and a conversation; re-read 2026-11-11)
 
-target: 1.10.0
+target: 1.8.4
 
 The same row run on a DM and on a salon, plaintext asserted on both: right after a membership
 change, a sender's first message, a new device. Only `NOTIF-2` / `NOTIF-19` exists as such a pair

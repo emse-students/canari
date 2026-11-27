@@ -1,6 +1,6 @@
 ## P3 - the SFU runs SIX webrtc majors it has never placed a call on (2026-08-27; re-read 2026-11-11: video through the SFU is what is left)
 
-target: 1.10.0
+target: 1.9.2
 
 Production calls do not touch the SFU: 1:1 audio and video run peer to peer with Cloudflare TURN
 (`calls_mode` reads `audio_video` since `1.5.2`), and the School drops the outbound UDP the SFU needs,

@@ -1,6 +1,6 @@
 ## P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven
 
-target: 1.9.0
+target: 1.8.5
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

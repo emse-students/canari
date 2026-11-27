@@ -1,6 +1,6 @@
 ## P3 - one global search bar, beside or instead of the posts search
 
-target: 1.9.0
+target: 1.10.0
 
 *2026-11-25: asked by the owner from feedback he received ([decisions](../decisions/owner-decisions-of-2026-11-25.md), item 4).* People want ONE search across:
 

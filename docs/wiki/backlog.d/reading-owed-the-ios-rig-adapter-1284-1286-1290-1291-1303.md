@@ -1,6 +1,6 @@
 ## The iOS rig adapter (#1284-#1286, #1290, #1291, #1303): no board row has a verdict on the iPhone yet
 
-target: 1.10.0
+target: 1.8.4
 
 **What is built:** the iOS rig adapter (#1284-#1286, #1290, #1291, #1303)
 

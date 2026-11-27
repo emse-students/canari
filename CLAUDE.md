@@ -173,6 +173,7 @@ escapes.
 - **THE CHARTER COMES FIRST** ([docs/principes.md](docs/principes.md), owner, 2026-11-10): every feature decision that touches a principle CITES it in its wiki decision, and a feature that breaks one is refused or reworked, never shipped with a note.
   The principles are ORDERED and the first wins in a conflict (1 your messages are yours, 2 the essential is never lost, 3 your attention is not for sale, then independence, community, kindness, simplicity, durability).
 - **The user's standing directives, verbatim:** *"le probleme doit etre architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les tailles"*; *"pense factorisation, proprete, simplicite"*.
+- **A READING THE LEAD CAN TAKE IS TAKEN THE DAY ITS BUILD IS INSTALLED, NEVER LEFT OWED** (owner, 2026-11-27: *"Avoir des lectures en attente est foncièrement mauvais si tu as le pouvoir de les faire"*): the bench phones, the test accounts, dev and the web are the lead's; only what needs the owner's own hand or hardware the bench lacks stays owed ([decisions](docs/wiki/decisions/owner-decisions-of-2026-11-27.md)).
 - **A REFUSAL IS NEVER A ROUTING DECISION TO A HUMAN QUEUE** (user, 2026-08-31: *"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, *"pour avoir un projet qui peut 'vivre tout seul'"*) - it is a statement that a gate is MISSING, and it must NAME the test that would lift it. A queue nobody drains is worse than the merge it prevented.
 - **A FALLBACK IS A SIGNAL, NEVER A PATH.** Never add one: reaching one means the primary path failed and the fix belongs THERE. So it is logged at a level that ACCUSES, and its rate is measured against the population before its name is believed.
 - **A status code is an ANSWER, a transport failure is not.** Only a 401/403 may log a user out, and `navigator.onLine` never proves reachability (a captive portal reports `true`).
@@ -209,6 +210,6 @@ slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md
 **[plan](docs/wiki/plan.md) is the order** - every open entry under its version, P1 first then the oldest, generated
 (`bun tools/backlog-plan/plan.mjs`, run before reading it) from the `target:` line of each [backlog.d/](docs/wiki/backlog.d/README.md) file (owner, 2026-11-13). Nothing is
 listed here a second time. `1.8.3` is the next tier (`1.8.2` shipped 2026-11-26): every entry owed only a reading sits in it, as
-the [checklist](docs/wiki/plan.md#readings-owed), to be taken on its pre-releases; `1.8.3` and the blocks after it follow
-the owner's order of 2026-11-19 (reliability first, [decisions](docs/wiki/decisions/owner-decisions-of-2026-11-19.md)),
-no new feature unless asked.
+the [checklist](docs/wiki/plan.md#readings-owed), TAKEN the day its pre-release is installed; ONE STABLE A WEEK through
+`1.8.7`, `1.9.0`-`1.9.2`, `1.10.0` (~Jan 26), everything finished in January (owner, 2026-11-27, [roadmap](docs/wiki/roadmap.md)),
+reliability first (owner, 2026-11-19, [decisions](docs/wiki/decisions/owner-decisions-of-2026-11-19.md)).

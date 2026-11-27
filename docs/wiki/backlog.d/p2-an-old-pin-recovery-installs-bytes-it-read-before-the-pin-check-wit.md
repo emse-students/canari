@@ -1,6 +1,6 @@
 ## P2 - An old-PIN recovery installs bytes it read before the PIN check, with no compare under the lock (review of #2782, 2026-10-31)
 
-target: 1.10.0
+target: 1.9.0
 
 The recovery reads `mls.bin` early (`sessionAuth.ts`, `loadMlsState(userId)`), checks the PIN, then
 hands those bytes to the native login, which installs them via `mark_foreground_manager_loading`

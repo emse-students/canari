@@ -1,6 +1,6 @@
 ## The Lydia enrolment and cashier chantier - decided 2026-10-30, lots 1-4 shipped, what is left (audited 2026-11-19)
 
-target: 1.10.0
+target: 1.9.1
 
 **Shipped:** lot 1 (signed outgoing calls, the key captured at creation, the webhook, re-run refused, existing Businesses migrated), lot 2 (the step-by-step screen, the Responsable, readiness from the webhook and from error 5 / 2701, the enrolment-in-flight marker `lydiaEnrolmentStartedAt`, migration 118), lot 3 (the Tresorier and Vendeur cashiers: adding, changing a role and the Responsable's number change are ON since 1.7.1, owner 2026-11-18) and lot 4 (total and partial refunds, migration 120). Mechanism and every decision of the chantier (the three roles, the sealed phone, `lydia_cashiers`, register entry C23, the revoke counted only on "0 rights"): [payments](../frontend/modules/payments.md#enrolment-goes-through-canari-and-only-through-it-2026-10-23), [the cashiers](../frontend/modules/payments.md#the-cashiers-enrolment-lot-3), [refunds](../frontend/modules/payments.md#refunds-from-canari-enrolment-lot-4), [lydia-api](../lydia-api.md).
 

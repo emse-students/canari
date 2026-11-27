@@ -1,6 +1,6 @@
 ## P3 - the foreground send does not name its messageId, so an adopted orphan can still be queued twice
 
-target: 1.10.0
+target: 1.9.2
 
 Since migration 048 the server stores one message per `(group, sender, device, messageId)` and
 answers a repeat with the first copy's receive time

@@ -1,6 +1,6 @@
 ## P3 - Bump authentik when a release ships Debian's libbrotli1 1.1.0-2+deb13u1 (2026-10-24)
 
-target: 1.9.0
+target: 1.8.5
 
 Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlisted by purl for
 `ghcr.io/goauthentik/server:2026.8.5`, the newest authentik release, which this repository does not

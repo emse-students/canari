@@ -1,6 +1,6 @@
 ## P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk
 
-target: 1.10.0
+target: 1.9.1
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

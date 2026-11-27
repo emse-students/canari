@@ -1,6 +1,6 @@
 ## P2 - a post's owner cannot act on another person's comment under it
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md), decision 5): the author of
 a post - or the `POST_AS_ASSO` holders, for an association's post - may HIDE, never delete, another

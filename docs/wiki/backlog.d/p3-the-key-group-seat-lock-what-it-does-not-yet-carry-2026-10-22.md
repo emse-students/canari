@@ -1,6 +1,6 @@
 ## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-target: 1.9.0
+target: 1.8.7
 
 Every seat-creating write (a commit's committer and its admits, a key group's publisher) and every
 eviction share one per-group advisory lock, and a seat claim is the group's own generation,

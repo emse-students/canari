@@ -1,6 +1,6 @@
 ## P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)
 
-target: 1.9.0
+target: 1.9.1
 
 A tier key derived from its label is kept unique by an association-level advisory lock around the
 sibling read and the insert ([cotisations](../cotisations.md#a-new-tiers-key-is-derived-from-its-label-server-2026-10-26)).

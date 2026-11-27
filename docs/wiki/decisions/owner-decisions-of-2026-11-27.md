@@ -41,3 +41,18 @@ Recorded so no question answered here is asked again. All three ship in `1.8.3`,
    - **Where it is written:** the register of processing (MiConnect, section 3) and the page itself
      (sections 6 and 8); Canari's own privacy policy does not describe MiConnect's terms and is
      unchanged.
+
+## A reading the lead can take is taken, not left owed (owner, 2026-11-27)
+
+*"Et les lectures, qu'est-ce que tu attends pour les faire ? Avoir des lectures en attente est
+foncièrement mauvais si tu as le pouvoir de les faire (ce qui est quasi tout le temps le cas). Note le"*
+
+- **A reading owed is a defect of the plan, not a state.** The bench phones (the Mi 9T and the
+  iPhone 12), every test account and its PIN, dev, the web and production read-only are the lead's:
+  a reading they can take is taken as soon as the build it reads is installed - the same day as the
+  pre-release, by agents working in parallel (one per phone, one for the web and the servers).
+- **Only a reading that truly needs what the lead does not hold stays owed**: the owner's own phone
+  or account, a person's real hand where no test account can stand in, hardware the bench lacks. Its
+  entry says which, in one line.
+- **A pre-release is followed by its readings, not by a wait.** The plan's "Readings owed" checklist
+  is emptied before the next pre-release is cut whenever the bench can do it.

@@ -1,6 +1,6 @@
 ## P3 - Device-local rows written as `system` are relayed into other members' timelines (review of #2412, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 The acting device now writes its own visible notice under the frame's id
 ([history-reconciliation](../protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)).

@@ -1,6 +1,6 @@
 ## The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)
 
-target: 1.9.0
+target: 1.9.1
 
 **What.** [moderation-authority](../moderation-authority.md) is the one copy of who may do what to
 whom. Nothing checks it against the code, so it would drift. Write it as ONE table-driven spec per

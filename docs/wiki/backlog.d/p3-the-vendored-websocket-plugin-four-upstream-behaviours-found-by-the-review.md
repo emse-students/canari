@@ -1,6 +1,6 @@
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
-target: 1.10.0
+target: 1.9.1
 
 All four are upstream behaviour kept by the vendored copy (`frontend/src-tauri/patches/tauri-plugin-websocket/src/lib.rs`), none introduced by the happy-eyeballs patch.
 

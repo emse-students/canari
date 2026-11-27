@@ -1,6 +1,6 @@
 ## P2 - the Android background/resume sequence hangs on a visibility edge that never fires (owed ONE device run)
 
-target: 1.10.0
+target: 1.9.2
 
 `handleVisibilityChange`, the `mls_foreground_heartbeat` interval and the resume reload must move
 TOGETHER onto the native edge, after one Mi 9T run (background past the 30 s guard, send, return, read

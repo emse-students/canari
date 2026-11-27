@@ -1,6 +1,6 @@
 ## P2 - a seek ahead in a streamed video fetches every segment before its target
 
-target: 1.10.0
+target: 1.9.1
 
 **What happens.** A stream appends its segments in order (`segmentedMediaStream.ts`, the fetch loop
 in `openConsumer`). A seek past what is fetched is a demand (`wanted`), and the loop runs on until

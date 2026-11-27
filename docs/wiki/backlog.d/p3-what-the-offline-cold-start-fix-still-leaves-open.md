@@ -1,6 +1,6 @@
 ## P3 - what the offline cold start fix still leaves open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15; re-read 2026-11-11)
 
-target: 1.10.0
+target: 1.9.2
 
 Three of the four items from
 [offline-and-weak-network section 15](../frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15)
