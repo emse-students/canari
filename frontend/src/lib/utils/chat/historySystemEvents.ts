@@ -380,6 +380,10 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       }
     } else if (parsed.system.event === 'memberAdded') {
       systemContent = await visibleNoticeContent('memberAdded', data, senderNorm);
+    } else if (parsed.system.event === 'historyGranted') {
+      // The notice only, as live (`historyGrant.ts`): a replayed grant is never ASKED from - it was
+      // live once, and the newcomer's devices that read it then asked.
+      systemContent = await visibleNoticeContent('historyGranted', data, senderNorm);
     } else if (parsed.system.event === 'channel_invitation' && data.channelId) {
       // Mirrors the live handler: both sides render the same card, the inviter's copy without a
       // Join button (`invitedName` is the discriminator). Replayed rather than ignored because an

@@ -87,6 +87,13 @@
      * call to place again, in this conversation. Absent where no call can be placed from here.
      */
     onCallBack?: () => void;
+    /**
+     * Whether a `memberAdded` notice offers "Envoyer l'historique des messages" for this added user
+     * (`canOfferHistoryTo`, the newcomer predicate). Absent where no grant can be made from here.
+     */
+    offerHistoryTo?: (userId: string) => boolean;
+    /** Opens the history grant for `userId` (`HistoryGrantDialog`). */
+    onSendHistory?: (userId: string) => void;
     /** IDs of pinned messages in this conversation. */
     pinnedIds?: string[];
     /** Timestamp (ms) when the current conversation was opened; messages newer than this animate in. */
@@ -141,6 +148,8 @@
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     onCallBack,
+    offerHistoryTo,
+    onSendHistory,
     pinnedIds = [],
     switchTime,
     currentUserId = '',
@@ -279,6 +288,8 @@
             onForward={onForward ? () => onForward?.(msg) : undefined}
             {onJoinChannel}
             {onCallBack}
+            {offerHistoryTo}
+            {onSendHistory}
             {onReact}
             {currentUserId}
             shouldAnimate={messageTime(msg) > switchTime}
@@ -369,6 +380,8 @@
               senderHeaderShown={showSender}
               {onJoinChannel}
               {onCallBack}
+              {offerHistoryTo}
+              {onSendHistory}
               onReply={onReply && !msg.awaitingServerId ? () => onReply?.(msg) : undefined}
               onForward={onForward && !msg.awaitingServerId ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}
