@@ -10,6 +10,7 @@ import {
   type ConversationNotificationLevel,
 } from './conversationLevel';
 import { Log } from '$lib/utils/Log';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The shape of a category id: what an id this build does not know must look like to be kept. */
@@ -56,11 +57,19 @@ export function toNotificationPreferencesWire(
   };
 }
 
+/** What {@link parseNotificationPreferences} is reading, as its line names it. */
+export type PreferencesOrigin = 'the server answer' | 'the device copy';
+
 /**
  * Validates an answer (or the device's copy of one): an unknown field is ignored, a malformed one
  * reads as empty, never thrown.
+ *
+ * @param origin - Which of the two it is, so a line about it says so.
  */
-export function parseNotificationPreferences(raw: unknown): NotificationPreferencesSnapshot {
+export function parseNotificationPreferences(
+  raw: unknown,
+  origin: PreferencesOrigin
+): NotificationPreferencesSnapshot {
   const body = (raw && typeof raw === 'object' ? raw : {}) as {
     disabled?: unknown;
     enabled?: unknown;
@@ -74,7 +83,9 @@ export function parseNotificationPreferences(raw: unknown): NotificationPreferen
       typeof id === 'string' && !isNotificationCategory(id) && CATEGORY_ID_RE.test(id)
   );
   if (unknownDisabled.length) {
-    Log.d(`notificationPreferences.fetch keeps ids this build does not know: ${unknownDisabled}`);
+    Log.d(
+      `notificationPreferences: ${origin} keeps ids this build does not know: ${unknownDisabled}`
+    );
   }
   const groupLevels: Record<string, ConversationNotificationLevel> = {};
   if (body.groupLevels && typeof body.groupLevels === 'object') {
@@ -97,4 +108,33 @@ export function parseNotificationPreferences(raw: unknown): NotificationPreferen
     .filter(isNotificationCategory)
     .filter((c) => OPT_IN_CATEGORIES.includes(c));
   return { disabled, unknownDisabled, pushEnabled, groupLevels, groupCalls };
+}
+
+/**
+ * Erases the device copies of the notification settings of every account but `keep` - by PREFIX, so
+ * a copy goes even when the store never learnt whose it was (a sign-out during a sign-in in flight,
+ * or behind the PIN gate after a cold start, where no account was bound). Called by every sign-out
+ * (`clearUserLocally`) and by a change of account (`saveUserLocally`). Never throws; a failure is said.
+ *
+ * @param keep - The account whose copy stays (the one signing in), if any.
+ * @returns How many copies were erased.
+ */
+export function eraseNotificationPreferenceCopies(keep?: string): number {
+  const prefix = ACCOUNT_KEY.notificationPreferences('');
+  const kept = keep === undefined ? null : ACCOUNT_KEY.notificationPreferences(keep);
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix) && key !== kept) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch (e) {
+    console.warn('[NOTIF_PREF] the device copies of the settings could not be erased', e);
+    return 0;
+  }
+  if (keys.length > 0) {
+    console.log(`[NOTIF_PREF] ${keys.length} device copy(ies) of the settings erased`);
+  }
+  return keys.length;
 }

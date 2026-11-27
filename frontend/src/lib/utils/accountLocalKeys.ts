@@ -71,6 +71,7 @@ export const ACCOUNT_KEY = {
   /**
    * `notificationPreferences.svelte.ts`: the last notification settings the server ANSWERED for the
    * account, in the read's wire shape - decided on when a later read fails or the session is offline.
+   * Called with `''` it is the prefix every sign-out erases.
    */
   notificationPreferences: (userId: string) => `canari_notification_preferences:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */

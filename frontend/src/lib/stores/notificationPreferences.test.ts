@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   fetchNotificationPreferences: vi.fn(),
+  fetchChannelNotificationLevel: vi.fn(),
   saveDisabledCategories: vi.fn(),
   saveGroupNotificationLevel: vi.fn(),
   saveGroupCallsAllowed: vi.fn(),
@@ -10,10 +11,18 @@ const api = vi.hoisted(() => ({
 vi.mock('$lib/notifications/preferencesApi', () => api);
 
 import { notificationPreferences } from './notificationPreferences.svelte';
+import { eraseNotificationPreferenceCopies } from '$lib/notifications/preferencesSnapshot';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
+
+/** The account every test starts signed in as: the store reads and decides only for a bound account. */
+const A = 'account-a';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   notificationPreferences.reset();
+  notificationPreferences.bind(A, { offline: false });
   api.saveDisabledCategories.mockResolvedValue(undefined);
   api.saveGroupNotificationLevel.mockResolvedValue(undefined);
   api.saveGroupCallsAllowed.mockResolvedValue(undefined);
@@ -278,6 +287,97 @@ describe('notificationPreferences.answered - a decision waits for the first answ
     expect(await waiting).toEqual({ kind: 'superseded' });
     expect(notificationPreferences.loaded).toBe(false);
     expect(notificationPreferences.groupLevel(G)).toBe('all');
+  });
+
+  it('reads nothing and decides nothing with no account bound', async () => {
+    notificationPreferences.reset();
+    expect(await notificationPreferences.answered()).toEqual({ kind: 'superseded' });
+    expect(await notificationPreferences.load()).toBe(false);
+    expect(api.fetchNotificationPreferences).not.toHaveBeenCalled();
+  });
+
+  it('is answered by the new session when the SAME account signs out and in while it waits', async () => {
+    let resolveOld!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValueOnce(new Promise((r) => (resolveOld = r)));
+    const waiting = notificationPreferences.answered();
+    notificationPreferences.reset();
+    notificationPreferences.bind(A, { offline: false });
+    api.fetchNotificationPreferences.mockResolvedValueOnce(answer({ [G]: 'none' }));
+    resolveOld(answer({}));
+    expect(await waiting).toEqual({ kind: 'answered' });
+    expect(notificationPreferences.groupLevel(G)).toBe('none');
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it('is superseded when ANOTHER account signs in while it waits', async () => {
+    let resolve!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const waiting = notificationPreferences.answered();
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-b', { offline: true });
+    resolve(answer({ [G]: 'none' }));
+    expect(await waiting).toEqual({ kind: 'superseded' });
+    expect(notificationPreferences.groupLevel(G)).toBe('all');
+  });
+
+  it('lifts the latch when the app comes back on screen - a 5xx is no disconnection', async () => {
+    api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('HTTP 503'));
+    expect(await notificationPreferences.answered()).toEqual({
+      kind: 'unanswered',
+      source: 'default',
+    });
+    api.fetchNotificationPreferences.mockResolvedValueOnce(answer({ [G]: 'none' }));
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } }));
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+    expect(await notificationPreferences.answered()).toEqual({ kind: 'answered' });
+    expect(notificationPreferences.groupLevel(G)).toBe('none');
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it('a save answering after its account signed out writes no copy, and reverts nothing, under the next', async () => {
+    let settle!: () => void;
+    api.saveGroupNotificationLevel.mockReturnValueOnce(new Promise<void>((r) => (settle = r)));
+    const saving = notificationPreferences.setGroupLevel(G, 'none');
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-b', { offline: true });
+    settle();
+    await saving;
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('account-b'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences(A))).toBeNull();
+
+    let refuse!: (e: Error) => void;
+    api.saveGroupCallsAllowed.mockReturnValueOnce(new Promise<void>((_, r) => (refuse = r)));
+    const refused = notificationPreferences.setGroupCallsAllowed(G, false);
+    notificationPreferences.reset();
+    notificationPreferences.bind(A, { offline: true });
+    await notificationPreferences.setGroupCallsAllowed(G, false);
+    refuse(new Error('500'));
+    expect(await refused).toBe(false);
+    // The next session's own choice stands: the leaving session's refusal reverted nothing of it.
+    expect(notificationPreferences.callsAllowed(G)).toBe(false);
+  });
+
+  it('drops a salon level that answers after its account signed out', async () => {
+    let resolve!: (v: unknown) => void;
+    api.fetchChannelNotificationLevel.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const reading = notificationPreferences.loadChannelLevel('channel_abc');
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-b', { offline: true });
+    resolve('none');
+    expect(await reading).toBe(false);
+    expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
+  });
+
+  it('erases every account copy by prefix, keeping only the one asked', () => {
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('x'), '{}');
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('y'), '{}');
+    localStorage.setItem('unrelated', '1');
+    expect(eraseNotificationPreferenceCopies('y')).toBe(1);
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('y'))).toBe('{}');
+    expect(eraseNotificationPreferenceCopies()).toBe(1);
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('y'))).toBeNull();
+    expect(localStorage.getItem('unrelated')).toBe('1');
   });
 
   it('applies the account copy of the last answer at sign-in, and never another account copy', async () => {

@@ -3959,9 +3959,14 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): P
         '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
       );
       void ctx.retireMls(stopping);
+      // The login BOUND the notification settings to the leaving account before its first frame
+      // could land (`bind`): unbound here too, or a frame it still decides is taken on that set.
+      notificationPreferences.reset();
       return Promise.resolve();
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    // Nothing is bound behind a PIN gate after a cold start, but a reset is free and leaves no doubt.
+    notificationPreferences.reset();
     // AN EXPIRED SESSION ENDED WITH A FINAL CHECKPOINT (`attemptReconnectImpl`) that may still be
     // sealing through this client: it is destroyed only once that write settled.
     // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state

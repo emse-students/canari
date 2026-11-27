@@ -20,7 +20,7 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
   Log.d('notificationPreferences.fetch');
   const res = await apiFetch(`${deliveryUrl()}${PATH}`);
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
-  return parseNotificationPreferences(await res.json());
+  return parseNotificationPreferences(await res.json(), 'the server answer');
 }
 
 /**

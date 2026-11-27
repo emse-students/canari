@@ -17,8 +17,9 @@
  * ({@link notificationPreferences.bind}); only with no copy, the account default - every category ON,
  * no PUSH of an opt-in category (`OPT_IN_CATEGORIES`, owner's "Deux niveaux" of 2026-11-11).
  * {@link notificationPreferences.source} says which. A failed read is LATCHED: nothing reads again
- * until connectivity comes back, the next sign-in, or an explicit load (the settings screen) - never
- * once per frame - and an offline session starts no read at all.
+ * until connectivity comes back, the app comes back on screen, the next sign-in, or an explicit load
+ * (the settings screen) - never once per frame, never on a clock - and an offline session starts no
+ * read at all.
  */
 import {
   fetchChannelNotificationLevel,
@@ -39,6 +40,7 @@ import {
   type NotificationPreferencesSnapshot,
 } from '$lib/notifications/preferencesSnapshot';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { onAppScreenChange } from '$lib/utils/appForeground';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
@@ -75,9 +77,11 @@ let loadInFlight: Promise<boolean> | null = null;
 /** Names the read {@link loadInFlight} holds, so only that read clears it when it settles. */
 let loadSeq = 0;
 /**
- * WHOSE set this is, as a number: bumped at every sign-in ({@link notificationPreferences.bind}) and
- * sign-out ({@link notificationPreferences.reset}). A read that answers under another one is dropped,
- * and a decision parked across one is {@link PreferencesAnswer superseded}.
+ * WHICH SESSION the set is, as a number: bumped at every sign-in ({@link notificationPreferences.bind})
+ * and sign-out ({@link notificationPreferences.reset}). A read or a save that answers under another
+ * one writes nothing - not into the set, not into a device copy. A parked DECISION is keyed on the
+ * {@link account} instead (see {@link PreferencesAnswer}): the same account signed in again is still
+ * its recipient.
  */
 let generation = 0;
 /** The account the set belongs to, whose device copy is read and written; null when signed out. */
@@ -85,8 +89,11 @@ let account: string | null = null;
 /** An offline session reads nothing until it is promoted (`promoteOfflineSession` calls `load`). */
 let offline = false;
 /**
- * A read FAILED, and nothing reads again until connectivity returns, the next sign-in or an explicit
- * {@link notificationPreferences.load}. Holds the unsubscribe of the reconnect listener that lifts it.
+ * A read FAILED, and nothing reads again until connectivity returns, the app comes back on screen,
+ * the next sign-in or an explicit {@link notificationPreferences.load}. Holds the unsubscribe of the
+ * listeners that lift it. An HTTP error is an answer, not a disconnection, so connectivity alone
+ * would keep a 5xx latched until a sign-in; the next resume is the user coming back, an EVENT - no
+ * timer decides when to ask again.
  */
 let failedLatch: (() => void) | null = null;
 
@@ -101,8 +108,9 @@ export type PreferencesSource = 'answered' | 'persisted' | 'default';
  * - `answered`: the server's set is in memory;
  * - `unanswered`: no answer this session (the read failed, is latched, or the session is offline) -
  *   the set in memory is `source`, `persisted` or `default`;
- * - `superseded`: the account signed out (or another signed in) while the caller waited - the set in
- *   memory is not the caller's account's, and the caller decides NOTHING.
+ * - `superseded`: no account is signed in, or another one is, than the one the caller asked for -
+ *   the set in memory is not that account's, and the caller decides NOTHING. The SAME account signed
+ *   in again is not superseded: the caller is answered by that new session instead.
  */
 export type PreferencesAnswer =
   | { kind: 'answered' }
@@ -146,7 +154,7 @@ function persist(): void {
 function readPersisted(userId: string): NotificationPreferencesSnapshot | null {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY.notificationPreferences(userId));
-    return raw === null ? null : parseNotificationPreferences(JSON.parse(raw));
+    return raw === null ? null : parseNotificationPreferences(JSON.parse(raw), 'the device copy');
   } catch (e) {
     console.warn('[NOTIF_PREF] the device copy of the settings is unreadable - not used', e);
     return null;
@@ -156,6 +164,36 @@ function readPersisted(userId: string): NotificationPreferencesSnapshot | null {
 function clearLatch(): void {
   failedLatch?.();
   failedLatch = null;
+}
+
+/** Latches a failed read until one of the events that lift it (see {@link failedLatch}). */
+function latch(): void {
+  clearLatch();
+  const lift = (why: string) => {
+    if (!failedLatch) return;
+    clearLatch();
+    console.log(`[NOTIF_PREF] ${why} - the settings are read again`);
+    void notificationPreferences.load();
+  };
+  const offReconnect = connectivity.onReconnect(() => lift('connectivity returned'));
+  const offScreen = onAppScreenChange((onScreen) => {
+    if (onScreen) lift('the app is back on screen');
+  });
+  failedLatch = () => {
+    offReconnect();
+    offScreen();
+  };
+}
+
+/**
+ * Whether the account a save started under is still the one in memory: a save that answers after a
+ * sign-out landed for the leaving account on the server, and neither its copy nor its revert may
+ * touch the next account's set.
+ */
+function stillSession(started: number, what: string): boolean {
+  if (started === generation) return true;
+  console.log(`[NOTIF_PREF] ${what} answered after its account signed out - not applied here`);
+  return false;
 }
 
 const sameSet = <T>(a: readonly T[], b: readonly T[]) =>
@@ -179,12 +217,14 @@ function commit(
   const wasPushed = pushEnabled.includes(category);
   disabled = nextDisabled;
   pushEnabled = nextPush;
+  const started = generation;
   const write = writeChain.then(async () => {
     try {
       await saveDisabledCategories(disabled, unknownDisabled, pushEnabled);
-      persist();
+      if (stillSession(started, what)) persist();
       return true;
     } catch (e) {
+      if (!stillSession(started, what)) return false;
       Log.d(`notificationPreferences.${what} failed - reverting`, e);
       disabled = wasOff
         ? disabled.includes(category)
@@ -255,6 +295,11 @@ export const notificationPreferences = {
    */
   load(): Promise<boolean> {
     if (loadInFlight) return loadInFlight;
+    // Signed out (or not yet bound): there is nobody to read the settings of.
+    if (account === null) {
+      console.log('[NOTIF_PREF] no account bound - the settings are not read');
+      return Promise.resolve(false);
+    }
     offline = false;
     clearLatch();
     const started = generation;
@@ -276,14 +321,10 @@ export const notificationPreferences = {
       } catch (e) {
         if (started !== generation) return false;
         console.warn(
-          `[NOTIF_PREF] the settings read failed - deciding on the ${source} set, no read again until connectivity returns`,
+          `[NOTIF_PREF] the settings read failed - deciding on the ${source} set, no read again until connectivity returns or the app comes back on screen`,
           e
         );
-        clearLatch();
-        failedLatch = connectivity.onReconnect(() => {
-          clearLatch();
-          void notificationPreferences.load();
-        });
+        latch();
         return false;
       } finally {
         if (seq === loadSeq) loadInFlight = null;
@@ -298,9 +339,12 @@ export const notificationPreferences = {
     return source;
   },
 
-  /** The current generation, captured by a decision it parks and compared when it resumes. */
-  get session(): number {
-    return generation;
+  /**
+   * The account signed in, null when none: captured by a decision it parks and compared when it
+   * resumes - another account (or none) means the decision is not this set's to take.
+   */
+  get account(): string | null {
+    return account;
   },
 
   /**
@@ -314,16 +358,24 @@ export const notificationPreferences = {
    * under the default: a group at "Aucune" rang the iPhone (1.8.3-alpha.1, 2026-11-27).
    */
   answered(): Promise<PreferencesAnswer> {
-    const session = generation;
+    const asker = account;
+    // Signed out: no read is started for nobody, and nothing is decided.
+    if (asker === null) return Promise.resolve({ kind: 'superseded' });
+    const started = generation;
     const outcome = (): PreferencesAnswer =>
-      session !== generation
+      account !== asker
         ? { kind: 'superseded' }
         : source === 'answered'
           ? { kind: 'answered' }
           : { kind: 'unanswered', source };
     if (loaded) return Promise.resolve(outcome());
     const read = loadInFlight ?? (offline || failedLatch ? null : this.load());
-    return read ? read.then(outcome) : Promise.resolve(outcome());
+    if (!read) return Promise.resolve(outcome());
+    return read.then(() =>
+      // The same account signed out and in again while it waited: the read it joined belonged to
+      // the session that ended, so it is answered by the new one's.
+      account === asker && generation !== started ? this.answered() : outcome()
+    );
   },
 
   /**
@@ -386,11 +438,14 @@ export const notificationPreferences = {
       groupLevels = next;
     };
     apply(level);
+    const started = generation;
+    const what = `setGroupLevel(${groupId}, ${level})`;
     try {
       await saveGroupNotificationLevel(groupId, level);
-      persist();
+      if (stillSession(started, what)) persist();
       return true;
     } catch (e) {
+      if (!stillSession(started, what)) return false;
       Log.d(`notificationPreferences.setGroupLevel(${groupId}, ${level}) failed - reverting`, e);
       apply(before);
       return false;
@@ -416,11 +471,14 @@ export const notificationPreferences = {
     const before = groupCalls[groupId];
     if (had && before === allowed) return true;
     groupCalls = { ...groupCalls, [groupId]: allowed };
+    const started = generation;
+    const what = `setGroupCallsAllowed(${groupId}, ${allowed})`;
     try {
       await saveGroupCallsAllowed(groupId, allowed);
-      persist();
+      if (stillSession(started, what)) persist();
       return true;
     } catch (e) {
+      if (!stillSession(started, what)) return false;
       Log.d(
         `notificationPreferences.setGroupCallsAllowed(${groupId}, ${allowed}) failed - reverting`,
         e
@@ -454,9 +512,13 @@ export const notificationPreferences = {
     const key = channelKey(channelId);
     const pending = channelReads.get(key);
     if (pending) return pending;
-    const read = (async () => {
+    const started = generation;
+    // On the next microtask, so the entry below is set before the read can settle.
+    const read: Promise<boolean> = Promise.resolve().then(async () => {
       try {
         const level = await fetchChannelNotificationLevel(key);
+        // Like `load`: an answer for the account that signed out is never written into the next one's.
+        if (!stillSession(started, `loadChannelLevel(${key})`)) return false;
         if (!isConversationNotificationLevel(level)) {
           throw new Error(`unknown salon notification level "${String(level)}"`);
         }
@@ -466,9 +528,9 @@ export const notificationPreferences = {
         Log.d(`notificationPreferences.loadChannelLevel(${key}) failed`, e);
         return false;
       } finally {
-        channelReads.delete(key);
+        if (channelReads.get(key) === read) channelReads.delete(key);
       }
-    })();
+    });
     channelReads.set(key, read);
     return read;
   },

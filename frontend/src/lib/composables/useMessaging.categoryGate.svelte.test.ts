@@ -85,7 +85,10 @@ describe('a switched-off category raises no local notification', () => {
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
@@ -145,7 +148,10 @@ describe("a private conversation's level gates the notification this client rais
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
@@ -298,8 +304,30 @@ describe("a private conversation's level gates the notification this client rais
       expect(notificationPreferences.loaded).toBe(false);
     });
 
-    it("never decides account A's frame under account B's settings", async () => {
+    it('still decides the frame when the SAME account signs out and in again meanwhile', async () => {
+      let staleAnswer!: (snapshot: unknown) => void;
+      api.fetchNotificationPreferences.mockReturnValueOnce(
+        new Promise((resolve) => {
+          staleAnswer = resolve;
+        })
+      );
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w7' });
+      await flushMacrotask();
+      notificationPreferences.reset();
       notificationPreferences.bind('account-a', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        groupLevels: {},
+        groupCalls: {},
+      });
+      staleAnswer({ disabled: [], groupLevels: {}, groupCalls: {} });
+      // Its recipient is still the one signed in: answered by the new session's read, then raised.
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
+    });
+
+    it("never decides account A's frame under account B's settings", async () => {
       const answerA = deferredPreferences();
       const { ctx, sendSystemNotification } = makeContext('conv-1');
       await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w6' });
@@ -404,7 +432,10 @@ describe("a salon's own level gates the notification this client raises", () => 
       groupLevels: {},
       groupCalls: {},
     });
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
@@ -484,6 +515,28 @@ describe("a salon's own level gates the notification this client raises", () => 
     await messaging.addMessageToChat(PEER, 'three', 'channel_abc', ctx, { messageId: 's7' });
     await flushMacrotask();
     expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1);
+  });
+
+  // THE SALON'S READ IS A SECOND WAIT, and the account is captured BEFORE it: captured after, it was
+  // whoever had signed in meanwhile, and A's frame was decided on B's set (review of #4207).
+  it("never decides A's salon frame under B, nor writes A's salon level into B's", async () => {
+    await notificationPreferences.load();
+    let answerSalon!: (level: string) => void;
+    api.fetchChannelNotificationLevel.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answerSalon = resolve;
+      })
+    );
+    const { ctx, sendSystemNotification } = makeContext('channel_abc');
+    await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 's10' });
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1));
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-b', { offline: false });
+    await notificationPreferences.load();
+    answerSalon('all');
+    await flushMacrotask();
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+    expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
   });
 
   it('raises as all when the level cannot be read, and reads again on the next frame', async () => {

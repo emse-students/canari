@@ -36,6 +36,8 @@ const switchOf = (category: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   notificationPreferences.reset();
+  // The screen is reached only signed in: the sign-in bound the store before it could open.
+  notificationPreferences.bind('signed-in-account', { offline: false });
   api.fetchNotificationPreferences.mockResolvedValue({
     disabled: [],
     unknownDisabled: [],
