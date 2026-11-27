@@ -111,6 +111,7 @@
   "auth_pin_step_resetting": "Resetting PIN…",
   "auth_server_unreachable": "Server unreachable. Check your connection, then try again.",
   "user_search_placeholder": "Search for a user…",
+  "picker_homonym_detail": "Class of {promo}",
   "user_unknown_label": "Unknown user",
   "user_deleted_label": "Deleted account",
   "user_selector_remove_label": "Remove this user",
