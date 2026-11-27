@@ -244,9 +244,7 @@ async fn connect<R: Runtime>(
     // `client_async_with_config` on a plain stream otherwise).
     let tcp_connect = window.state::<TcpConnector>().0.clone();
     let (host, port) = request_host_port(&request)?;
-    let stream = tcp_connect(host, port)
-        .await
-        .map_err(Error::Connect)?;
+    let stream = tcp_connect(host, port).await.map_err(Error::Connect)?;
     #[cfg(any(
         feature = "rustls-tls",
         feature = "rustls-tls-native-roots",
@@ -354,7 +352,9 @@ fn request_host_port(
     let uri = request.uri();
     let host = uri
         .host()
-        .ok_or(tokio_tungstenite::tungstenite::Error::Url(UrlError::NoHostName))?;
+        .ok_or(tokio_tungstenite::tungstenite::Error::Url(
+            UrlError::NoHostName,
+        ))?;
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
