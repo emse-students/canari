@@ -14,6 +14,7 @@
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { Search, SlidersHorizontal, X } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -105,6 +106,12 @@
     }
     void loadAssociations();
     void loadSuggestions(me);
+    // The universal search's "Filtrer dans l'annuaire" arrives with the words it was showing.
+    const arrived = page.url.searchParams.get('q')?.trim() ?? '';
+    if (arrived) {
+      queryDraft = arrived;
+      void runSearch({ ...filters, query: arrived });
+    }
   });
 
   async function loadAssociations() {

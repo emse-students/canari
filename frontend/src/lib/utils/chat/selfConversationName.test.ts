@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getLocale, setLocale } from '$lib/paraglide/runtime';
 import {
   matchesSelfConversationAlias,
-  selfConversationMatchesQuery,
+  selfConversationLabels,
   selfConversationTitle,
 } from './conversations';
+import { rankByLabels } from '$lib/search/rank';
 import { missingPeerNameIds, shareCandidates } from '$lib/sharing/shareDestinations';
 import { notificationGroupName } from '$lib/utils/nativeNotification';
 
@@ -24,6 +25,11 @@ describe('the title of "Mes notes" - the own name and a localized suffix', () =>
   });
 });
 
+/** Whether the universal search's Discussions section finds "Mes notes" titled `title` for `q`. */
+function selfFound(title: string, q: string): boolean {
+  return rankByLabels([title], q, (t) => selfConversationLabels(t)).length === 1;
+}
+
 describe('the search of "Mes notes"', () => {
   it.each(['fr', 'en'] as const)(
     'still answers to the old words in %s, accents folded',
@@ -31,7 +37,7 @@ describe('the search of "Mes notes"', () => {
       setLocale(locale, { reload: false });
       for (const q of ['notes', 'Mes notes', 'my notes', 'NOTE']) {
         expect(matchesSelfConversationAlias(q)).toBe(true);
-        expect(selfConversationMatchesQuery('Camille DUPONT (Notes)', '', q)).toBe(true);
+        expect(selfFound('Camille DUPONT (Notes)', q)).toBe(true);
       }
       expect(matchesSelfConversationAlias('budget')).toBe(false);
       expect(matchesSelfConversationAlias('  ')).toBe(false);
@@ -39,9 +45,9 @@ describe('the search of "Mes notes"', () => {
   );
 
   it('is found by any part of the own name, like a person', () => {
-    expect(selfConversationMatchesQuery('Camille DUPONT (Notes)', '', 'camille')).toBe(true);
-    expect(selfConversationMatchesQuery('Camille DUPONT (Notes)', '', 'dupont')).toBe(true);
-    expect(selfConversationMatchesQuery('Camille DUPONT (Notes)', '', 'zzz')).toBe(false);
+    expect(selfFound('Camille DUPONT (Notes)', 'camille')).toBe(true);
+    expect(selfFound('Camille DUPONT (Notes)', 'dupont')).toBe(true);
+    expect(selfFound('Camille DUPONT (Notes)', 'zzz')).toBe(false);
   });
 });
 

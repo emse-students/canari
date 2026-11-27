@@ -2,145 +2,39 @@
   import { resolve } from '$app/paths';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { getStorage, type ConversationMeta } from '$lib/db';
-  import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
-  import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
-  import {
-    conversationRecency,
-    deriveConversationIdentity,
-    resolveConversationListPresentation,
-  } from '$lib/utils/chat/conversations';
   import ConversationTile from '$lib/components/chat/ConversationTile.svelte';
   import { MessageCircle, ChevronRight, LoaderCircle } from '@lucide/svelte';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
-  import { SvelteMap } from 'svelte/reactivity';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-  import { isHiddenFromList, loadHiddenUnopenable } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
-  import { previewContentOf } from '$lib/utils/chat/listPreview';
+  import {
+    mergeHeldConversations,
+    readStoredConversations,
+    type HeldConversation,
+  } from '$lib/utils/chat/heldConversations';
+  import { requestConversationOpening } from '$lib/utils/chat/pendingChatOpening';
   import { m } from '$lib/paraglide/messages';
 
-  interface ConvItem {
-    meta: ConversationMeta;
-    contactId: string;
-    displayName: string;
-    /** See `ConversationListPresentation.displayNameResolved` - false means it is a placeholder. */
-    displayNameResolved: boolean;
-    conversationType: 'direct' | 'group' | 'self';
-    isReady: boolean;
-    unreadCount: number;
-    imageMediaId: string | null;
-    lastMessageContent?: string;
-    /** Newest message time (ms), for the tile's relative time. */
-    lastActivityAt?: number;
-  }
+  /** The panel's ceiling: the twenty most recent conversations. */
+  const PANEL_ROWS = 20;
 
-  let idbItems = $state<ConvItem[]>([]);
+  let idbItems = $state<HeldConversation[]>([]);
   let idbLoading = $state(true);
 
-  function buildItemFromMeta(meta: ConversationMeta, uid: string): ConvItem {
-    const identity = deriveConversationIdentity(meta.name, uid, meta.id);
-    const pres = resolveConversationListPresentation(
-      {
-        id: meta.id,
-        name: meta.name,
-        contactName: identity.contactName,
-        conversationType: identity.conversationType,
-        directPeerId: identity.directPeerId,
-        metaName: meta.name,
-      },
-      uid
-    );
-    return {
-      meta,
-      contactId: pres.contactId,
-      displayName: pres.displayName,
-      displayNameResolved: pres.displayNameResolved,
-      conversationType: pres.conversationType,
-      isReady: meta.lifecycle === 'active',
-      unreadCount: 0,
-      imageMediaId: null,
-    };
-  }
-
-  function buildItemFromLive(
-    key: string,
-    conv: Conversation,
-    uid: string,
-    baseline?: ConvItem
-  ): ConvItem {
-    const pres = resolveConversationListPresentation(
-      {
-        id: conv.id,
-        name: conv.name,
-        contactName: conv.contactName,
-        conversationType: conv.conversationType,
-        directPeerId: conv.directPeerId,
-        metaName: baseline?.meta.name,
-        // ONLY A 1:1's PREVIOUS LABEL IS A FALLBACK. A group's baseline label may be a COMPUTED one
-        // (the generic word, drawn before its tree was read): fed back in as a name it would win
-        // over the members' first names for the whole session. `metaName` already carries the
-        // stored name of a named group.
-        fallbackDisplayName:
-          baseline?.conversationType === 'direct' ? baseline.displayName : undefined,
-      },
-      uid
-    );
-    return {
-      meta: {
-        id: key,
-        name: conv.name,
-        lifecycle: conv.lifecycle,
-        updatedAt: conversationRecency(conv) || (baseline?.meta.updatedAt ?? 0),
-        awaitingAdmission: conv.awaitingAdmission === true,
-      },
-      contactId: pres.contactId,
-      displayName: pres.displayName,
-      displayNameResolved: pres.displayNameResolved,
-      conversationType: pres.conversationType,
-      isReady: conv.lifecycle === 'active',
-      unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
-      imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
-      // Only device lines loaded: the baseline's preview, never an empty row.
-      lastMessageContent:
-        (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
-        baseline?.lastMessageContent,
-      lastActivityAt:
-        conv.messages?.length > 0 ? conversationRecency(conv) : baseline?.lastActivityAt,
-    };
-  }
-
   /**
-   * Merge the IndexedDB baseline with the live globalConvs map.
-   *
-   * The baseline only seeds the list before the live map is authoritative (avoids a flash on
-   * a cold /posts load). Once conversations have been restored, the live map is the sole
-   * source of membership, so deletions disappear immediately instead of being resurrected
-   * from the stale onMount snapshot.
+   * The stored rows merged with the live map (`heldConversations.ts`, the one rule the universal
+   * search's Discussions section reads too): the stored baseline only seeds the list before the live
+   * map is authoritative, so a cold /posts load does not flash empty and a deletion is not resurrected.
    */
   const displayItems = $derived.by(() => {
     const uid = globalSession.userId ?? getSavedUserId() ?? '';
     if (!uid) return [];
-
-    const liveAuthoritative = globalSession.isLoggedIn && globalConvs.conversationsRestored;
-    const byId = new SvelteMap<string, ConvItem>();
-
-    if (!liveAuthoritative) {
-      for (const item of idbItems) {
-        byId.set(item.meta.id, item);
-      }
-    }
-
-    if (globalSession.isLoggedIn) {
-      for (const [key, conv] of globalConvs.conversations.entries()) {
-        if (isChannelConversationId(key) || isChannelConversationId(conv.id)) continue;
-        const baseline = byId.get(key);
-        byId.set(key, buildItemFromLive(key, conv, uid, baseline));
-      }
-    }
-
-    return [...byId.values()].sort((a, b) => b.meta.updatedAt - a.meta.updatedAt).slice(0, 20);
+    return mergeHeldConversations({
+      stored: idbItems,
+      live: globalSession.isLoggedIn ? globalConvs.conversations.entries() : null,
+      uid,
+      liveAuthoritative: globalSession.isLoggedIn && globalConvs.conversationsRestored,
+    }).slice(0, PANEL_ROWS);
   });
 
   const isLoading = $derived(idbLoading && displayItems.length === 0);
@@ -151,38 +45,8 @@
       idbLoading = false;
       return;
     }
-    // A KILL BEFORE `clearAuth()` LEAVES THE SAVED USER AT A DELETED ACCOUNT, and this panel runs
-    // with no login: opening its store would re-create `CanariDB_<id>` behind the owed wipe.
-    if (isDeletedAccountHere(uid)) {
-      console.warn(
-        `[POSTS] ${uid.slice(0, 8)} was deleted from this device - its stored conversations are not opened`
-      );
-      idbLoading = false;
-      return;
-    }
     try {
-      // ASK THE RUNTIME WHICH STORE THIS DEVICE HAS. This used to build an `IndexedDbStorage`
-      // directly, which is the web backend: on a phone, where the real message store is SQLite, it
-      // read an unrelated database and CREATED it by opening it. A Pixel 6a was measured on
-      // 2026-08-28 holding 5.9 MB of `CanariDB_<userId>` that nothing on that platform deletes, so
-      // the wrong store was also a store a revoked device kept.
-      const storage = await getStorage(uid);
-      const convos = await storage.getConversations();
-      // No `.sort()` here: `getConversations` answers most-recently-updated first, on both
-      // backends, and `db/conversationOrder.test.ts` pins it. This panel used to re-sort because the
-      // web backend did not keep that promise - which is fixed at the store, so the compensation
-      // went with it rather than being left as a second copy of the ordering rule.
-      loadHiddenUnopenable(uid);
-      idbItems = convos
-        .filter((meta) => !isChannelConversationId(meta.id))
-        .filter((meta) => !isHiddenFromList(meta.id, meta.lifecycle))
-        .slice(0, 20)
-        .map((meta) => buildItemFromMeta(meta, uid));
-      // IT DOES NOT CLOSE, DELIBERATELY, AND ADDING A `close()` HERE WOULD BREAK THE LIVE SESSION.
-      // `SqliteStorage.close()` closes the plugin's POOL for that path, and the pool is shared with
-      // the chat session running behind this page - a reader would be tearing down the writer's
-      // handle. The web backend has the opposite shape and its own connection, so the honest answer
-      // is that the lifetime belongs to whoever opened the session, not to this panel.
+      idbItems = (await readStoredConversations(uid)).slice(0, PANEL_ROWS);
     } catch (e) {
       // A reader that fails silently is a panel that renders empty and says nothing, which reads as
       // "no conversations" - the one answer it must not invent.
@@ -193,7 +57,7 @@
   });
 
   function navigateToConversation(metaId: string) {
-    sessionStorage.setItem('canari_pending_contact', metaId);
+    requestConversationOpening(metaId, sessionStorage);
     void goto(resolve('/chat'));
   }
 </script>

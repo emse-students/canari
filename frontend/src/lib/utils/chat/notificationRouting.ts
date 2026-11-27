@@ -117,7 +117,15 @@ export function landingAfterRefresh(input: {
  */
 export async function openInvitedChannel(channelId: string): Promise<void> {
   if (!channelId) return;
-  const channelConversationId = `channel_${channelId}`;
+  await openChannelConversation(`channel_${channelId}`);
+}
+
+/**
+ * Opens a salon by its conversation id (`channel_<uuid>`) from a page outside the communities tab:
+ * the landing is published, then the route that shows it is reached (the universal search, an
+ * invitation).
+ */
+export async function openChannelConversation(channelConversationId: string): Promise<void> {
   notifNav.navigate(channelConversationId);
   await goto(resolve(chatDeepLinkRoute(channelConversationId)));
 }

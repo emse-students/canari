@@ -10,6 +10,7 @@
  * Refresh token → HttpOnly cookie set by the backend (never accessible to JS).
  */
 
+import { discardLocalMessageIndex } from '$lib/search/localIndexRegistry';
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import type { AccountLiveness } from '$lib/utils/accountLocalWipe';
 import { forgetDeletedAccountOnSignIn } from '$lib/utils/deletedAccountMarker';
@@ -1549,6 +1550,9 @@ async function clearAuthUnderway(options: {
   // And the forms' edits this device kept for a save that has not landed: the next account must
   // neither see nor send them (owner, 2026-11-08).
   void eraseFormDraftCopies(leavingUserId, 'signed out');
+  // And the universal search's decrypted message index, held in memory while a search is open: the
+  // next account must never search the last one's messages (`search/localIndexRegistry.ts`).
+  discardLocalMessageIndex('signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;

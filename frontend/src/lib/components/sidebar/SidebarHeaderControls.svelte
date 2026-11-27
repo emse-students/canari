@@ -1,19 +1,16 @@
 <script lang="ts">
   import { Plus, X, Search, Shield } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import { m } from '$lib/paraglide/messages';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   interface Props {
     /** Which sidebar tab is currently active. */
     activeSidebarTab: 'discussions' | 'channels';
-    /** Current search filter string. */
-    searchQuery: string;
     /** Whether the sidebar is rendered inside a slide-over drawer. */
     drawerMode?: boolean;
     /** Callback to close the drawer when in drawer mode. */
     onCloseDrawer?: () => void;
-    /** Callback fired when the search input changes. */
-    onSearchQueryChange: (value: string) => void;
     /** Callback to open the new chat / new channel modal. */
     onOpenNewChat: () => void;
     /** Callback to open the community admin modal (channels tab only). */
@@ -22,10 +19,8 @@
 
   let {
     activeSidebarTab,
-    searchQuery,
     drawerMode = false,
     onCloseDrawer,
-    onSearchQueryChange,
     onOpenNewChat,
     onOpenCommunityAdmin,
   }: Props = $props();
@@ -33,16 +28,21 @@
 
 <div class="bg-cn-surface px-4 py-3">
   <div class="flex items-center gap-2">
-    <div class="relative flex-1">
-      <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
-      <input
-        type="text"
-        value={searchQuery}
-        oninput={(e) => onSearchQueryChange((e.target as HTMLInputElement).value)}
-        placeholder={m.chat_search_placeholder()}
-        class="bg-control-fill text-text-main placeholder:text-text-muted focus:ring-accent/40 h-10 w-full rounded-full border-0 pr-4 pl-10 text-sm outline-none focus:ring-2"
-      />
-    </div>
+    <!-- NO FILTER FIELD HERE ANY MORE (owner, 2026-11-26: ONE search for the whole app, its bar on
+         the home page). Its Discussions section finds a conversation by its name AND by the words of
+         its messages, on this device; the magnifier leads there, as the phone's header does. -->
+    <h2 class="text-text-main min-w-0 flex-1 truncate text-base font-bold">
+      {activeSidebarTab === 'channels' ? m.search_section_communities() : m.nav_chat_label()}
+    </h2>
+    <a
+      href={resolve('/posts?search=1')}
+      class="ui-icon-button text-text-main bg-cn-surface rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
+      title={m.search_label()}
+      aria-label={m.search_label()}
+      data-sidebar-search-link
+    >
+      <Search size={16} />
+    </a>
 
     <button
       use:guideAnchor={'chat.new'}

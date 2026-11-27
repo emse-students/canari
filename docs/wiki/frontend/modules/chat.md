@@ -4684,7 +4684,7 @@ campaign's SEARCH-5 was written to record exactly that, and PASSED by asserting 
 | --- | --- |
 | the in-conversation matcher (`ChatArea.svelte`), the local-store one (`MainChatPage.svelte`), the store search (`useConversations.svelte.ts`) | `foldForSearch` on BOTH sides |
 | the highlighter (`splitWithHighlight`, `chat/messageDisplay.ts`) | `foldWithIndex`, and slices the ORIGINAL |
-| the sidebar filter (`conversationMatchesQuery`, `chat/conversations.ts`) | `foldForSearch` on BOTH sides |
+| the universal search's ranking and message index (`search/rank.ts`, `search/localMessageIndex.ts`), which replaced the sidebar filter on 2026-11-26 ([universal-search](../universal-search.md)) | `foldForSearch` on BOTH sides |
 | the admin user filter (`routes/admin/users`) | `foldForSearch` |
 | five slug builders - workspaces, QR file names, `admin/carte`, `associations/new`, `lists/new` | `slugify` |
 | the native-string guardrail's own comparison (`nativeStrings.test.ts`) | `foldForSearch` |
