@@ -46,6 +46,23 @@ export function labelCollationKey(name: string): string {
 }
 
 /**
+ * The characters a label's name is trimmed of, LISTED rather than left to each language's `trim`:
+ * JavaScript's keeps U+0085 (NEXT LINE) and strips U+FEFF (the BOM), Rust's does the reverse, so a
+ * name carrying either would be labelled differently by the app and by the push drawn while it is
+ * dead. The union of both: ASCII tab to carriage return, space, U+0085, U+00A0, U+1680,
+ * U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF - Rust's `is_label_space` holds
+ * the same list, and `libs/contracts/unnamed-group-label.cases.json` asserts it on both.
+ */
+const LABEL_SPACE =
+  '[\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]';
+const LABEL_SPACE_EDGES = new RegExp(`^${LABEL_SPACE}+|${LABEL_SPACE}+$`, 'gu');
+
+/** `name` without the listed spaces at either end (`LABEL_SPACE`), the same on both platforms. */
+export function trimLabelName(name: string): string {
+  return name.replace(LABEL_SPACE_EDGES, '');
+}
+
+/**
  * Compares two strings code point by code point - the order Rust's `str` has, which UTF-16 code
  * units (JavaScript's `<`) do not keep past the Basic Multilingual Plane.
  */
@@ -72,7 +89,7 @@ export function composeUnnamedGroupLabel(
   const viewer = canonicalUserId(viewerId);
   const names = [...new Set(memberIds.map(canonicalUserId))]
     .filter((id) => id !== viewer)
-    .map((id) => ({ id, name: firstNameOf(id).trim() || id }))
+    .map((id) => ({ id, name: trimLabelName(firstNameOf(id)) || id }))
     // ONE fixed collation, not the device's locale - nor the engine's: an English and a French
     // phone, a WebView and a push drawn natively while the app is dead, sort "Émile" the same way
     // only when they are told the same rules, written out (`labelCollationKey`) rather than left to

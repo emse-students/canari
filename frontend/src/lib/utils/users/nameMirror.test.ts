@@ -88,6 +88,20 @@ describe('the native name mirror', () => {
     });
   });
 
+  it('keeps a pending first name a later name-only note of the SAME name lacks, drops it on a new name', async () => {
+    noteResolvedName(ALICE, 'Alice Martin', 'Alice');
+    noteResolvedName(ALICE, 'Alice Martin');
+    noteResolvedName(BOB, 'Bob Durand', 'Bob');
+    noteResolvedName(BOB, 'Robert Durand');
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('store_display_names', {
+      userId: me,
+      names: { [ALICE]: 'Alice Martin', [BOB]: 'Robert Durand' },
+      firstNames: { [ALICE]: 'Alice' },
+      removed: [],
+    });
+  });
+
   it('drops a deleted account, and the later of a name and a deletion wins', async () => {
     noteResolvedName(BOB, 'Bob');
     noteDeletedAccount(BOB.toUpperCase());

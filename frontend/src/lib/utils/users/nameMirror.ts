@@ -63,8 +63,15 @@ function note(userId: string, value: MirroredName | null): boolean {
     pending.clear();
     pendingOwner = owner;
   }
-  // The later fact wins: a name noted after a deletion (or the reverse) replaces it here.
-  pending.set(id, value);
+  // The later fact wins: a name noted after a deletion (or the reverse) replaces it here. But a
+  // caller that knows only the name (no first name) does not erase a first name already learned
+  // for the SAME name; a changed name drops it, as `merge_display_names` does on the Rust side.
+  const prior = pending.get(id);
+  if (value && value.firstName === null && prior?.firstName && prior.name === value.name) {
+    pending.set(id, { name: value.name, firstName: prior.firstName });
+  } else {
+    pending.set(id, value);
+  }
   if (!scheduled) {
     scheduled = true;
     queueMicrotask(() => {

@@ -227,7 +227,7 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy, nullable) NSString *callId;
 @property(nonatomic, assign) BOOL callEnded;
 @property(nonatomic, assign) BOOL hasVideo;
-// The people the group's tree holds at this message's epoch, as Rust read them after its commit
+// The people in the group's current tree after the push catch-up, as Rust read them after its commit
 // catch-up (`treeMembers`, re-serialised as a JSON array of user ids): what an UNNAMED group's
 // banner is titled by (CanariUnnamedGroupTitle). nil when the answer carried none, with Rust's
 // reason in `treeMembersError` when it could not read the tree.
@@ -4740,7 +4740,7 @@ static void CanariCallKitSetup(void) {
 // The title of a push for an UNNAMED group - its other members' first names, the app's label - or
 // nil, when the banner keeps "Conversation de groupe". Composed by Rust
 // (`canari_native_unnamed_group_title`, the one native copy of the app's rule, the extension's too)
-// from the tree `decrypted` was read at and the name copies in the app's data directory, the ones
+// from the current tree the decrypt of `decrypted` caught up to and the name copies in the app's data directory, the ones
 // CanariReadDisplayNames and CanariReadConversationNicknames read; nothing about it rode the push.
 // Every reason there is none is said here: Rust's own log reaches no logger on this path. Twin of
 // the extension's `unnamedGroupTitle` and Android's `CanariFirebaseMessagingService.unnamedGroupTitle`.
@@ -4869,7 +4869,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     }
 
     // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
-    // 2026-11-17) - composed here, on the phone, from the tree this message was decrypted at; nothing
+    // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up; nothing
     // about it rode the push. The cache row above keeps the push's empty name.
     NSString *titleName = groupName;
     if (groupName.length == 0 && isGroup != nil && isGroup.boolValue) {

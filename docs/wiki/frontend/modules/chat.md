@@ -8061,6 +8061,10 @@ choose, and the label is composed from what each device already holds.
   ICU table (2026-11-27, so a WebView and the native push agree): Unicode NFD with every combining
   mark removed, lower-cased (`labelCollationKey`), compared code point by code point; then the names
   themselves; then the ids - never the tree's leaf order, so every device spells the same label.
+  A name is TRIMMED OF A LISTED SET (`trimLabelName` / `is_label_space`), never a language's own
+  `trim`, which disagree (JavaScript keeps U+0085 and strips the BOM, Rust the reverse): ASCII tab
+  to carriage return, space, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F,
+  U+205F, U+3000, U+FEFF; a name of nothing else is the id.
   Up to three names are spelt out; past
   three, two are named and the rest counted ("Alice, Bob et 3 autres"), so the count is never one.
   The viewer is never named; alone in it, the group reads
@@ -8077,14 +8081,17 @@ choose, and the label is composed from what each device already holds.
   process (`CanariUnnamedGroupTitle`, `canari_push.mm`, reading the copies in the app's data
   directory) through `canari_native_unnamed_group_title`; `messageNotificationShape.test.ts` pins the
   two iOS call sites and both headers:
-  - **who** is the tree AT THE MESSAGE'S EPOCH: the push decrypt answers `treeMembers` (canonical
-    user ids, sorted) from the state it just decrypted with, after its in-memory commit catch-up
-    (`with_tree_members`, `background.rs`) - so a member removed while the app was dead is already
-    gone from the next banner;
+  - **who** is the group's current tree after the push catch-up: the push decrypt answers
+    `treeMembers` (canonical user ids, sorted) from the state it just decrypted with, after its
+    in-memory commit catch-up (`with_tree_members`, `background.rs`) - every commit it applied,
+    including one made after the message's own epoch, so the title names who is in the group now,
+    as the app's list does, and a member added or removed while the app was dead is already counted;
   - **what they are called** comes from the phone's own copies the WebView writes: the nickname in
     THIS group (`conversation_nicknames.json`), else the profile's first name, else its name
     (`display_names.json`, whose `firstNames` map the name mirror fills since this change,
-    `nameMirror.ts` -> `store_display_names`);
+    `nameMirror.ts` -> `store_display_names`; a first name never outlives its name: a note or a
+    write that CHANGES the name without carrying a first name drops the old one, and one that
+    re-sends the same name without it keeps it);
   - **ONE RULE, TWO IMPLEMENTATIONS, ONE CONTRACT**: the web cannot run the Rust and a dead app cannot
     run the WebView, so `libs/contracts/unnamed-group-label.cases.json` holds the rule and the
     words of both languages, read by `unnamedGroupLabel.contract.test.ts` and by Rust's
@@ -8107,8 +8114,12 @@ Tests: `unnamedGroupLabel.test.ts`, `unnamedGroupLabel.contract.test.ts`, `group
 `conversations.unnamedGroup.test.ts`, `groupCreation.unnamed.test.ts`, `nativeNotification.test.ts`,
 `Sidebar.creationRefusal.svelte.test.ts`, `nameMirror.test.ts` (the first names), and in Rust
 `mobile::unnamed_group_label` (the contract, the copies, the reasons),
-`a_message_answer_names_the_tree_members_at_its_epoch` (`background.rs`) and
-`first_names_ride_beside_their_names_and_the_book_reads_them` (`display_names.rs`). Nothing here runs
+`a_message_answer_names_the_current_tree_after_the_catch_up`,
+`a_commit_past_the_message_s_epoch_is_in_the_tree_it_answers`,
+`a_member_removed_while_the_app_was_dead_leaves_the_tree_the_push_answers` and
+`an_unreadable_tree_answers_tree_members_error` (`background.rs`), and
+`first_names_ride_beside_their_names_and_the_book_reads_them` and
+`a_changed_name_without_a_first_name_drops_the_stale_one` (`display_names.rs`). Nothing here runs
 Kotlin or Swift: the native callers are plumbing around the one Rust call. **Owed on hardware**:
 [the reading](../../backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md).
 

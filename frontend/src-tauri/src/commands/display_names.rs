@@ -115,6 +115,13 @@ pub(crate) fn merge_display_names(
     }
     // Key order, so a write larger than the cap keeps the same names whatever order the map gave.
     fresh.sort();
+    // The ids whose name this write CHANGES: a stored first name belongs to the old name, so it is
+    // kept beside the new one only if this write carries a first name of its own (below).
+    let renamed: std::collections::HashSet<String> = fresh
+        .iter()
+        .filter(|(id, name)| stored.get(id).and_then(|v| v.as_str()) != Some(name.as_str()))
+        .map(|(id, _)| id.clone())
+        .collect();
 
     let mut out = serde_json::Map::new();
     for (id, name) in fresh.into_iter().take(DISPLAY_NAMES_MAX) {
@@ -132,12 +139,23 @@ pub(crate) fn merge_display_names(
         log::info!("[NAME_MIRROR] {dropped} name(s) of deleted account(s) dropped");
     }
 
-    // The stored first names, then this write's over them - each only beside a name kept above.
+    // The stored first names, then this write's over them - each only beside a name kept above,
+    // and never beside a name this write changed: a stale first name next to a new name would
+    // title a push with someone's old first name.
     let mut first_out = serde_json::Map::new();
+    let mut stale_count = 0usize;
     for (id, first) in stored_first {
-        if first.as_str().is_some_and(|f| !f.trim().is_empty()) && out.contains_key(&id) {
-            first_out.insert(id, first);
+        if !first.as_str().is_some_and(|f| !f.trim().is_empty()) || !out.contains_key(&id) {
+            continue;
         }
+        if renamed.contains(&id) {
+            stale_count += 1;
+            continue;
+        }
+        first_out.insert(id, first);
+    }
+    if stale_count > 0 {
+        log::info!("[NAME_MIRROR] {stale_count} first name(s) dropped beside a changed name");
     }
     for (id, first) in first_names {
         let id = id.trim().to_lowercase();
@@ -501,6 +519,49 @@ mod tests {
         // A deleted account loses its first name with its name.
         merge_display_names(&dir, OWNER, &HashMap::new(), &HashMap::new(), &[id(1)]).unwrap();
         assert!(read(&dir)["firstNames"].get(id(1)).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A write that CHANGES a name but carries no first name drops the stored first name - it
+    /// belonged to the old name - while the same name re-sent without one keeps it, and a change
+    /// that carries its own first name takes it.
+    #[test]
+    fn a_changed_name_without_a_first_name_drops_the_stale_one() {
+        let dir = temp_dir("renamed");
+        let names = HashMap::from([
+            (id(1), "Alice Martin".to_string()),
+            (id(2), "Bob Durand".to_string()),
+            (id(3), "Carol Petit".to_string()),
+        ]);
+        let first = HashMap::from([
+            (id(1), "Alice".to_string()),
+            (id(2), "Bob".to_string()),
+            (id(3), "Carol".to_string()),
+        ]);
+        merge_display_names(&dir, OWNER, &names, &first, &[]).unwrap();
+
+        let later = HashMap::from([
+            // Renamed, no first name carried: the stale "Alice" must go.
+            (id(1), "Alicia Martin".to_string()),
+            // Same name re-sent, no first name carried: "Bob" stays.
+            (id(2), "Bob Durand".to_string()),
+            // Renamed with its own first name: the new one.
+            (id(3), "Caroline Petit".to_string()),
+        ]);
+        let later_first = HashMap::from([(id(3), "Caroline".to_string())]);
+        merge_display_names(&dir, OWNER, &later, &later_first, &[]).unwrap();
+
+        let v = read(&dir);
+        assert_eq!(v["names"][id(1)], "Alicia Martin");
+        assert!(v["firstNames"].get(id(1)).is_none(), "{v}");
+        assert_eq!(v["firstNames"][id(2)], "Bob");
+        assert_eq!(v["firstNames"][id(3)], "Caroline");
+        let book = read_name_book(&dir, OWNER).unwrap();
+        assert_eq!(
+            book.first_name_of(&id(1)).as_deref(),
+            Some("Alicia Martin"),
+            "no first name left: the new name, never the old first name"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -3199,7 +3199,8 @@ them. The name never rides the push and is never fetched on the push path (user 
   account"). The phone only learns it when its app next asks for that id; a name stored before
   that stays until then.
 - **The file**: `{"userId": <owner>, "names": {<id>: <name>}, "firstNames": {<id>: <first name>}}`,
-  `firstNames` only beside a kept name (2026-11-27: what a dead app's push titles an UNNAMED group
+  `firstNames` only beside a kept name, and dropped when a write changes that name without carrying
+  a first name (2026-11-27: what a dead app's push titles an UNNAMED group
   by, [chat](modules/chat.md#an-unnamed-group-no-name-stored-the-members-first-names-drawn); the
   mention readers ignore it), merged per owner, capped at 2000
   names (this write's names kept first, then the stored ones in key order - NOT "the most recent":

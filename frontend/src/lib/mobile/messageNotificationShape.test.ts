@@ -249,3 +249,30 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
     );
   });
 });
+
+describe('an unnamed group with no label says why, at the level it deserves', () => {
+  const APPLE = resolve(here, '../../../src-tauri/gen/apple');
+  const nse = readFileSync(join(APPLE, 'canari_NSE/NotificationService.swift'), 'utf8');
+  const app = readFileSync(join(APPLE, 'Sources/canari/canari_push.mm'), 'utf8');
+  const ORDINARY = '"alone", "name-unknown", "no-name-file", "other-account"';
+
+  it('Android: the ordinary reasons at info, any other reason at error', () => {
+    expect(kotlin).toContain(`${ORDINARY} ->\n                Log.i(TAG, "[GROUP_LABEL]`);
+    expect(kotlin).toMatch(
+      /else ->\s*Log\.e\(TAG, "\[GROUP_LABEL\] [^"]*ERROR no label \(\$reason\)/
+    );
+  });
+
+  it('iOS, the extension and the app process: the same split', () => {
+    expect(nse).toContain(`case ${ORDINARY}:`);
+    expect(nse).toMatch(
+      /default:\s*NseLog\.log\.error\("\[CanariNSE\] \[GROUP_LABEL\][^"]*ERROR no label/
+    );
+    expect(app).toContain(
+      '[@[ @"alone", @"name-unknown", @"no-name-file", @"other-account" ] containsObject:reason]'
+    );
+    expect(app).toMatch(
+      /\} else \{\s*NSLog\(@"\[CanariPush\] \[GROUP_LABEL\] group=%@ ERROR no label/
+    );
+  });
+});

@@ -1344,7 +1344,7 @@ class NotificationService: UNNotificationServiceExtension {
       noteAnnouncement(conversation: groupId, senderId: senderId, at: msg.sentAt)
     }
     // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
-    // 2026-11-17) - composed here, on the phone, from the tree this message was decrypted at; nothing
+    // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up; nothing
     // about it rode the push. The cache row above keeps the push's empty name. Android twin:
     // `titleName` in `presentFrame`.
     let titleName =
@@ -1364,7 +1364,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// nil, when the banner keeps "Conversation de groupe".
   ///
   /// Composed by Rust (`canari_native_unnamed_group_title`, the one native copy of the app's rule)
-  /// from the tree `decrypted` was read at and the App Group's name copies; nothing about it rode the
+  /// from the current tree the decrypt of `decrypted` caught up to and the App Group's name copies; nothing about it rode the
   /// push. A message this extension could not open has no tree to read. Every reason there is none is
   /// said here: Rust's own log reaches no logger in the extension. Android twin:
   /// `CanariFirebaseMessagingService.unnamedGroupTitle`.
@@ -1713,7 +1713,7 @@ class NotificationService: UNNotificationServiceExtension {
     /// Every user id the WHOLE plaintext mentions (`@[<64 hex>]`), lower-cased, read before `text`
     /// is clamped - a mention past the preview is still a mention.
     let mentionedUserIds: Set<String>
-    /// The people the group's tree holds at this message's epoch, as Rust read them after its
+    /// The people in the group's current tree after the push catch-up, as Rust read them after its
     /// commit catch-up (`treeMembers`, re-serialised as a JSON array of user ids): what an UNNAMED
     /// group's banner is titled by (`unnamedGroupTitle`). nil when the answer carried none, with
     /// Rust's reason in `treeMembersError` when it could not read the tree.

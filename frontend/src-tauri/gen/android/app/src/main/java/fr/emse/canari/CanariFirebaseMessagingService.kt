@@ -4976,7 +4976,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Every user id the WHOLE plaintext mentions, read before `text` is cut to its preview, so a
         // mention past character 200 still counts (`NotificationLevelGate`).
         val mentionedUserIds: Set<String> = emptySet(),
-        // The people the group's tree holds at this message's epoch, as Rust read them after its
+        // The people in the group's current tree after the push catch-up, as Rust read them after its
         // commit catch-up (`treeMembers`, a JSON array of user ids) - what an UNNAMED group's banner
         // is titled by ([unnamedGroupTitle]). Null when the answer carried none, with the reason Rust
         // gave in [treeMembersError] when it could not read the tree.
@@ -5623,7 +5623,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
-        // 2026-11-17) - composed here, on the phone, from the tree this message was decrypted at;
+        // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up;
         // nothing about it rode the push. The cache row above keeps the push's empty name: the app
         // resolves its own label.
         val titleName = if (groupName.isEmpty() && isGroup == true) {
@@ -8910,7 +8910,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * or null, when the banner keeps "Conversation de groupe" ([ConversationShape.groupTitle]).
      *
      * Composed by Rust (`nativeUnnamedGroupTitle`, the one native copy of the app's rule) from the
-     * tree [decrypted] was read at and the phone's own name copies; nothing about it rode the push.
+     * current tree the decrypt of [decrypted] caught up to and the phone's own name copies; nothing about it rode the push.
      * A message this device could not open has no tree to read, so its banner keeps the generic
      * title. Every reason there is none is said here, at the level it deserves: Rust's own log
      * reaches no logger in this process.
@@ -8950,7 +8950,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "alone", "name-unknown", "no-name-file", "other-account" ->
                 Log.i(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} no label ($reason unknown=${answer.optInt("unknown")}) - the generic title")
             else ->
-                Log.w(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} no label ($reason) - the generic title")
+                Log.e(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} ERROR no label ($reason) - the generic title")
         }
         return null
     }

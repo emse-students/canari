@@ -12,7 +12,10 @@
     "THE RULE. The members are user ids (the group's ratchet tree, one per person), compared ASCII-",
     "lower-cased; the viewer and duplicates are dropped. Each is named by `names[id]` trimmed - the",
     "caller's resolution (a nickname set in the group, else the profile's first name, else its name) -",
-    "or by its id when that is empty. The ORDER is fixed, never the device's locale: first by the",
+    "or by its id when that is empty. TRIMMED OF A LISTED SET, never a language's own `trim` (JavaScript",
+    "keeps U+0085 and strips the BOM, Rust the reverse): ASCII tab to carriage return, space, U+0085,",
+    "U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF (`trimLabelName`,",
+    "`is_label_space`). The ORDER is fixed, never the device's locale: first by the",
     "collation key (Unicode NFD, every combining mark (General_Category M) removed, then lower-cased),",
     "compared code point by code point; then by the name itself, code point by code point; then by the",
     "id. One name reads alone; two and three are joined by the language's 'and'; past three, two are",
@@ -87,6 +90,33 @@
       "names": { "alice": "Alice", "zed": "   " },
       "fr": "Alice et zed",
       "en": "Alice and zed"
+    },
+    {
+      "name": "a byte-order mark around a name is trimmed, and a name of nothing else is the id",
+      "members": ["zoe", "bom"],
+      "viewer": "me",
+      "names": { "zoe": "﻿Zoé﻿", "bom": "﻿" },
+      "fr": "bom et Zoé",
+      "en": "bom and Zoé"
+    },
+    {
+      "name": "a NEXT LINE (U+0085) around a name is trimmed, and a name of nothing else is the id",
+      "members": ["alice", "nel"],
+      "viewer": "me",
+      "names": { "alice": "\u0085Alice\u0085", "nel": "\u0085" },
+      "fr": "Alice et nel",
+      "en": "Alice and nel"
+    },
+    {
+      "name": "every listed space is trimmed, and nothing else is",
+      "members": ["all", "kept"],
+      "viewer": "me",
+      "names": {
+        "all": "\t\n\u000B\f\r \u0085                 　﻿",
+        "kept": "​Kept᠎"
+      },
+      "fr": "all et ​Kept᠎",
+      "en": "all and ​Kept᠎"
     },
     {
       "name": "past three, two are named and the rest counted",

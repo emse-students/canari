@@ -6,10 +6,10 @@
 //! choose, principle 1), and the native composers had no members to name. This module is the ONE
 //! native copy of the rule, for the Android FCM service and the iOS notification extension alike:
 //!
-//! - **Who**: the user ids of the group's ratchet tree AT THE MESSAGE'S EPOCH, which the push
-//!   decrypt already holds in memory after its commit catch-up (`treeMembers` in its answer,
-//!   `background.rs`) - so a member removed while the app was dead is already gone from the next
-//!   banner, as the app would draw it.
+//! - **Who**: the user ids of the group's current tree after the push catch-up, which the push
+//!   decrypt already holds in memory (`treeMembers` in its answer, `background.rs`) - so a member
+//!   added or removed while the app was dead is already counted on the next banner, as the app's
+//!   list would draw it.
 //! - **What they are called**: the nickname set in THIS group (`conversation_nicknames.json`), else
 //!   the profile's first name, else its name (`display_names.json`) - the phone's own copies, written
 //!   by the WebView. Nothing is asked of a server, and nothing about the label rides a push.
@@ -44,8 +44,31 @@ fn label_collation_key(name: &str) -> String {
         .to_lowercase()
 }
 
+/// Whether `c` is one of the characters a label's name is trimmed of - LISTED rather than left to
+/// `str::trim`, which strips U+0085 and keeps U+FEFF (the BOM) where JavaScript's `trim` does the
+/// reverse. The union of both, the TypeScript `LABEL_SPACE` character for character, asserted by
+/// the shared contract: ASCII tab to carriage return, space, U+0085, U+00A0, U+1680, U+2000-U+200A,
+/// U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF.
+fn is_label_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{85}'
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
 /// The label of a group holding `members`, as `viewer` sees it: the OTHER members, each named by
-/// `name_of` (trimmed, its id when empty), in the contract's fixed order; up to three spelt out,
+/// `name_of` (trimmed of `is_label_space`, its id when empty), in the contract's fixed order; up to three spelt out,
 /// past that two named and the rest counted. `None` when nobody else is in the group.
 ///
 /// The Rust half of `libs/contracts/unnamed-group-label.cases.json`, whose other half is the app's
@@ -64,7 +87,7 @@ pub fn compose_unnamed_group_label(
         .into_iter()
         .filter(|id| *id != viewer)
         .map(|id| {
-            let name = name_of(&id).trim().to_string();
+            let name = name_of(&id).trim_matches(is_label_space).to_string();
             let name = if name.is_empty() { id.clone() } else { name };
             (label_collation_key(&name), name, id)
         })
