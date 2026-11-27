@@ -41,7 +41,7 @@ export function memberUserIdsOfTree(leafIdentities: readonly string[]): string[]
  * `libs/contracts/unnamed-group-label.cases.json`, which Rust's `label_collation_key` (the push
  * drawn while the app is dead) answers too.
  */
-export function labelCollationKey(name: string): string {
+function labelCollationKey(name: string): string {
   return name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
@@ -58,7 +58,7 @@ const LABEL_SPACE =
 const LABEL_SPACE_EDGES = new RegExp(`^${LABEL_SPACE}+|${LABEL_SPACE}+$`, 'gu');
 
 /** `name` without the listed spaces at either end (`LABEL_SPACE`), the same on both platforms. */
-export function trimLabelName(name: string): string {
+function trimLabelName(name: string): string {
   return name.replace(LABEL_SPACE_EDGES, '');
 }
 
