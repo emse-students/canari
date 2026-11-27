@@ -18,6 +18,7 @@ import {
   alumniReasonState,
   alumniSiteLine,
   cancelAlumniMerge,
+  dismissAlumniDuplicate,
   fetchAlumniClosedMerges,
   fetchAlumniMergeTargets,
   fetchAlumniOpenMerges,
@@ -149,6 +150,17 @@ describe('the Alumni merge client', () => {
     );
   });
 
+  it('dismisses ("Pas un doublon") by POST on the duplicate, and throws a refusal', async () => {
+    apiFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await dismissAlumniDuplicate(DUP);
+    expect(apiFetch).toHaveBeenCalledWith(
+      `https://core.test/api/users/admin/alumni-duplicates/${DUP}/dismiss`,
+      expect.objectContaining({ method: 'POST' })
+    );
+    apiFetch.mockResolvedValue(answer(403, { code: 'ALUMNI_MERGE_NOT_FOUND' }));
+    await expect(dismissAlumniDuplicate(DUP)).rejects.toBeDefined();
+  });
+
   it('lists the open merges', async () => {
     const open = [{ duplicateUuid: DUP, targetUuid: TARGET, status: 'marked' }];
     apiFetch.mockResolvedValue(answer(200, open));
@@ -161,6 +173,7 @@ describe('the Alumni merge client', () => {
     ['ALUMNI_MERGE_ALREADY_MERGED', () => m.alumni_merge_error_already_merged()],
     ['ALUMNI_MERGE_NO_MATCH', () => m.alumni_merge_error_no_match()],
     ['ALUMNI_MERGE_TARGET_BUSY', () => m.alumni_merge_error_target_busy()],
+    ['ALUMNI_MERGE_DISMISSED', () => m.alumni_merge_error_dismissed()],
     [
       'ALUMNI_MERGE_REASON_REQUIRED',
       () => m.alumni_merge_error_reason_required({ min: 20, max: 1000 }),

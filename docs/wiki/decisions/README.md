@@ -6,7 +6,7 @@ found in one of them is its own entry in [backlog.d](../backlog.d/README.md) (mo
 2026-11-23, when the records left the backlog).
 
 - `owner-decisions-of-<date>.md` - the owner's answers of one day, numbered, each line naming its
-  detail. The latest is [2026-11-26, the Alumni merge](owner-decisions-of-2026-11-26-alumni.md). A decision already asked is
+  detail. The latest are [2026-11-26, the Alumni merge](owner-decisions-of-2026-11-26-alumni.md) and, the lead's under the absence rule, [2026-11-27, what an Alumni duplicate is for the queue](owner-decisions-of-2026-11-27.md). A decision already asked is
   never asked again.
 - `decided-by-the-user-on-<date>-*.md` - the earlier records of 2026-10-18 and 2026-10-23, trimmed to
   what was not written elsewhere.

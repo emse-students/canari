@@ -5,6 +5,7 @@ import { staleOpenAskedSql } from '../forms/stale-open-forms';
 import type { NotificationType } from '../push/notification-client-floor';
 import {
   isGlobalAdminSql,
+  alumniDuplicatePendingSql,
   profileCorrectionPendingSql,
   reportNoticeOwedSql,
 } from '../admin-queues/admin-queue-sql';
@@ -228,6 +229,17 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
       WHERE bell_pcr.id = ${target} AND ${profileCorrectionPendingSql('bell_pcr')}))`,
   admin_report: ({ reader, target }) =>
     `(${isGlobalAdminSql(reader)} AND ${reportNoticeOwedSql(target)})`,
+  // An Alumni duplicates notice is ONE row for a batch: keyed on the batch's first duplicate, naming
+  // every one in `meta.duplicateUuids`. It stays while ANY of them still waits for an attachment
+  // and is gone from every admin bell once none does. A row with no batch in its meta names the one
+  // duplicate it is keyed on.
+  admin_alumni_duplicate: ({ reader, target, meta }) => `(${isGlobalAdminSql(reader)}
+    AND EXISTS (SELECT 1 FROM alumni_duplicate_flags bell_adf
+      WHERE bell_adf."duplicateUuid" = ANY(
+          ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(${meta}->'duplicateUuids') = 'array'
+            THEN ${meta}->'duplicateUuids' ELSE '[]'::jsonb END)::uuid)
+          || ARRAY[(${target})::uuid])
+        AND ${alumniDuplicatePendingSql('bell_adf')}))`,
   // The question put to a form left open (owner, 2026-11-21): shown to the recipients the sweep
   // chose (`staleOpenRecipients`: the MANAGE_FORMS holders of an association's form, the owner of a
   // personal one) while the question is STILL put - the form open, asked, not answered by a close,

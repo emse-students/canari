@@ -153,6 +153,8 @@ describe('AlumniMergeService', () => {
       ...r,
     }));
     const isOpen = (r: Row) => !r.completedAt;
+    /** The duplicates whose admin-queue flag a closing dropped (DROP_DUPLICATE_FLAG_SQL). */
+    const flagsDropped: string[] = [];
     const editor = {
       assertAvailable: jest.fn(() => ({ baseUrl: 'https://mc', token: 't' })),
       searchUsers: jest.fn(async (q: string) =>
@@ -185,6 +187,10 @@ describe('AlumniMergeService', () => {
       ),
     };
     const query = jest.fn(async (sql: string, params: unknown[] = []): Promise<unknown> => {
+      if (sql.includes('DELETE FROM alumni_duplicate_flags')) {
+        flagsDropped.push(params[0] as string);
+        return [];
+      }
       if (sql.includes('FROM users')) {
         return (params[0] as string[])
           .filter((u) => canari[u])
@@ -240,7 +246,14 @@ describe('AlumniMergeService', () => {
         row.completedAt = new Date();
         row.completedBy = params[1] as string;
         return [
-          [{ id: row.id, targetUuid: row.targetUuid, targetSubject: row.targetSubject ?? null }],
+          [
+            {
+              id: row.id,
+              duplicateUuid: row.duplicateUuid,
+              targetUuid: row.targetUuid,
+              targetSubject: row.targetSubject ?? null,
+            },
+          ],
           1,
         ];
       }
@@ -267,7 +280,7 @@ describe('AlumniMergeService', () => {
       erasure as unknown as AccountErasureService,
       siteJobs as unknown as AlumniMergeSiteJobsService
     );
-    return { service, editor, erasure, rows, accounts, siteJobs };
+    return { service, editor, erasure, rows, accounts, siteJobs, flagsDropped };
   }
 
   const holdingsAnswer = () =>
@@ -285,12 +298,27 @@ describe('AlumniMergeService', () => {
   });
 
   it('lists an Alumni-created account matching a CAS account, with what tells homonyms apart', async () => {
-    const stranger = person({ pk: 3, uuid: 'x', username: 'alumni-0002', name: 'Other One' });
+    // Same name, another promo: no name-and-promo match, but a candidate to attach it to by hand.
+    const late = person({
+      pk: 3,
+      uuid: 'x',
+      username: 'alumni-0002',
+      attributes: { profile: { cursus: [{ formation: 'ICM', promo: 1999 }] } },
+    });
+    // Nobody on the CAS side bears this name: no candidate - listed to attach by hand or dismiss, but
+    // not flaggable (never announced, never counted; the lead's reading of D55, 2026-11-27).
+    const stranger = person({ pk: 4, uuid: 'y', username: 'alumni-0003', name: 'Other One' });
     const { service } = make({
-      accounts: { ...world(), x: { user: stranger, slugs: ['alumni'] } },
+      accounts: {
+        ...world(),
+        x: { user: late, slugs: ['alumni'] },
+        y: { user: stranger, slugs: ['alumni'] },
+      },
       canari: { [TARGET_UUID]: 'canari-target' },
     });
-    expect(await service.listDuplicates()).toEqual([
+    const { duplicates, flaggable } = await service.listDuplicates();
+    expect(flaggable).toEqual([DUP_UUID, 'x']);
+    expect(duplicates).toEqual([
       {
         duplicate: expect.objectContaining({ uuid: DUP_UUID, canariUserId: null }),
         targets: [
@@ -302,14 +330,16 @@ describe('AlumniMergeService', () => {
           }),
         ],
       },
-      // D55: one that matches nobody is listed after, with no target, for a manual merge.
+      // D55: one with a candidate but no name-and-promo match is listed after, for a manual merge.
       { duplicate: expect.objectContaining({ uuid: 'x' }), targets: [] },
+      // No candidate at all: listed last, in "to attach by hand", and not flaggable.
+      { duplicate: expect.objectContaining({ uuid: 'y' }), targets: [] },
     ]);
   });
 
   it('does not list as a duplicate one already in an open merge', async () => {
     const { service } = make({ accounts: world(), rows: [{ markedAt: new Date() }] });
-    expect(await service.listDuplicates()).toEqual([]);
+    expect(await service.listDuplicates()).toEqual({ duplicates: [], flaggable: [] });
   });
 
   it('counts what the duplicate holds through social and chat-delivery', async () => {
@@ -870,6 +900,45 @@ describe('AlumniMergeService', () => {
       );
       expect(rows[0].completedAt).not.toBeNull();
       expect(erasure.requestErasure).toHaveBeenCalledWith('canari-dup');
+    });
+
+    it('drops the admin-queue flag of the duplicate in the closing transaction, by EVERY path that completes a merge', async () => {
+      const closing = (): Parameters<typeof make>[0] => ({
+        accounts: merged(),
+        canari: { [DUP_UUID]: 'canari-dup' },
+        rows: [{ markedAt: new Date(), ...subjects }],
+      });
+      // The reconciler: a page reading finds the duplicate gone.
+      const byReading = make(closing());
+      await byReading.service.listOpenMerges();
+      expect(byReading.flagsDropped).toEqual([DUP_UUID]);
+      // MiConnect's push.
+      const byPush = make(closing());
+      await byPush.service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0');
+      expect(byPush.flagsDropped).toEqual([DUP_UUID]);
+      // A "Rattacher" over a duplicate MiConnect already merged.
+      const byResume = make(closing());
+      await expect(byResume.service.merge(DUP_UUID, TARGET_UUID, 'admin-1')).rejects.toBeInstanceOf(
+        AlumniMergeAlreadyMergedError
+      );
+      expect(byResume.flagsDropped).toEqual([DUP_UUID]);
+      // A row that left MiConnect unmarked and not merged is closed too: the duplicate is gone.
+      const unmerged = make({ rows: [{ markedAt: null, ...subjects }] });
+      await unmerged.service.listOpenMerges();
+      expect(unmerged.flagsDropped).toEqual([DUP_UUID]);
+      // A replayed completion closes nothing, so it resolves nothing.
+      expect(byPush.rows[0].completedAt).not.toBeNull();
+      await byPush.service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0');
+      expect(byPush.flagsDropped).toEqual([DUP_UUID]);
+    });
+
+    it('a cancelled mark drops no flag: the duplicate waits again', async () => {
+      const { service, flagsDropped } = make({
+        accounts: world(),
+        rows: [{ markedAt: new Date(), ...subjects }],
+      });
+      await service.cancel(DUP_UUID, 'admin-1');
+      expect(flagsDropped).toEqual([]);
     });
 
     it('lists a closed merge with its site states', async () => {

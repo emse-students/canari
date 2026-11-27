@@ -181,6 +181,17 @@ devraient pas etre enseignes direct, mais plutot rester dans l'onglet patterns"*
 two corners it first carried are the annex's: a lesson there is a reading of the board, and the tutorial's job is to
 make a player able to play one. Its header and its closing screen lead to the catalogue.
 
+**The gestures are the game's, and the player chooses them once** (owner, 2026-11-27: *"expliquer les actions au
+debut (clic gauche/droit sur pc, et appui court/long sur telephone), ainsi que laisser a l'utilisateur decider la
+premiere fois ce qu'il prefere -> synchroniser avec les parametres pour la suite du jeu"*). The mini-grid plays as
+the game does: a short press (a left click) digs, or flags when the player chose the flag first; a long press (a
+right click) does the other, after the game's own long-press time; a short press on a number chords. Before the
+first lesson, while no choice is stored, `MinesweeperControlsChoice` asks: "Creuser d'abord" or "Drapeau d'abord",
+each with its two gestures named for the device (finger or mouse, `playedByTouch`). The choice is stored under the
+game's own key (`controls.ts`, `canari.minesweeper.flagPrimary`, which the game's mode button also writes), so the
+tutorial and the game agree. Under each grid one quiet line says the two gestures, with "Inverser" - the big Miner /
+Drapeau buttons it replaces were too prominent.
+
 **The highlights say what they are** (owner, 2026-11-26: *"surligne en rouge pour bombe sure, jaune pour groupe
 de bombes (avec un seul rectangle qui englobe plusieurs cases) et vert pour safe"*). A step of the "Indice"
 button rings the NUMBER(S) it reads (`highlight: 'read'` on `MinesweeperCell`, a dark ring, so it is never taken
@@ -255,7 +266,11 @@ counter lessons excepted); in an open picture **no read number is on the border*
 picture changes nothing it forces**; and **a safe cell to open with no mine around it has no fog beside it** (the
 engine would flood the fog open). The dependency chain is a searched board (a column of 2s between two hidden
 columns, closed by `?`): no two neighbouring numbers conclude anything, the information has to cross the column.
-The two last-turn entries are small closed boards whose counter is the pattern.
+The two last-turn entries are small closed boards whose counter is the pattern. **The pictures are kept to what speaks** (owner, same day): a `?` that touches no hidden cell shows its
+number (an empty open cell, mostly), a border line that says nothing is cropped (fog no number touches, open cells
+beside no hidden one), and **a cell the player opens in an open picture shows "?"**: its number would count the fog,
+which the picture shows nowhere else. Fog that holds a mine (`X`) stays where it keeps an opened safe cell from
+being a 0 - the engine would flood the fog open.
 
 **The corner patterns are OPEN and SEARCHED, and a test holds them to it** (owner, 2026-11-26, three times: *"la
 presence de bords permet de contourner ce raisonnement"*, then *"le 2-2-2 est encore devinable sans comprendre la
