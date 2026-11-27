@@ -124,19 +124,29 @@ export function installAppLinkClickHandler(): void {
  *
  * For the same reason it is where a link to a sibling site is handed off (`openEcosystemSiteLink`):
  * every path that opens a link written in a message or a post comes through here, after the gate.
+ *
+ * `siteHandoff: false` opens the address as it is, never signed in to a sibling site: for a link
+ * written by ANYONE on the internet - a school mail (`MailHtmlFrame`, review I-2) - which must not
+ * be able to send the reader into a sibling site with a session minted for them.
  */
-export async function openExternal(url: string): Promise<void> {
+export async function openExternal(
+  url: string,
+  options: { siteHandoff?: boolean } = {}
+): Promise<void> {
   const proceed = await confirmUnsafeLinkIfNeeded(url);
   if (!proceed) return;
 
   // A link to a sibling site whose handoff is on, at a path of its allowlist, opens the reader
-  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips.
-  if (openEcosystemSiteLink(url)) return;
+  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips - unless the caller
+  // refused the handoff for a link from outside Canari.
+  if (options.siteHandoff !== false && openEcosystemSiteLink(url)) return;
 
   if (isTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
   } else {
+    // The return value is NOT checked: with `noopener` the HTML spec returns `null` even when the
+    // tab opened, so `null` cannot tell a blocked popup from a successful one.
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 }

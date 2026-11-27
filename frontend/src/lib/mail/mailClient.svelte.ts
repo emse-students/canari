@@ -87,11 +87,14 @@ export class MailClient {
     }
   }
 
-  /** Signs the mailbox out and stops the store following it. */
-  async end(reason: string): Promise<void> {
+  /**
+   * Signs the mailbox out and stops the store following it. `keepRemembered` keeps the sealed
+   * password (the server's switch turned off only - `MailSession.signOut`).
+   */
+  async end(reason: string, options: { keepRemembered?: boolean } = {}): Promise<void> {
     Log.d('MAIL', `mail client ended (${reason})`);
     this.store.dispose();
-    await this.session.signOut();
+    await this.session.signOut(options);
   }
 }
 
@@ -107,14 +110,17 @@ function buildClient(userId: string): MailClient {
 let current = $state<MailClient | null>(null);
 let unregister: (() => void) | null = null;
 
-/** Ends the current client, if any (a Canari sign-out, an account switch). */
-async function endCurrent(reason: string): Promise<void> {
+/** Ends the current client, if any (a Canari sign-out, an account switch, the switch off). */
+async function endCurrent(
+  reason: string,
+  options: { keepRemembered?: boolean } = {}
+): Promise<void> {
   const client = current;
   if (!client) return;
   current = null;
   unregister?.();
   unregister = null;
-  await client.end(reason);
+  await client.end(reason, options);
 }
 
 /**
@@ -187,9 +193,11 @@ export function watchMailTab(): void {
 
 /**
  * One step of {@link watchMailTab}, for the account signed in now and the server's switch. The
- * switch turned OFF ends a client already built (review M5): its session signed out, its socket
- * closed - "off, nothing of the mail runs" holds for a client opened while it was on, not only for
- * one not yet built. On, with an account, that account's client is opened for the tab.
+ * switch turned OFF ends a client already built (review M5): its session signed out on the server,
+ * its socket closed - "off, nothing of the mail runs" holds for a client opened while it was on.
+ * The sealed remembered password is KEPT (decided, lead 2026-11-27): the switch is a kill switch,
+ * not the reader's choice to forget, so the mailbox resumes when it is turned back on. On, with an
+ * account, that account's client is opened for the tab.
  */
 export function followMailSwitch(
   userId: string | null,
@@ -199,7 +207,7 @@ export function followMailSwitch(
   if (!on) {
     if (current) {
       Log.i('MAIL', 'the mail switch is off - the open mailbox is ended');
-      void endCurrent('mail switched off');
+      void endCurrent('mail switched off', { keepRemembered: true });
     }
     return;
   }

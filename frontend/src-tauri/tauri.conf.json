@@ -21,7 +21,7 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self' 'wasm-unsafe-eval' 'sha256-qBiA5434zE04afxzMjcm1MG10aiSRtKOxgJL438PYx4='",
+        "script-src": "'self' 'wasm-unsafe-eval' 'sha256-5F0TKgMuuNjwe0z3swA3ySBYTfdWm7wXi3IYTmwOjKA='",
         "style-src": "'self' 'unsafe-inline'",
         "connect-src": "'self' ipc: http://ipc.localhost blob: https://canari.emse.fr wss://canari.emse.fr https://canari-emse.fr wss://canari-emse.fr https://www.canari-emse.fr wss://www.canari-emse.fr https://dev.canari-emse.fr wss://dev.canari-emse.fr",
         "img-src": "'self' data: blob: https:",
@@ -35,7 +35,7 @@
       },
       "devCsp": {
         "default-src": "'self'",
-        "script-src": "'self' 'wasm-unsafe-eval' http://localhost:1420 http://127.0.0.1:1420 'sha256-qBiA5434zE04afxzMjcm1MG10aiSRtKOxgJL438PYx4='",
+        "script-src": "'self' 'wasm-unsafe-eval' http://localhost:1420 http://127.0.0.1:1420 'sha256-5F0TKgMuuNjwe0z3swA3ySBYTfdWm7wXi3IYTmwOjKA='",
         "style-src": "'self' 'unsafe-inline' http://localhost:1420 http://127.0.0.1:1420",
         "connect-src": "'self' ipc: http://ipc.localhost blob: https://canari.emse.fr wss://canari.emse.fr https://canari-emse.fr wss://canari-emse.fr https://www.canari-emse.fr wss://www.canari-emse.fr https://dev.canari-emse.fr wss://dev.canari-emse.fr http://localhost:1420 ws://localhost:1420 http://127.0.0.1:1420 ws://127.0.0.1:1420",
         "img-src": "'self' data: blob: https: http://localhost:1420 http://127.0.0.1:1420",

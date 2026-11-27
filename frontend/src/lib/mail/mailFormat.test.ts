@@ -69,6 +69,14 @@ describe('attachmentFileName (review I4)', () => {
     expect(attachmentFileName('a\u0000b\u001fc\u007f.txt')).toBe('abc.txt');
   });
 
+  it('drops bidi controls, Windows-reserved characters and trailing dots or spaces (M-3)', () => {
+    // U+202E makes "facture[U+202E]fdp.exe" read as "facture" + "exe.pdf".
+    expect(attachmentFileName('facture\u202efdp.exe')).toBe('facturefdp.exe');
+    expect(attachmentFileName('a\u2066b\u2069c\u200e\u200f.txt')).toBe('abc.txt');
+    expect(attachmentFileName('ra<p>p"o|r?t*.pdf')).toBe('rapport.pdf');
+    expect(attachmentFileName('photo.jpg. . ')).toBe('photo.jpg');
+  });
+
   it('gives the generic name when nothing is left', () => {
     for (const name of ['', '..', '/', 'dir/', ' . ']) {
       expect(attachmentFileName(name)).toBe(m.mail_attachment_unnamed());

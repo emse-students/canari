@@ -100,21 +100,27 @@ export function mailListQuery(search: string, filter: MailListFilter): string {
   return [search.trim(), FILTER_TERMS[filter]].filter(Boolean).join(' ');
 }
 
-/** The characters a saved name never keeps: control characters and the drive/stream separator. */
-// eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
-const UNSAFE_NAME_CHARACTERS = /[\u0000-\u001f\u007f:]/g;
+/**
+ * The characters a saved name never keeps: control characters, the drive/stream separator, the
+ * characters Windows reserves (`<>"|?*`), and the bidirectional controls that make `exe.pdf` read
+ * as `fdp.exe` (U+202A-202E, U+2066-2069, U+200E/U+200F).
+ */
+const UNSAFE_NAME_CHARACTERS =
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
+  /[\u0000-\u001f\u007f:<>"|?*\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /**
  * The name an attachment is SAVED under: the sender's filename reduced to a bare basename. The name
  * is written by a stranger, and a save dialog or a download takes it as a path hint - so every
- * directory part (`/`, `\`), drive or stream separator (`:`), control character and leading dot (a
- * hidden or `..` name) is removed. Nothing left gives the generic "attachment" name.
+ * directory part (`/`, `\`), drive or stream separator (`:`), character Windows reserves, control or
+ * bidirectional character, leading dot (a hidden or `..` name) and trailing dot or space (which
+ * Windows drops, changing the type) is removed. Nothing left gives the generic "attachment" name.
  */
 export function attachmentFileName(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? '';
   const cleaned = base
     .replace(UNSAFE_NAME_CHARACTERS, '')
     .replace(/^[\s.]+/, '')
-    .trim();
+    .replace(/[\s.]+$/, '');
   return cleaned || m.mail_attachment_unnamed();
 }

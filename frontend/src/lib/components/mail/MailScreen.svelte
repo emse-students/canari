@@ -50,7 +50,7 @@
   import { mailListQuery, type MailListFilter } from '$lib/mail/mailFormat';
   import { mailSwipeSides, type MailSwipeAction } from '$lib/mail/mailGestures';
   import { isArchiveFolder } from '$lib/mail/mailStore.svelte';
-  import type { MailMessage, MailActionOp } from '$lib/mail/mailTypes';
+  import type { MailMessage, MailActionOp, OutgoingMessage } from '$lib/mail/mailTypes';
   import {
     viewScope,
     type MailComposeState,
@@ -248,6 +248,12 @@
     compose = { initial, title };
   }
 
+  /** A new message prefilled from a `mailto:` link of a mail (`mailtoMessage`). */
+  function openComposeWith(initial: OutgoingMessage) {
+    Log.d('MAIL-UI', 'compose from a mailto link');
+    compose = { initial, title: m.mail_compose_new() };
+  }
+
   async function signIn(password: string, remember: boolean) {
     await client.session.signIn(password, remember);
   }
@@ -400,6 +406,7 @@
     onAction={(action, ids) => void apply(action, ids)}
     onMore={(ids, flagged) => (sheet = { kind: 'more', ids, flagged })}
     onCompose={(kind, message) => openCompose(kind, message)}
+    onComposeMessage={openComposeWith}
   />
 {/snippet}
 

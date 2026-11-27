@@ -13,7 +13,9 @@ import { MAIL_FRAME_MAX_HEIGHT_PX } from '$lib/mail/mailFrameMessages';
 import type { AttachmentRef } from '$lib/mail/mailTypes';
 import MailHtmlFrame from './MailHtmlFrame.svelte';
 
-const openExternal = vi.hoisted(() => vi.fn(async (_url: string) => {}));
+const openExternal = vi.hoisted(() =>
+  vi.fn(async (_url: string, _options?: { siteHandoff?: boolean }) => {})
+);
 vi.mock('$lib/utils/openExternal', () => ({ openExternal }));
 
 type FrameProps = ComponentProps<typeof MailHtmlFrame>;
@@ -51,6 +53,7 @@ function render(props: Partial<FrameProps>): HTMLElement {
       attachments: [],
       api: { download: vi.fn() },
       title: 'Sujet',
+      onMailto: vi.fn(),
       ...props,
     } as FrameProps,
   });
@@ -140,15 +143,49 @@ describe('MailHtmlFrame', () => {
     expect(iframe.style.height).toBe(`${MAIL_FRAME_MAX_HEIGHT_PX}px`);
   });
 
-  it('routes a pressed link through the app link path, and only a safe one from its frame', () => {
+  it('routes a pressed link through the app link path WITHOUT the sibling-site handoff (I-2)', async () => {
     const root = render({ html: '<a href="https://example.test/a">a</a>' });
     const own = root.querySelector('iframe')!.contentWindow;
 
     post({ type: 'mail-frame-link', href: 'https://example.test/a' }, own);
-    expect(openExternal).toHaveBeenCalledExactlyOnceWith('https://example.test/a');
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith('https://example.test/a', {
+      siteHandoff: false,
+    });
+    await settle();
 
     post({ type: 'mail-frame-link', href: 'javascript:alert(1)' }, own);
     post({ type: 'mail-frame-link', href: 'https://example.test/b' }, window);
     expect(openExternal).toHaveBeenCalledOnce();
+  });
+
+  it('opens the same address once while it is still opening - one gesture (M-1)', async () => {
+    let finish!: () => void;
+    openExternal.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+    const root = render({});
+    const own = root.querySelector('iframe')!.contentWindow;
+    const link = { type: 'mail-frame-link', href: 'https://example.test/a' };
+
+    post(link, own);
+    post(link, own);
+    expect(openExternal).toHaveBeenCalledOnce();
+
+    finish();
+    await settle();
+    post(link, own);
+    expect(openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens Canari's composer for a mailto link, never the browser (M-6)", () => {
+    const onMailto = vi.fn();
+    const root = render({ onMailto });
+    const own = root.querySelector('iframe')!.contentWindow;
+
+    post({ type: 'mail-frame-link', href: 'mailto:bde@example.test?subject=Gala' }, own);
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(onMailto).toHaveBeenCalledOnce();
+    expect(onMailto.mock.calls[0][0]).toMatchObject({
+      to: [{ address: 'bde@example.test', name: null }],
+      subject: 'Gala',
+    });
   });
 });

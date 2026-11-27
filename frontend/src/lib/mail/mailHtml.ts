@@ -18,7 +18,8 @@ import type { AttachmentRef } from './mailTypes';
  *    `data:`. "Afficher les images" adds `https:` to `img-src` for THAT message, and nothing else. A
  *    `srcdoc` frame also inherits the app's own policy, so this one can only narrow it.
  * 3. **A cleaning pass** over an inert parse (`DOMParser` runs nothing): scripts, frames, plugins,
- *    forms and `<base>`/`<meta>`/`<link>` removed, every `on*` handler and `ping` removed. EVERY
+ *    forms and `<base>`/`<meta>`/`<link>` removed (and `base-uri 'none'` in the policy), every `on*`
+ *    handler, `ping` and `autofocus` removed. EVERY
  *    `href` (any element, SVG's `<a>` and `xlink:href` included) is removed: a web or mail address
  *    (`SAFE_LINK`) on a link moves to `data-mail-href`, which our script hands to the app - nothing
  *    in the frame navigates. An SVG `<image>` keeps its source through the image rules. Viewport
@@ -142,6 +143,7 @@ export function mailFramePolicy(showRemoteImages: boolean): string {
     "style-src 'unsafe-inline'",
     'font-src data:',
     "form-action 'none'",
+    "base-uri 'none'",
   ].join('; ');
 }
 
@@ -260,6 +262,8 @@ export function mailFrameDocument(html: string, options: MailFrameOptions): stri
     }
     el.removeAttribute('ping');
     el.removeAttribute('target');
+    // A mail does not choose where the reader's focus goes (second review, I-3).
+    el.removeAttribute('autofocus');
     if (el.localName === 'img') {
       const source = sourceOf(el, IMAGE_SOURCES);
       for (const name of IMAGE_SOURCES) el.removeAttribute(name);

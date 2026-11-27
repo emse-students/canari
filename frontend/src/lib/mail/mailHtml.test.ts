@@ -57,6 +57,13 @@ describe('mailFrameDocument', () => {
     expect(doc.body.textContent).toContain('hi');
   });
 
+  it('strips autofocus: a mail does not choose where focus goes (I-3)', () => {
+    const doc = frame(
+      '<p tabindex="0" autofocus>x</p><details open><summary autofocus>s</summary></details>'
+    );
+    expect(attributeNames(doc)).not.toContain('autofocus');
+  });
+
   it("drops the mail's own base, meta and link, and puts its policy first, with no base of its own", () => {
     const doc = frame(
       `<head><base href="https://evil.test/"><meta http-equiv="refresh" content="0;url=https://evil.test">
@@ -103,6 +110,7 @@ describe('mailFrameDocument', () => {
       const policy = mailFramePolicy(show);
       expect(policy).toContain("default-src 'none'");
       expect(policy).toContain("form-action 'none'");
+      expect(policy).toContain("base-uri 'none'");
       expect(policy).toContain(`script-src '${MAIL_FRAME_SCRIPT_HASH}'`);
       expect(policy).not.toMatch(/script-src[^;]*(unsafe|https?:|\*)/);
     }

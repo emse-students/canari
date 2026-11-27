@@ -34,7 +34,7 @@
     mailListDate,
   } from '$lib/mail/mailFormat';
   import { isInlineImagePart } from '$lib/mail/mailHtml';
-  import type { MailConversation, MailMessage } from '$lib/mail/mailTypes';
+  import type { MailConversation, MailMessage, OutgoingMessage } from '$lib/mail/mailTypes';
   import type { MailUiAction } from '$lib/mail/mailView';
   import { getInitials } from '$lib/utils/avatar';
   import { formatFileSize } from '$lib/utils/fileSize';
@@ -56,6 +56,8 @@
     onMore: (ids: string[], flagged: boolean) => void;
     /** Reply, reply all, forward. */
     onCompose: (kind: 'reply' | 'reply_all' | 'forward', message: MailMessage) => void;
+    /** A `mailto:` link of a mail was pressed: a new message, prefilled from it. */
+    onComposeMessage: (initial: OutgoingMessage) => void;
   }
 
   let {
@@ -68,6 +70,7 @@
     onAction,
     onMore,
     onCompose,
+    onComposeMessage,
   }: Props = $props();
 
   let conversation = $state<MailConversation | null>(null);
@@ -280,6 +283,7 @@
                   attachments={message.attachments}
                   api={client.api}
                   title={conversation.subject || m.mail_no_subject()}
+                  onMailto={onComposeMessage}
                 />
               {:else}
                 <p class="text-text-main text-base break-words whitespace-pre-wrap">

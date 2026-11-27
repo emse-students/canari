@@ -697,15 +697,21 @@ the app's cookies, and sizing from `scrollHeight` loops without end on a `min-he
    one script.
 2. **A CSP `<meta>`** in the frame's own head: `default-src 'none'; script-src 'sha256-<our
    script>'; img-src data: [https: after "Afficher les images"]; style-src 'unsafe-inline';
-   font-src data:; form-action 'none'`. A script of the mail revived past the cleaning pass is
+   font-src data:; form-action 'none'; base-uri 'none'`. A script of the mail revived past the
+   cleaning pass is
    refused by the hash. A `srcdoc` frame also inherits its parent's policy, so the SAME hash is in
    the web page's (`WEB_POLICY_DIRECTIVES` in `security/cspDirectives.js`, which nginx's
    `csp.conf` in `infrastructure/local/Dockerfile.frontend` must equal) and the native WebView's
    (`tauri.conf.json`, `csp` and `devCsp`). The hash is written ONCE as a value
    (`MAIL_FRAME_SCRIPT_HASH`, next to the script's text); `mailFrameScript.test.ts` computes it
-   from the text and fails, naming the new one, if any of the four disagrees.
+   from the text and fails, naming the new one, if any of the four disagrees. **The page's own
+   `frame-src 'self'` is LOAD-BEARING for the mail frame** (second review, I-3): the frame is a
+   frame of the app's page, so a change of that directive (web or Tauri) decides whether the mail
+   is drawn at all, and must be re-read against `MailHtmlFrame` on every platform -
+   `mailFrameScript.test.ts` holds it to `'self'`.
 3. **A cleaning pass** over an inert `DOMParser` document: scripts, frames, plugins, forms,
-   `base`/`meta`/`link` removed; every `on*` attribute, `ping` and `target` removed. **EVERY
+   `base`/`meta`/`link` removed; every `on*` attribute, `ping`, `target` and `autofocus` removed.
+   **EVERY
    `href`, on any element, by local name** (SVG `<a>`, `area`, `xlink:href` - review I1) is
    removed: a link's `https:`/`http:`/`mailto:` address (`isSafeMailLink`) moves to
    `data-mail-href` (with `role="link"`, `tabindex="0"`), anything else is dropped. An SVG
@@ -713,15 +719,30 @@ the app's cookies, and sizing from `scrollHeight` loops without end on a `min-he
    `dvh`, `svh`, `lvh`, `vmin`, `vmax`) in style attributes and sheets become pixels (1vh = 8px),
    so a length cannot grow with the frame it sizes.
 
-**Our script** (`MAIL_FRAME_SCRIPT`) posts two messages to the parent: `{type:'mail-frame-height',
-h}` on load and on a `ResizeObserver` of the root and body, only when the height changed; and
-`{type:'mail-frame-link', href}` when a `data-mail-href` element is clicked or gets Enter. The
+**Our script** (`MAIL_FRAME_SCRIPT`) posts two messages to the parent:
+`{type:'mail-frame-height', h}` - the CONTENT's height, when it changed - and
+`{type:'mail-frame-link', href}` when a `data-mail-href` element is clicked or gets Enter (a held
+key's `repeat` ignored, M-1). **The height is read at a zero-height marker the script keeps last in
+the body** (plus the body's bottom padding, border and margin), never from the html or body boxes:
+those follow the frame's own height, and `html,body{height:100%} body{padding-bottom:1px}` made a
+box measure grow the frame by one pixel a round up to the cap (second review, I-1). It is measured
+on load, on every resource load (a capturing `load` listener - a body of fixed height does not
+resize when an image arrives) and on a resize of the root or body. The
 parent (`MailHtmlFrame`) accepts a message ONLY when `event.source` is its own frame's window, and
 only in the two shapes `mailFrameMessages.ts` reads (a finite height; an address `isSafeMailLink`
 accepts again). The height is drawn as is, CAPPED at 20000 px (`MAIL_FRAME_MAX_HEIGHT_PX`; beyond
 it the frame scrolls inside, and the cap is logged): the cap is what proves the sizing ends,
-whatever the mail's CSS. A link goes through `openExternal` - the app's ONE link path, Safe Browsing
-gate included - so no `_blank` and no WebView default decide where it opens, on any platform.
+whatever the mail's CSS. A link goes through `openExternal(href, { siteHandoff: false })` - the
+app's ONE link path, Safe Browsing gate included, but NEVER the sibling-site sign-in handoff
+(`openEcosystemSiteLink`): a mail is written by anyone on the internet (second review, I-2). The same
+address pressed again while it is still opening is dropped - one gesture, opened once (M-1, an
+in-flight marker, no clock). **A `mailto:` link opens Canari's own composer** (decided, lead
+2026-11-27, M-6): `mailtoMessage` (`mailCompose.ts`) parses it by RFC 6068 by hand (`+` stays a
+plus), keeps `to`, `cc`, `bcc`, `subject` and `body` only - a stranger's link chooses no sender,
+reply-to or attachment - and only plain addresses; no Safe Browsing lookup and no `window.open`.
+`window.open`'s `null` is NOT read as a failure (second review, M-2, not applied): with
+`noopener` the HTML spec returns `null` even when the tab opened, so it cannot tell a blocked popup
+from an opened one, and logging it would accuse every success.
 Checked in headless Chrome on the preview: the frame reported its height, and a real click on the
 gala mail's link opened it through `openExternal` in a new tab, the frame navigating nowhere.
 
@@ -748,19 +769,27 @@ The frame's own default style (`mailFrameDocument`) has LITERAL values, not the 
 frame is another document, which `app.css` never reaches, and a mail is written for a light page,
 so the frame stays light in the dark theme.
 
-**An attachment is saved under a bare basename** (`attachmentFileName`, review I4): directory parts,
-`:`, control characters and leading dots are removed before `saveBlobAs`.
+**An attachment is saved under a bare basename** (`attachmentFileName`, review I4 and M-3):
+directory parts, `:`, the characters Windows reserves (`<>"|?*`), control characters, the
+bidirectional controls (U+202A-202E, U+2066-2069, U+200E/F - `exe.pdf` drawn as `fdp.exe`), leading
+dots and trailing dots or spaces are removed before `saveBlobAs`.
 
 ### The sign-out
 
 `auth.ts`'s `clearAuthUnderway` (every Canari sign-out: by choice, expiry, revocation) calls
 `endMailOnSignOut(reason, leavingUserId)` (`mail/mailSignOut.ts`), which runs the sign-out the
 current `MailClient` registered - `MailSession.signOut()`: the token dropped, the remembered
-password forgotten, the server told - and then **forgets the leaving account's sealed mail password
-in every case** (`forgetMailPassword`, review I3): a password sealed in an earlier visit is on the
-device whether or not this visit built a client. It never throws. `auth.ts` does not import the
-mail client's graph. An account switch ends the previous client too (`mailClientFor`), and **the
-switch turned off ends a client already built** (`followMailSwitch`, review M5).
+password forgotten, the server told. **The leaving account's sealed mail password is forgotten
+FIRST, in every case** (`forgetMailPassword`, review I3 and M-4): before any await, so a server that
+does not answer cannot leave it behind, and whether or not this visit built a client - a password
+sealed in an earlier visit is on the device either way. It never throws. `auth.ts` does not import
+the mail client's graph. An account switch ends the previous client too (`mailClientFor`).
+
+**The server's switch turned off** (`followMailSwitch`, review M5) ends the in-memory client and
+the server session, but **KEEPS the sealed remembered password** (decided, lead 2026-11-27, M-5):
+the switch is a kill switch, not the reader's choice to forget, so the mailbox resumes when it is
+turned back on. Only a reader's sign-out of the mailbox, a Canari sign-out or D8 forget it
+(`MailSession.signOut({ keepRemembered: true })` is the switch's alone).
 
 ### The dev preview
 
@@ -787,7 +816,12 @@ client), the store's archive (created once at the root, reused) and whole-mailbo
 components `MailSignIn` (no address field; the pending state and its button), `MailStatePanel` and
 `MailHtmlFrame` (no frame before the inline parts settle, then ONE carrying them; a failed part
 still draws it; allowing images is a new frame; the sandbox is `allow-scripts` alone; height and
-links accepted only from its own frame, the height capped).
+links accepted only from its own frame, the height capped; a link opened without the handoff and
+once per gesture; a `mailto:` to the composer). After the second review: the frame script run
+against stand-ins (the content measured, so a frame grown one pixel a round reports nothing new; a
+held Enter sends one link), `frame-src 'self'` held, `mailtoMessage` (`mailCompose.test.ts`),
+`openExternal`'s `siteHandoff: false` (`openExternal.test.ts`), the password forgotten before the
+server is told, and kept by the switch (`mailSession.test.ts`, `mailClient.svelte.test.ts`).
 
 ### Still open after lot 3
 

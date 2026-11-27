@@ -12,8 +12,10 @@
    * THIS frame's window (`event.source`) and only in the shapes `mailFrameMessages.ts` reads:
    *  - its document's height: the frame is drawn that tall (capped at `MAIL_FRAME_MAX_HEIGHT_PX`,
    *    beyond which it scrolls inside, the cap logged), so the reader scrolls the page once;
-   *  - a pressed link: routed through `openExternal` - the app's ONE link path, Safe Browsing gate
-   *    included - so no `_blank` and no WebView default decide where it opens, on any platform.
+   *  - a pressed link: a `mailto:` opens Canari's own composer, prefilled (`mailtoMessage`); any
+   *    other goes through `openExternal` - the app's ONE link path, Safe Browsing gate included,
+   *    the sibling-site sign-in handoff refused - so no `_blank` and no WebView default decide where
+   *    it opens, on any platform. The same address pressed again while it opens is dropped.
    *
    * REMOTE IMAGES ARE BLOCKED until the reader presses "Afficher les images" for THIS message (charter
    * principle 3). The message's own inline images (`cid:`) are fetched from its own parts and shown
@@ -40,7 +42,8 @@
     remoteImageCount,
   } from '$lib/mail/mailHtml';
   import { cappedFrameHeight, readMailFrameMessage } from '$lib/mail/mailFrameMessages';
-  import type { AttachmentRef } from '$lib/mail/mailTypes';
+  import { mailtoMessage } from '$lib/mail/mailCompose';
+  import type { AttachmentRef, OutgoingMessage } from '$lib/mail/mailTypes';
   import { openExternal } from '$lib/utils/openExternal';
   import { Log } from '$lib/utils/Log';
 
@@ -51,9 +54,14 @@
     api: Pick<MailApi, 'download'>;
     /** The frame's accessible name (the subject). */
     title: string;
+    /** A `mailto:` link was pressed: Canari's own composer opens with this message. */
+    onMailto: (message: OutgoingMessage) => void;
   }
 
-  let { html, attachments, api, title }: Props = $props();
+  let { html, attachments, api, title, onMailto }: Props = $props();
+
+  /** The address being opened now: the same address again before it settles is one gesture. */
+  let linkInFlight: string | null = null;
 
   /** The frame's sandbox: our one script, nothing else (no same-origin, popup, form, navigation). */
   const SANDBOX = 'allow-scripts';
@@ -134,8 +142,23 @@
       if (height !== frameHeight) frameHeight = height;
       return;
     }
+    const prefilled = mailtoMessage(message.href);
+    if (prefilled !== null) {
+      Log.d('MAIL-UI', 'a mailto link of the mail opens the composer');
+      onMailto(prefilled);
+      return;
+    }
+    if (linkInFlight === message.href) {
+      Log.d('MAIL-UI', 'the same link pressed again while it opens - one gesture, opened once');
+      return;
+    }
     Log.d('MAIL-UI', 'a link of the mail is opened through the app');
-    void openExternal(message.href);
+    linkInFlight = message.href;
+    // `siteHandoff: false`: a mail is written by anyone on the internet, so its link never opens a
+    // sibling site signed in (review I-2). The Safe Browsing gate still runs.
+    void openExternal(message.href, { siteHandoff: false }).finally(() => {
+      linkInFlight = null;
+    });
   }
 
   $effect(() => {

@@ -260,14 +260,21 @@ export class MailSession {
    * Signs out: the epoch moves, the token is dropped and the remembered password forgotten BEFORE
    * the first await (a renewal or a sign-in in flight finds the epoch moved and installs nothing),
    * then the server is told, then the connection closed.
+   *
+   * `keepRemembered` keeps the sealed password: ONLY for the server's switch turned off (lead,
+   * 2026-11-27, review M-5) - a kill switch, not the reader's choice to forget. A reader's sign-out,
+   * a Canari sign-out and D8 forget it.
    */
-  async signOut(): Promise<void> {
-    Log.d('MAIL', 'sign-out requested');
+  async signOut(options: { keepRemembered?: boolean } = {}): Promise<void> {
+    Log.d(
+      'MAIL',
+      `sign-out requested${options.keepRemembered ? ' (remembered password kept)' : ''}`
+    );
     this.epoch++;
     const token = this.token;
     this.token = null;
     this.authName = null;
-    forgetMailPassword(this.context.userId, this.store);
+    if (!options.keepRemembered) forgetMailPassword(this.context.userId, this.store);
     this.setState({ kind: 'signed_out' });
     if (token) await this.endQuietly(token);
     this.soap.close();

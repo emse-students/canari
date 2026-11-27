@@ -28,7 +28,10 @@ describe('followMailSwitch', () => {
     expect(currentMailClient()).toBe(client);
 
     followMailSwitch('user-1', false, () => client);
-    await vi.waitFor(() => expect(end).toHaveBeenCalledWith('mail switched off'));
+    // The session ends on the server, the sealed password is KEPT (review M-5, decided).
+    await vi.waitFor(() =>
+      expect(end).toHaveBeenCalledWith('mail switched off', { keepRemembered: true })
+    );
     expect(currentMailClient()).toBeNull();
   });
 

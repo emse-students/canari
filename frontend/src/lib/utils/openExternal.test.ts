@@ -227,6 +227,22 @@ describe('openExternal', () => {
     expect(openUrl).not.toHaveBeenCalled();
   });
 
+  it('never hands a link to the sibling-site handoff when the caller refuses it (a mail link)', async () => {
+    confirmUnsafeLinkIfNeeded.mockResolvedValue(true);
+    openEcosystemSiteLink.mockReturnValue(true);
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    await openExternal('https://site.example/mes-photos', { siteHandoff: false });
+
+    expect(confirmUnsafeLinkIfNeeded).toHaveBeenCalledWith('https://site.example/mes-photos');
+    expect(openEcosystemSiteLink).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(
+      'https://site.example/mes-photos',
+      '_blank',
+      'noopener,noreferrer'
+    );
+  });
+
   it('opens a link the handoff declines exactly as before', async () => {
     confirmUnsafeLinkIfNeeded.mockResolvedValue(true);
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);

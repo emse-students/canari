@@ -59,6 +59,17 @@ describe('endMailOnSignOut', () => {
     expect(store.getItem(ACCOUNT_KEY.mailSealedPassword('user-1'))).toBeNull();
   });
 
+  it('forgets the password FIRST, before the client signs out of the server (review M-4)', async () => {
+    const store = storeWithPassword('user-1');
+    let seenByClient: string | null = 'not called';
+    const unregister = registerMailSignOut(async () => {
+      seenByClient = store.getItem(ACCOUNT_KEY.mailSealedPassword('user-1'));
+    });
+    await endMailOnSignOut('signed out', 'user-1', store);
+    expect(seenByClient).toBeNull();
+    unregister();
+  });
+
   it("forgets only the leaving account's password, after a failed client sign-out too", async () => {
     const store = storeWithPassword('user-1');
     store.setItem(ACCOUNT_KEY.mailSealedPassword('user-2'), 'other');

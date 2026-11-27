@@ -32,36 +32,33 @@ export function registerMailSignOut(signOut: MailSignOut): () => void {
 }
 
 /**
- * Ends the mail session, when one exists, because the Canari session ended, and forgets the
- * remembered password of `leavingUserId` in every case. Never throws: a sign-out of Canari must go
- * on whatever the mailbox answers, and a failure is logged as one.
+ * Forgets the remembered password of `leavingUserId` FIRST (review M-4: before any await, so no
+ * path that stalls on the network can leave it behind), then ends the mail session, when one
+ * exists, because the Canari session ended. Never throws: a sign-out of Canari must go on whatever
+ * the mailbox answers, and a failure is logged as one.
  */
 export async function endMailOnSignOut(
   reason: string,
   leavingUserId: string | null,
   store?: Storage
 ): Promise<void> {
+  if (leavingUserId === null) {
+    Log.d('MAIL', `canari sign-out (${reason}): no account id, no remembered password to forget`);
+  } else {
+    try {
+      forgetMailPassword(leavingUserId, store ?? localStorage);
+    } catch (err) {
+      Log.w('MAIL', `ERROR: the remembered mail password was not forgotten (${reason})`, err);
+    }
+  }
   const signOut = registered;
   if (!signOut) {
     Log.d('MAIL', `canari sign-out (${reason}): no mail client to end`);
-  } else {
-    try {
-      await signOut(reason);
-    } catch (err) {
-      Log.w(
-        'MAIL',
-        `ERROR: the mail session did not end with the canari sign-out (${reason})`,
-        err
-      );
-    }
-  }
-  if (leavingUserId === null) {
-    Log.d('MAIL', `canari sign-out (${reason}): no account id, no remembered password to forget`);
     return;
   }
   try {
-    forgetMailPassword(leavingUserId, store ?? localStorage);
+    await signOut(reason);
   } catch (err) {
-    Log.w('MAIL', `ERROR: the remembered mail password was not forgotten (${reason})`, err);
+    Log.w('MAIL', `ERROR: the mail session did not end with the canari sign-out (${reason})`, err);
   }
 }
