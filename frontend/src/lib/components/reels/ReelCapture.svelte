@@ -1048,6 +1048,9 @@
             onrelease={(at) => send({ type: 'release', at })}
             oncancel={() => send({ type: 'cancel' })}
             onmove={onShutterMove}
+            locked={capture.kind === 'recording' && capture.locked === true}
+            onlock={() => send({ type: 'lock' })}
+            onstop={() => send({ type: 'stop' })}
           />
         </div>
         <div></div>

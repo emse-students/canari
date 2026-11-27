@@ -13,8 +13,16 @@
    * (`onmove`, positive UP), and the capture screen turns it into a zoom while a take is filmed
    * (`cameraZoom.ts`). The button is `touch-none` and holds the pointer, so the slide neither
    * scrolls nor reaches the page's own gestures.
+   *
+   * SLIDE LEFT TO LOCK (owner, 2026-11-27): while a take is held, a padlock appears LEFT of the
+   * button. Lifting the finger while it is over the padlock reports `onlock` INSTEAD of a release, the
+   * take carries on hands-free, and the button then shows stop: one tap on it reports `onstop`. Sliding
+   * back off the padlock before lifting locks nothing. The decision is read at the lift, from the
+   * pointer and the padlock's rectangle (`overPadlock`); no timer is involved.
    */
+  import { Lock } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { overPadlock } from '$lib/reels/reelCapture';
 
   interface Props {
     recording: boolean;
@@ -29,6 +37,12 @@
     oncancel: () => void;
     /** The held finger moved: its travel since the press, in CSS px, positive UP. */
     onmove?: (upPx: number) => void;
+    /** The take is locked (hands-free): the button is a stop. */
+    locked?: boolean;
+    /** The finger was lifted over the padlock: keep recording. */
+    onlock?: () => void;
+    /** A tap on the stop button of a locked take. */
+    onstop?: () => void;
   }
 
   let {
@@ -40,12 +54,34 @@
     onrelease,
     oncancel,
     onmove,
+    locked = false,
+    onlock,
+    onstop,
   }: Props = $props();
 
   /** The pointer this button is following, so a second finger is not a second press. */
   let pointerId: number | null = null;
   /** Where the followed pointer came down, for the slide's travel. */
   let pressY = 0;
+  /** The followed press is a tap on the STOP of a locked take, not a new press. */
+  let stopTap = false;
+  /** A finger is down on the button (the padlock is offered while it is). */
+  let holding = $state(false);
+  /** The held finger is over the padlock now. */
+  let overLock = $state(false);
+  let padlockEl: HTMLElement | undefined = $state();
+  /** Margin around the padlock, in CSS px, so a thumb need not land on its exact pixels. */
+  const PADLOCK_SLOP_PX = 12;
+
+  function padlockHit(event: PointerEvent): boolean {
+    if (!padlockEl) return false;
+    return overPadlock(
+      event.clientX,
+      event.clientY,
+      padlockEl.getBoundingClientRect(),
+      PADLOCK_SLOP_PX
+    );
+  }
 
   /** The ring's circumference in the SVG's own units (r = 45). */
   const CIRCUMFERENCE = 2 * Math.PI * 45;
@@ -54,25 +90,51 @@
     if (disabled || pointerId !== null) return;
     pointerId = event.pointerId;
     pressY = event.clientY;
+    stopTap = locked;
+    holding = !locked;
+    overLock = false;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     event.preventDefault();
+    if (stopTap) return;
     onpress(event.timeStamp);
   }
 
   function move(event: PointerEvent) {
-    if (event.pointerId !== pointerId) return;
+    if (event.pointerId !== pointerId || stopTap) return;
+    if (recording) overLock = padlockHit(event);
     onmove?.(pressY - event.clientY);
   }
 
   function up(event: PointerEvent) {
     if (event.pointerId !== pointerId) return;
     pointerId = null;
+    if (stopTap) {
+      stopTap = false;
+      console.debug('[reel-shutter] tap on stop of a locked take');
+      onstop?.();
+      return;
+    }
+    const lock = recording && padlockHit(event);
+    holding = false;
+    overLock = false;
+    if (lock) {
+      console.debug('[reel-shutter] lifted over the padlock: the take is locked');
+      onlock?.();
+      return;
+    }
     onrelease(event.timeStamp);
   }
 
   function cancel(event: PointerEvent) {
     if (event.pointerId !== pointerId) return;
     pointerId = null;
+    holding = false;
+    overLock = false;
+    if (stopTap) {
+      // The system took a would-be stop tap: the take stays locked, nothing was decided.
+      stopTap = false;
+      return;
+    }
     console.debug('[reel-shutter] pointer cancelled');
     oncancel();
   }
@@ -82,6 +144,10 @@
     if (disabled || (event.key !== 'Enter' && event.key !== ' ')) return;
     event.preventDefault();
     if (event.repeat) return;
+    if (locked) {
+      onstop?.();
+      return;
+    }
     onpress(event.timeStamp);
     onrelease(event.timeStamp);
   }
@@ -96,40 +162,60 @@
   >
     {timeLabel}
   </span>
-  <button
-    type="button"
-    class="focus-visible:ring-accent-icon relative h-20 w-20 touch-none rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 disabled:opacity-40"
-    aria-label={recording ? m.reels_shutter_stop() : m.reels_shutter_capture()}
-    aria-pressed={recording}
-    data-reel-shutter
-    {disabled}
-    onpointerdown={down}
-    onpointermove={move}
-    onpointerup={up}
-    onpointercancel={cancel}
-    onkeydown={key}
-    oncontextmenu={(e) => e.preventDefault()}
-  >
-    <svg viewBox="0 0 100 100" class="absolute inset-0 h-full w-full -rotate-90" aria-hidden="true">
-      <circle cx="50" cy="50" r="45" fill="none" class="stroke-white/40" stroke-width="6" />
-      <circle
-        cx="50"
-        cy="50"
-        r="45"
-        fill="none"
-        class="stroke-accent-icon"
-        stroke-width="6"
-        stroke-linecap="round"
-        stroke-dasharray={CIRCUMFERENCE}
-        stroke-dashoffset={CIRCUMFERENCE * (1 - fraction)}
-        data-reel-ring
-        data-fraction={fraction.toFixed(3)}
-      />
-    </svg>
-    <span
-      class="absolute inset-3 rounded-full transition-all duration-150 {recording
-        ? 'bg-accent inset-6 rounded-lg'
-        : 'bg-white'}"
-    ></span>
-  </button>
+  <div class="relative">
+    {#if holding && recording && !locked}
+      <span
+        bind:this={padlockEl}
+        role="img"
+        aria-label={m.reels_shutter_lock()}
+        class="absolute top-1/2 right-full mr-6 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-white transition-colors duration-150 {overLock
+          ? 'bg-accent'
+          : 'bg-black/40'}"
+        data-reel-padlock
+        data-engaged={overLock}
+      >
+        <Lock size={22} strokeWidth={2.5} />
+      </span>
+    {/if}
+    <button
+      type="button"
+      class="focus-visible:ring-accent-icon relative h-20 w-20 touch-none rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 disabled:opacity-40"
+      aria-label={recording ? m.reels_shutter_stop() : m.reels_shutter_capture()}
+      aria-pressed={recording}
+      data-reel-shutter
+      {disabled}
+      onpointerdown={down}
+      onpointermove={move}
+      onpointerup={up}
+      onpointercancel={cancel}
+      onkeydown={key}
+      oncontextmenu={(e) => e.preventDefault()}
+    >
+      <svg
+        viewBox="0 0 100 100"
+        class="absolute inset-0 h-full w-full -rotate-90"
+        aria-hidden="true"
+      >
+        <circle cx="50" cy="50" r="45" fill="none" class="stroke-white/40" stroke-width="6" />
+        <circle
+          cx="50"
+          cy="50"
+          r="45"
+          fill="none"
+          class="stroke-accent-icon"
+          stroke-width="6"
+          stroke-linecap="round"
+          stroke-dasharray={CIRCUMFERENCE}
+          stroke-dashoffset={CIRCUMFERENCE * (1 - fraction)}
+          data-reel-ring
+          data-fraction={fraction.toFixed(3)}
+        />
+      </svg>
+      <span
+        class="absolute inset-3 rounded-full transition-all duration-150 {recording
+          ? 'bg-accent inset-6 rounded-lg'
+          : 'bg-white'}"
+      ></span>
+    </button>
+  </div>
 </div>

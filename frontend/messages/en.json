@@ -5536,6 +5536,7 @@
   "reels_camera_torch_off": "Turn the flash off",
   "reels_shutter_capture": "Photo (tap) or video (hold)",
   "reels_shutter_stop": "Stop recording",
+  "reels_shutter_lock": "Lock recording: slide onto the padlock",
   "reels_capture_gallery": "Pick a video from the gallery",
   "reels_capture_record_error": "The recording failed. Try again.",
   "reels_capture_no_microphone": "Microphone unavailable: photos only. Allow the microphone to film.",
