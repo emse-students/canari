@@ -651,9 +651,12 @@ viewer is a full-screen PAGE (`/games/replay/[id]`, since 2026-11-25; it was a m
 whose arrow is a Back link. The stage
 takes every pixel the controls leave and **the whole grid is fitted to it** - `fitCellSize` picks the cell
 size from the stage's measured room, re-fitted by a `ResizeObserver` on every resize or rotation, clamped
-to 14-44 px (below 14 the cell's 12 px digit no longer fits) - so the grid is on screen whole. Its
+to 8-44 px - so the grid is on screen whole. THE FLOOR WAS 14 AND CUT THE LAST ROW (iPhone 12, `1.8.3-alpha.1`: the
+18 x 32 board needs 13 px cells in a ~476 pt stage, the clamp drew 14 and the bottom row sat under the control
+bar); the digit and the icon now scale with the cell (`replayGlyphSizes`, `--ms-digit` / `--ms-icon`), so a
+13 px cell stays readable. Its
 padding and gap are DRAWN from the numbers the fit uses, and the grid is centred with `m-auto`, so a
-stage too small for 14 px cells scrolls to the right and bottom instead of clipping its top and left. The
+stage too small for 8 px cells scrolls to the right and bottom instead of clipping its top and left. The
 viewer honours the device's animation setting (`--ms-anim` on its root), as the game does. One bar under it: play / pause (the surface's primary action),
 restart, the clock, a full-width scrubber, the move count with the last action (the cell it landed on is
 ringed) and 1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up

@@ -8572,3 +8572,19 @@ released on teardown; an `$effect` keyed on the ref; a VIDEO takes no hold - pin
 today's text label. The last two states are legitimate (original not loaded, expired, never opened)
 and log at debug only. A quote mounted before its original finished downloading takes the blob the moment it lands
 (`onDecryptedMediaHeld`, a one-shot arrival listener on `BlobUrlPool`; no polling, no remount).
+
+## A reply keeps its quote after a restart (2026-11-27)
+
+Read on the iPhone 12 (`1.8.3-alpha.1`): a photo sent as a reply showed its quote header and thumbnail
+until the app was killed, then drew as a plain photo. A stored row has NO `replyTo` field - the quote
+lives in the envelope of `content` - so a restart shows exactly what the envelope was written with, and
+the envelope was written without it. **Cause:** a file sent as a reply is queued with its quote in the
+encrypted payload, which the lane's queue read leaves undecoded for a media row. When the upload ended in
+this page life the lane rebuilt the entry as `{ ...slimRow, media: settled.media }`, so `buildMediaMessage`
+built the proto, the in-memory row and the stored row with no `replyTo`: the screen kept drawing the
+quote from the echo's in-memory `replyTo`, and **the peer never received it either**. The upload task now
+keeps the quote read from the full row (`UploadTask.replyTo`) and gives it back with the settled payload
+(`outbox.replyingFile.test.ts`: the frame carries `media.replyTo`). A second, separate cause of the
+same sight: `ChatMessageGroups` looked the quoted photo up by `msg.replyTo` only, so a row read back from
+the store lost its thumbnail even when its envelope kept the quote; `quotedIdOf` reads the envelope too.
+A reply sent from a build before this fix stays a plain photo on both sides: the quote was never written.

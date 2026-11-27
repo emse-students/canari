@@ -9,6 +9,7 @@ import { CHALLENGE, createBoard, revealCell, type MinesweeperBoard } from './gam
 import {
   createReplay,
   fitCellSize,
+  replayGlyphSizes,
   REPLAY_CELL_MAX_PX,
   REPLAY_CELL_MIN_PX,
   type ReplaySource,
@@ -121,6 +122,16 @@ describe('movesAt', () => {
   });
 });
 
+describe('replayGlyphSizes', () => {
+  it('keeps the full glyph sizes in a cell that holds them and scales them down in one that does not', () => {
+    expect(replayGlyphSizes(44)).toEqual({ digitPx: 12, iconPx: 14 });
+    const small = replayGlyphSizes(13);
+    expect(small.digitPx).toBeLessThanOrEqual(13);
+    expect(small.iconPx).toBeLessThanOrEqual(13);
+    expect(replayGlyphSizes(REPLAY_CELL_MIN_PX).digitPx).toBeGreaterThan(0);
+  });
+});
+
 describe('fitCellSize', () => {
   it('fits the whole board on a phone, limited by whichever side runs out first', () => {
     // 18 x 32 in 374 x 600: width allows 20 (374 - 17 gaps = 357 / 18 = 19.8), height 18 (600 - 31 = 569 / 32 = 17.8).
@@ -137,6 +148,28 @@ describe('fitCellSize', () => {
   it('never draws one smaller than the minimum, even in a space too small to hold the board', () => {
     expect(fitCellSize(50, 50, 18, 32)).toBe(REPLAY_CELL_MIN_PX);
     expect(fitCellSize(100, 100, 0, 0)).toBe(REPLAY_CELL_MIN_PX);
+  });
+
+  it('fits the whole 18 x 32 board on an iPhone 12 stage, the last row included (read 2026-11-27)', () => {
+    // Measured: a stage ~476 pt tall and 390 wide, 16 of it padding. The old floor of 14 drew a grid
+    // of 479 pt in a 460 pt room.
+    const size = fitCellSize(390 - 16, 476 - 16, 18, 32, 1);
+    expect(size * 32 + 31).toBeLessThanOrEqual(476 - 16);
+    expect(size * 18 + 17).toBeLessThanOrEqual(390 - 16);
+    expect(size).toBe(13);
+  });
+
+  it('fits every board and room a floor-sized cell can hold, whole', () => {
+    for (const [w, h, cols, rows] of [
+      [374, 440, 18, 32],
+      [300, 400, 18, 32],
+      [374, 640, 9, 9],
+      [200, 300, 18, 32],
+    ] as const) {
+      const size = fitCellSize(w, h, cols, rows, 1);
+      const floorFits = REPLAY_CELL_MIN_PX * rows + (rows - 1) <= h;
+      if (floorFits) expect(size * rows + (rows - 1)).toBeLessThanOrEqual(h);
+    }
   });
 
   it('counts the gaps between cells, so the grid is never wider than its space', () => {

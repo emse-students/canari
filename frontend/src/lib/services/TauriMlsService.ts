@@ -143,6 +143,7 @@ type SealOutcome =
 /** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
 
+/** * The close code a LEAVING page sends (RFC 6455 "going away"). The patched websocket plugin * (`src-tauri/patches/tauri-plugin-websocket`, `GOING_AWAY`) stops forwarding frames on a connection * closed with it: the number is the contract between the two, change both or neither. */ export const PAGE_LEAVING_CLOSE_CODE = 1001;
 /**
  * MLS service implementation for Tauri (mobile/desktop).
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
@@ -683,7 +684,14 @@ export class TauriMlsService extends BaseMlsService {
       // invocations leave in order, the frame first; no watcher is registered, since nobody
       // is left to read what it would learn.
       const frame = ws.send(JSON.stringify({ type: 'disconnect' }));
-      const release = ws.disconnect();
+      // A CLOSE CODED 1001 ("going away"), NOT `disconnect()`'s 1000: the plugin's reader mutes the
+      // connection on it, so the server's answer to this very close - which arrives after the page is
+      // gone - is not forwarded into the dead page's channel (`Couldn't find callback id`, one line
+      // per reload on the iPhone 12, 1.8.3-alpha.1). Closing with 1000 still left one.
+      const release = ws.send({
+        type: 'Close',
+        data: { code: PAGE_LEAVING_CLOSE_CODE, reason: 'page leaving' },
+      });
       void frame.catch((e: unknown) =>
         console.log(`[WS] page leaving: the disconnect frame was not accepted (${String(e)})`)
       );

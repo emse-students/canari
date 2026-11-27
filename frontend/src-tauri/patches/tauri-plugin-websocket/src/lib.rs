@@ -38,7 +38,7 @@ use tokio_tungstenite::{
     },
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -106,6 +106,23 @@ impl Serialize for Error {
 
 #[derive(Default)]
 struct ConnectionManager(Mutex<HashMap<Id, WebSocketWriter>>);
+
+/// CANARI PATCH: the connections whose page asked to LEAVE (a close with [`GOING_AWAY`]). Their
+/// reader keeps running until the server answers the close, and every frame it forwards goes into
+/// the channel of a document that no longer exists: `[TAURI] Couldn't find callback id N` after a
+/// reload. A connection in this set forwards nothing more.
+#[derive(Default)]
+struct LeavingConnections(Mutex<HashSet<Id>>);
+
+/// CANARI PATCH: RFC 6455 close code 1001, "going away" - what a page sends when it is the one
+/// going, as opposed to 1000 (an ordinary close the page still listens to).
+const GOING_AWAY: u16 = 1001;
+
+/// CANARI PATCH: true when `message` is the close a LEAVING page sends, after which nothing it
+/// registered can receive a frame.
+fn is_going_away(message: &WebSocketMessage) -> bool {
+    matches!(message, WebSocketMessage::Close(Some(frame)) if frame.code == GOING_AWAY)
+}
 
 #[cfg(any(
     feature = "rustls-tls",
@@ -258,6 +275,7 @@ async fn connect<R: Runtime>(
         .await
         .insert(id, write);
 
+    let window_end = window.clone();
     tauri::async_runtime::spawn(async move {
         read.for_each(move |message| {
             let window_ = window.clone();
@@ -292,10 +310,28 @@ async fn connect<R: Runtime>(
                     Err(e) => serde_json::to_value(Error::from(e)).unwrap(),
                 };
 
+                // CANARI PATCH: a page that said it is going receives nothing more (see
+                // `LeavingConnections`); the writer's removal above already ran for a Close.
+                if window_
+                    .state::<LeavingConnections>()
+                    .0
+                    .lock()
+                    .await
+                    .contains(&id)
+                {
+                    return;
+                }
                 let _ = on_message_.send(response);
             }
         })
         .await;
+        // The reader ended: nothing is left to mute.
+        window_end
+            .state::<LeavingConnections>()
+            .0
+            .lock()
+            .await
+            .remove(&id);
     });
 
     Ok(id)
@@ -333,9 +369,14 @@ fn request_host_port(
 #[tauri::command]
 async fn send(
     manager: State<'_, ConnectionManager>,
+    leaving: State<'_, LeavingConnections>,
     id: Id,
     message: WebSocketMessage,
 ) -> Result<()> {
+    // CANARI PATCH: marked BEFORE the close is written, so the server's answer cannot beat it.
+    if is_going_away(&message) {
+        leaving.0.lock().await.insert(id);
+    }
     if let Some(write) = manager.0.lock().await.get_mut(&id) {
         write
             .send(match message {
@@ -402,6 +443,8 @@ impl Builder {
 
                 app.manage(ConnectionManager::default());
                 // CANARI PATCH
+                app.manage(LeavingConnections::default());
+                // CANARI PATCH
                 app.manage(TcpConnector(self.tcp_connector));
                 #[cfg(any(
                     feature = "rustls-tls",
@@ -430,6 +473,22 @@ mod tests {
         let value = serde_json::to_value(&err).unwrap();
         assert_eq!(value["kind"], "connect");
         assert_eq!(value["message"], "no address to connect to");
+    }
+
+    /// CANARI PATCH: only a close carrying 1001 mutes a connection; the ordinary `disconnect()` close
+    /// (1000), a frame and a bare close do not.
+    #[test]
+    fn only_a_going_away_close_is_a_leaving_page() {
+        let close = |code| {
+            WebSocketMessage::Close(Some(CloseFrame {
+                code,
+                reason: String::new(),
+            }))
+        };
+        assert!(is_going_away(&close(1001)));
+        assert!(!is_going_away(&close(1000)));
+        assert!(!is_going_away(&WebSocketMessage::Close(None)));
+        assert!(!is_going_away(&WebSocketMessage::Text("x".into())));
     }
 
     #[test]

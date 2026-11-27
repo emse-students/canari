@@ -8,7 +8,7 @@ import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vites
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { fitCellSize } from '$lib/minesweeper/replay';
+import { fitCellSize, replayGlyphSizes } from '$lib/minesweeper/replay';
 
 const api = vi.hoisted(() => ({ fetchReplay: vi.fn() }));
 vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
@@ -212,6 +212,17 @@ describe('MinesweeperReplay', () => {
       flushSync();
       expect(cellSize()).not.toBe(before);
       expect(cellSize()).toBe(`${fitCellSize(120 - 16, 120 - 16, 8, 8, 1)}px`);
+    });
+
+    it('scales the digit and icon with the fitted cell, so a small cell stays readable', async () => {
+      sizes.width = 120;
+      sizes.height = 120;
+      api.fetchReplay.mockResolvedValue(GAME);
+      await open();
+      const board = document.querySelector<HTMLElement>('[data-testid="replay-board"]')!;
+      const { digitPx, iconPx } = replayGlyphSizes(fitCellSize(120 - 16, 120 - 16, 8, 8, 1));
+      expect(board.style.getPropertyValue('--ms-digit')).toBe(`${digitPx}px`);
+      expect(board.style.getPropertyValue('--ms-icon')).toBe(`${iconPx}px`);
     });
 
     it('draws its padding and gap from the same numbers the fit uses', async () => {
