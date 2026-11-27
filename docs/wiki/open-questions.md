@@ -726,3 +726,60 @@ a stable, which is refused unless dev served that alpha. First applied to migrat
 **For the owner:** confirm this order, or amend it (for example, require the owner's own merge of the
 line for a backfill of user data) ([cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
 [decisions](decisions/owner-decisions-of-2026-11-03-evening.md)).
+
+## A mail client inside Canari (asked 2026-11-27)
+
+The owner asked whether Canari could carry a modern mail client for the school mailbox, because the
+school's webmail is basic. **The status is OPEN, as a hypothesis: nothing is planned.** The desktop app
+it would live in is planned ([entry](backlog.d/a-desktop-app-for-windows-macos-and-linux.md)).
+
+**Measured 2026-11-27, from public DNS and an anonymous IMAP greeting (no credentials):**
+
+- `partage.emse.fr` is RENATER Partage, a Zimbra hosted by RENATER (CNAME `emse.partage.renater.fr`;
+  the MX is `relay.renater.fr`). There is no mail server to host.
+- IMAP 993 and SMTP 465/587 answer. IMAP announces `IDLE`, `CONDSTORE`, `QRESYNC`, `THREAD`, `SORT` and
+  `ESEARCH`, which is enough for incremental sync, server-side threads and search, and live updates
+  while the app is open.
+- **The only authentication is `AUTH=PLAIN`**: no OAuth, no JMAP (`/.well-known/jmap` is a 404). The
+  owner confirmed the **ENT password** logs in over IMAP. A Canari client would therefore hold the key
+  to the student's whole school account.
+- The Zimbra SOAP endpoint answers (`/service/soap`), but its CORS preflight returns no
+  `Access-Control-Allow-Origin`, so a page on `canari-emse.fr` cannot call it. Whether RENATER accepts
+  a password `AuthRequest` on it was not tested.
+- The webmail sends `X-Frame-Options: sameorigin`, so it cannot be embedded in Canari.
+
+**What principle 1 fixes.** Mail is not end-to-end encrypted. A server that logs into the mailbox for
+the user (the Roundcube model) holds the ENT password and reads every mail, so it is refused. Mailu is
+a mail server, so it is irrelevant here. The connection must start from the device:
+
+- **In the apps (Tauri)**: Rust opens IMAP/SMTP (or SOAP, with no CORS outside a browser) straight to
+  `partage.emse.fr`, and the password stays in the OS keystore. This is the shape that works.
+- **On the web**, a page cannot open a TCP socket, and Chrome's Direct Sockets is limited to Isolated
+  Web Apps. **The option to study** is a blind relay: a WebSocket tunnelled to `partage.emse.fr:993`,
+  with TLS terminated IN THE BROWSER (rustls in WASM), so the relay sees only ciphertext. It must have
+  an allowlist of exactly that host. Two homes for it:
+  - a Cloudflare Worker (`connect()`, with `secureTransport` off);
+  - or Canari's own backend: a host with only 443 and 22 open inbound can still dial out. **Measured
+    2026-11-27 from the production host (a bare TCP connect): egress to `partage.emse.fr` 993, 465
+    and 587 is BLOCKED, and 443 is open.** From our backend, the relay can only reach Partage on 443,
+    so the browser would have to speak Zimbra's SOAP API (`SendMsgRequest` included) through the
+    tunnel instead of IMAP/SMTP. That is only possible if RENATER accepts a password `AuthRequest`
+    there, which is the first thing to test.
+
+  Its risks: principle 4 for Cloudflare; RENATER's brute-force protection seeing every student come
+  from one set of addresses; and an ENT password typed into a web page.
+
+**Notifications with the app closed.** Watching the mailbox from the server (`IDLE`) needs the
+password there, which principle 1 refuses. What is left is polling from the device, a clock-based
+mechanism that the owner's standing directive distrusts, to be stated as such:
+
+- Android: WorkManager, every 15 minutes at the shortest, no push needed, and throttled by Doze and by
+  OEM layers like MIUI;
+- iOS: silent pushes and `BGAppRefreshTask` run only when the system allows, so there is no reliable
+  cadence;
+- desktop: live, while the tray app runs.
+
+**Principle 7 bounds the scope** if it is ever built: the school account only (read, search,
+attachments, reply, compose). A sandbox for HTML mail with remote images blocked by default
+(principle 3) is the main security cost. The lighter alternative: an unread counter that links to the
+webmail.
