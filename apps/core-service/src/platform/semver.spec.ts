@@ -26,3 +26,17 @@ describe('FLOOR_VERSION_PATTERN', () => {
     expect(FLOOR_VERSION_PATTERN.test('1.8.3-alpha')).toBe(false);
   });
 });
+
+describe('compareSemver - edges', () => {
+  it('ranks a bare alpha below alpha.1', () => {
+    expect(compareSemver('1.8.3-alpha', '1.8.3-alpha.1')).toBe(-1);
+  });
+
+  it('pads a short core with zeros', () => {
+    expect(compareSemver('1.8', '1.8.0')).toBe(0);
+  });
+
+  it('strips build metadata', () => {
+    expect(compareSemver('1.8.3+abc', '1.8.3')).toBe(0);
+  });
+});
