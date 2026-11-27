@@ -1,6 +1,6 @@
 ## P3 - A refused Welcome's leaf stays in a private salon's tree, and the next Add reads it as "already holds a leaf" (RM-5, `1.4.1-alpha.6`, 2026-10-26)
 
-target: 1.9.0
+target: 1.9.2
 
 RM-5 cycle 1: the grant landed before the kick. The granter's Add put the subject's two devices in the
 salon's distribution group, and the server refused both Welcomes:

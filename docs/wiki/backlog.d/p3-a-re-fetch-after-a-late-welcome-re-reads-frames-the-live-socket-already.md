@@ -1,6 +1,6 @@
 ## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 After a late Welcome (a joiner reached by a member's commit before it, [mls-protocol](../protocols/mls-protocol.md#a-joiner-whose-first-frame-beats-its-welcome-waits-for-it-dup-2-2026-10-25)),
 the client re-fetches the frames it left behind as `unknown-group`. That re-fetch pulls every row the

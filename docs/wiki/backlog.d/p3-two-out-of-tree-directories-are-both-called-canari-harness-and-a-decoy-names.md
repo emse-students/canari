@@ -1,6 +1,6 @@
 ## P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (2026-09-04)
 
-target: 1.10.0
+target: 1.9.2
 
 Owed to the USER, one-off on the workstation: merge the directories or delete the decoy `names.mjs` (both hold credentials and Chrome profiles). The preflight prints `rig state: <STATE_DIR>` first ([table](../cross-client-harness-findings.md#two-out-of-tree-directories-are-both-called-canari-harness-2026-09-04)). **Re-read 2026-10-24 on the workstation:** the identity-provider database dumps are GONE (three 74-byte `.meta` stubs remain); the directory the rig does NOT read still holds the decoy `names.mjs`, two stale test-account files, those stubs, and the Play Console service-account key the play-vitals tooling DOES use (move it, do not delete it).
 

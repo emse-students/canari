@@ -1,6 +1,6 @@
 ## P3 - about a hundred promise rejections in the frontend end in an empty handler: triage owed, no fix yet
 
-target: 1.10.0
+target: 1.9.2
 
 **Counted on `main`, 2026-11-12** (`frontend/src`, tests and comment lines excluded): **101**
 handlers that take a rejection and return nothing - 72 `.catch(() => {})`, 18

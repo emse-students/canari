@@ -1,6 +1,6 @@
 ## P3 - A removed device replays the commits it missed and is answered 403, read as a replay error (CC-2, 1.4.1 dev campaign, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 The Remove commit the server queues to a removed device (`group:parting`) is built on the group's
 CURRENT epoch, which is past the device's own whenever any commit landed between the server record

@@ -1,6 +1,6 @@
 ## P2 - A cut holder's add lock ends only by its TTL, and a refused waiter sleeps to it (design after the stable, OFF-3, 2026-10-25)
 
-target: 1.9.0
+target: 1.8.5
 
 Two clocks carry normal-path work in the group add lock:
 

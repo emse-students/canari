@@ -1,6 +1,6 @@
 ## P3 - A leave made while the link is down loses its `memberLeft` notice for good (RM-8, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 When a member leaves while every request fails, `leaveGroupAndBroadcast`'s notice send throws:
 `[GROUP] memberLeft notice for <8>… NOT delivered, and not sent later - the members see the roster

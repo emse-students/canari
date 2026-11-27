@@ -1,6 +1,6 @@
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

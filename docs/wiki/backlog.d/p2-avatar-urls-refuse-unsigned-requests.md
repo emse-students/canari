@@ -1,6 +1,6 @@
 ## P2 - signed avatar URLs, phase 2: refuse an avatar request that carries no token, once the measurement says the old builds are gone
 
-target: 1.10.0
+target: 1.9.0
 
 Phase 1 shipped the avatar token ([sessions](../sessions.md#the-avatar-token)): every client builds
 its avatar URLs through `avatarUrl(userId)`, which appends `?t=`, and core-service verifies it. A

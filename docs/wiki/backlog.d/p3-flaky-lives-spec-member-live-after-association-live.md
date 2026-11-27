@@ -1,6 +1,6 @@
 ## P3 - a lives integration spec failed once: the association's live pushed to nobody
 
-target: 1.9.0
+target: 1.8.4
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

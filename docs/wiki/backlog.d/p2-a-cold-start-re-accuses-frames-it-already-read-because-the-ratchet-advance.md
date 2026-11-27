@@ -1,6 +1,6 @@
 ## P2 - a cold start re-accuses frames it already read, because the ratchet advance is durable and its mark is not (TAB-3b `PASS-DIRTY`, 2026-09-08)
 
-target: 1.9.0
+target: 1.8.5
 
 Open: the fingerprint mark must be one write with the checkpoint (or answered from MLS state) - **no
 smaller fix**, an eager fingerprint mark is a silent real loss. Also unmeasured: which path spends the

@@ -1,6 +1,6 @@
 ## P3 - what the salon banner rule leaves to the server (2026-10-22)
 
-target: 1.9.0
+target: 1.9.2
 
 - **iOS extension timeout.** If the extension runs out of time while fetching or opening the seed, the system shows the push's original content, which carries the server's mention sound. The time-expiry handler should apply the blind-banner rule before it hands the content back.
 - **An opened banner's mention is the server's word alone.** The text is proven, but whether it names this reader is not checked against it. Accepted for now, because the mention level is decided by the server too.

@@ -1,6 +1,6 @@
 ## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
 
-target: 1.9.0
+target: 1.9.1
 
 A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
 gate still accepts it and drops that admit. Owed: decide whether key groups follow the same

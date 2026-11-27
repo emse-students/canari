@@ -1,6 +1,6 @@
 ## Audiences of associations, lists and institutions - built, in production since `v1.2.0`
 
-target: 1.9.0
+target: 1.9.1
 
 WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominative read grants WP-C (#1606) and their write-boundary fixes (#1608) are built. Decisions and as-built: [profiles-and-access](../profiles-and-access.md#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08). **Owed:**
 

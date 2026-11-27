@@ -1,6 +1,6 @@
 ## P3 - the WebSocket credential moves out of the URL (design improvement, 2026-11-13)
 
-target: 1.10.0
+target: 1.9.1
 
 `/api/ws` and the call socket (`/api/call`) carry their short-lived credential in the query string,
 because a client that cannot keep the `canari_ws_token` cookie has no other place to put it on an

@@ -1,6 +1,6 @@
 ## P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open
 
-target: 1.9.0
+target: 1.8.4
 
 **Read 2026-11-15 on dev (iPhone 12, TestFlight `1.6.12-alpha.2`, build `100601202`), 1 of 1 - the iOS
 twin of check K.** The app left on the home screen about 12 s, a DM from the delta web seat, the card

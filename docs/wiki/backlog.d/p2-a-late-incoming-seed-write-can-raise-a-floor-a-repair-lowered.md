@@ -1,6 +1,6 @@
 ## P2 - a late write of an incoming seed can raise a floor a repair lowered since
 
-target: 1.9.0
+target: 1.8.6
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

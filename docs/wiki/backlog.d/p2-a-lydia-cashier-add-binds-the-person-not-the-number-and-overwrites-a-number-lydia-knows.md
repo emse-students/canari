@@ -1,6 +1,6 @@
 ## P2 - a Lydia cashier add binds the person and not the number, and overwrites a number Lydia already knows
 
-target: 1.9.0
+target: 1.9.1
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

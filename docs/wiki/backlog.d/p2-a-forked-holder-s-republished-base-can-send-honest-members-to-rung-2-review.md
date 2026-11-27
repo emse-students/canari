@@ -1,6 +1,6 @@
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
 
-target: 1.9.0
+target: 1.8.5
 
 The commits no person asks for (the leaf refresh, the revoked-leaf removal) are staged only on the
 branch the server publishes (`assertOnPublishedBranch`, `publishedBranch.ts`), and a `diverged`
