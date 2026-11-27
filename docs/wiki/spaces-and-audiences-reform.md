@@ -65,9 +65,9 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | 6 | F7 | **When an event returns to pending, the organiser and the partners are notified with the reason, and so are the validators concerned** | 4.2, WP-Q2, WP-E |
 | 6 | F8 | **Build: once this proposal merges, EVERY work package is built.** Every migration stays held for the owner's hand-merge ([held](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)) | section 8 |
 | 7 | G1 | Parents for WP-D1: **Claude proposes an entity to parent-BDE list, the owner validates it on his private tracking page, and only then is it applied by a reviewed migration** | WP-D1, 2.7 |
-| 7 | G2 | Saint-etienne has **TWO distinct BDEs**: the main one (Autre, ICM, ISMIN, PDIS) and an FSSS BDE (FSSS only); not a duplicate. The second is renamed so the two are told apart; the exact name goes through the validated list (G1) | WP-D1 |
+| 7 | G2 | Saint-etienne has **TWO distinct BDEs**: the main one (Autre, ICM, ISMIN, PDIS) and a FISA BDE (FISA only); not a duplicate. The second is renamed so the two are told apart; the exact name goes through the validated list (G1) | WP-D1 |
 | 7 | G3 | A list whose current parent is the BDS or the BDA (which govern no space): **the governing parent becomes the main BDE**; the link to the BDS or BDA stays as a display-only label ("liste pour le BDS") carrying no right, in a field distinct from the governing parent | 2.2, WP-D1 |
-| 7 | G4 | Gardanne: **MINITEL governs all five Gardanne spaces**. Owner: *"En fait, il n'y a en pratique pas d'ICM, FSSS, PDIS a Gardanne."* | WP-D1 (parents list) |
+| 7 | G4 | Gardanne: **MINITEL governs all five Gardanne spaces**. Owner: *"En fait, il n'y a en pratique pas d'ICM, FISA, PDIS a Gardanne."* | WP-D1 (parents list) |
 | 7 | G5 | **A new admin interface to manage the existing campuses and each campus's formations**, including a formation spanning two campuses (*"peu utile mais on sait jamais"*) | WP-D1b (section 8) |
 | 7 | G6 | The 30 associations whose audience is the whole of saint-etienne take **the main BDE as parent** (it governs 4 of their 5 spaces) | WP-D1 (parents list) |
 | 7 | G7 | *"Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le BDE."* An institution's event is validated by the BDE of each space it targets (per slice under WP-E; the whole event until then), or by the platform admin where no BDE governs a targeted space | 2.3, section 4, WP-E |
@@ -333,8 +333,8 @@ Only the platform admin changes a parent or a space governor; each change writes
 parents are set from a list (G1): Claude proposes an entity to parent-BDE list, the owner validates
 it on his private tracking page, and only then is it applied by a reviewed migration (held for his
 hand-merge); WP-D2 ships when he says they are applied. The list follows the owner's decisions of
-2026-11-03: saint-etienne has two distinct BDEs, the main one (Autre, ICM, ISMIN, PDIS) and an FSSS
-BDE (FSSS only), the second renamed so they are told apart (G2); lists attached to the BDS or the
+2026-11-03: saint-etienne has two distinct BDEs, the main one (Autre, ICM, ISMIN, PDIS) and a FISA
+BDE (FISA only), the second renamed so they are told apart (G2); lists attached to the BDS or the
 BDA move under the main BDE, the old link kept as a label (G3); MINITEL governs all five Gardanne
 spaces (G4); the associations whose audience is the whole of saint-etienne take the main BDE (G6). **Read-only counts for him**
 (aggregates; no agent runs them against production):
@@ -383,7 +383,7 @@ nothing reads the governing parent for governance until WP-D2.
   (or already `bde`, a re-run), `bde` must govern a space; otherwise it RAISES naming the slug and
   writes nothing. On an estate with NONE of the slugs (the dev seed, a scratch database) it writes
   nothing and says so in a NOTICE. Each changed parent is journaled (`source = 'migration-130'`) and
-  reported by NOTICE; a re-run writes nothing. It also renames the FSSS BDE (G2) and makes MINITEL
+  reported by NOTICE; a re-run writes nothing. It also renames the FISA BDE (G2) and makes MINITEL
   the governor of the five gardanne spaces (G4) - a gardanne space governed by anybody else stops it.
 - **Migration 131** (held): ONE SQL judgement, `canari_dependency_refusal(child, type, parent)`, and
   two triggers (`associations` on insert or an update of the parent or the type; `spaces` on an
@@ -404,7 +404,7 @@ nothing reads the governing parent for governance until WP-D2.
 - **Production, measured read-only on 2026-11-03** (the coordinator): 0 dangling parents; 0
   institutions or space governors with a parent; 0 children with children; the rows whose parent
   governs nothing are exactly the 26 BDS/BDA lists 130 moves. So after 130, 131's guard reads zero
-  on production. Gardanne: only ISMIN is governed (by MINITEL); Autre, FSSS, ICM and PDIS have no
+  on production. Gardanne: only ISMIN is governed (by MINITEL); Autre, FISA, ICM and PDIS have no
   governor, and no audience rule of an entity that is neither an institution nor a BDE reaches those
   four spaces - so G4 (MINITEL governs all five) changes nobody's rights today.
 - **Service** (`spaces/dependency-rules.ts`, `SpacesService`): `PUT associations/spaces/dependencies/:id`
@@ -446,8 +446,8 @@ validated by the owner on his tracking page as is (G1); he may correct a row lat
 from the Dependencies panel. 74 rows: 44 lists, 30 associations, every governing parent the main BDE
 (`bde`, which governs four saint-etienne spaces). 26 lists now under the BDS (14) or the BDA (12)
 keep that link as the G3 label only. Migration 130 carries the same rows; its integration spec reads
-them from the file. The second BDE's new name, **"BDE FSSS - Bureau des Élèves"** (G2, applied by
-130), is the owner's exact choice of 2026-11-03, given to the lead as the answer to a direct
+them from the file. The second BDE's new name, **"BDE FISA - Bureau des Élèves"** (G2, applied by 130 under
+the old spelling FSSS and respelt by 187 on 2026-11-26), is the owner's exact choice of 2026-11-03, given to the lead as the answer to a direct
 question.
 
 | Name | Slug | Type | Current parent | New governing parent | G3 label |
@@ -528,7 +528,7 @@ question.
 | The Greatest Show'Mines | minesterpol | list | bde | bde | - |
 
 Not rows of the list, and applied by the same migration: the second saint-etienne BDE (slug
-`bde-bureau-des-eleves`, FSSS only) is renamed "BDE FSSS - Bureau des Élèves" (G2; the main `bde`
+`bde-bureau-des-eleves`, FISA only) is renamed "BDE FISA - Bureau des Élèves" (G2, spelt FSSS by 130, respelt by 187; the main `bde`
 keeps its name), and MINITEL (`minitel`, governing one gardanne space on 2026-11-03) governs all five
 (G4).
 

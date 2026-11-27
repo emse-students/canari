@@ -281,7 +281,7 @@ describe('audience predicate', () => {
     });
 
     it('names the FIRST cursus criterion when no cursus holds, and notCotisation first', () => {
-      const condition = { formation: { values: ['FSSS'] }, promo: { values: [2022] } };
+      const condition = { formation: { values: ['FISA'] }, promo: { values: [2022] } };
       // First cursus (ISMIN 2022) fails on formation; the second (ICM 2024) would say promo.
       expect(failedCriterion(condition, icmSecond)).toBe('formation');
       const held = { ...icmSecond, cotisationTiers: ['bde'] };

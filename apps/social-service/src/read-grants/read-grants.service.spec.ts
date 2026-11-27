@@ -57,7 +57,7 @@ describe('ReadGrantsService.setCell', () => {
 
   it('revokes without asking whether the account still exists, and journals the revocation', async () => {
     const { service, queries } = setup({});
-    await service.setCell('admin-1', 'gone', 'saint-etienne', 'FSSS', false);
+    await service.setCell('admin-1', 'gone', 'saint-etienne', 'FISA', false);
     expect(queries.some((q) => q.sql.includes('FROM users'))).toBe(false);
     const journal = queries.find((q) => q.sql.startsWith('INSERT INTO read_grant_journal'));
     expect(journal?.params?.[3]).toBe('revoke');

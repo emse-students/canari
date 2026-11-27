@@ -2120,7 +2120,6 @@
   "readaccess_add_button": "Add",
   "readaccess_empty": "Nobody is named yet.",
   "readaccess_whole_campus": "Whole campus",
-  "readaccess_istp_note": "ISTP is counted in FSSS.",
   "readaccess_journal_empty": "No grant or revocation yet.",
   "readaccess_journal_grant": "{actor} granted {campus} / {scope} to {name}",
   "readaccess_journal_revoke": "{actor} revoked {campus} / {scope} from {name}",
