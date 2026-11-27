@@ -37,3 +37,24 @@ still registered (or sign in as another account and receive one), then read a fr
 the two senders go, (2a) holds and the extension must be the one to erase; if they stay, (2b) holds
 and the entry needs another answer (for example donating the sender with no suggestion at all). No
 fix is guessed before that reading.
+
+**Built (2026-11-27, `fix/share-sheet-sign-out`, Swift verified by compiling only): the extension
+erases its own, and the share extension refuses a pick of another account.** Hypothesis (2a) is
+taken as the working one, since nothing the app runs could tell it from (2b) anyway: the
+notification extension keeps a ledger (`message_donations_owner`, the account whose senders its
+group holds, written before every donation) and, at the start of EVERY run, deletes its own group
+when that owner is no longer the account `push_context.json` names
+([mobile](../frontend/mobile.md#communication-notifications-owner-2026-11-21)). The share extension
+drops a picked suggestion's hint while nobody is signed in or the ledger names another account
+([sharing](../frontend/sharing.md#share-suggestions-ios---lot-s5)). The build IS the discriminator
+named above.
+
+**Reading owed (iPhone 12, the first alpha that carries it).** After a day of DMs to `gamma`, sign
+`gamma` out, then let one push reach the device (a DM to `gamma` sent while the server still holds
+the registration, or sign in as another account and receive one). The syslog carries
+`[CanariNSE] the donations of an account no longer signed in are erased`; a fresh share sheet then
+offers no sender of `gamma`'s. Before that push, picking a leftover sender in the sheet logs
+`[CanariShare] a suggestion was not used: ...` and preselects nothing. **If the erase line is there
+and the senders stay**, (2b) holds - the system's suggestion cache outlives the delete - and the
+entry stays open with that evidence. If no push can reach a signed-out device, the senders stay
+until the next account's first push: record how long that window is in practice.

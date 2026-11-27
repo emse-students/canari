@@ -89,9 +89,55 @@ final class ShareViewController: UIViewController {
     /// from the app row, or when the identifier is not of the suggestion shape (said, not used).
     private func suggestedTarget() -> String? {
         guard let intent = extensionContext?.intent as? INSendMessageIntent else { return nil }
-        if let target = ShareRules.suggestedTarget(intent.conversationIdentifier) { return target }
-        log.warning("[CanariShare] a suggestion whose conversation identifier is not of the suggestion shape was ignored (identifier present: \(intent.conversationIdentifier != nil), \(intent.conversationIdentifier?.count ?? 0) characters)")
-        return nil
+        guard let target = ShareRules.suggestedTarget(intent.conversationIdentifier) else {
+            log.warning("[CanariShare] a suggestion whose conversation identifier is not of the suggestion shape was ignored (identifier present: \(intent.conversationIdentifier != nil), \(intent.conversationIdentifier?.count ?? 0) characters)")
+            return nil
+        }
+        // The sheet may still show another account's senders (only the notification extension can
+        // erase what it donated, on its next run): a suggestion is a hint only for the account that
+        // is signed in now, decided on ids, never on what the sheet showed.
+        guard let store = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: ShareCapture.appGroupId)?
+            .appendingPathComponent(ShareCapture.storeDirName, isDirectory: true)
+        else {
+            log.error("[CanariShare] the App Group container is unavailable - the suggestion is not used")
+            return nil
+        }
+        let verdict = ShareRules.suggestionAccount(
+            signedInUserId: signedInUserId(store), donationsOwner: donationsOwner(store))
+        switch verdict {
+        case .usable:
+            return target
+        case .noAccountSignedIn:
+            log.notice("[CanariShare] a suggestion was not used: no account is signed in")
+            return nil
+        case .donationsOfAnotherAccount:
+            log.notice("[CanariShare] a suggestion was not used: the notification donations still name another account")
+            return nil
+        }
+    }
+
+    /// The account `push_context.json` says is signed in, nil when none is (absent, unreadable, or
+    /// stripped of `baseUrl` by a sign-out) - `NotificationService.signedInUserId`, the same rule.
+    private func signedInUserId(_ store: URL) -> String? {
+        guard let data = try? Data(contentsOf: store.appendingPathComponent("push_context.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let userId = json["userId"] as? String ?? ""
+        let deviceId = json["deviceId"] as? String ?? ""
+        let baseUrl = json["baseUrl"] as? String ?? ""
+        guard !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
+        return userId
+    }
+
+    /// The account the notification extension's donations belong to
+    /// (`NotificationService.messageDonationsOwnerFile`), nil when none is recorded.
+    private func donationsOwner(_ store: URL) -> String? {
+        guard let data = try? Data(contentsOf: store.appendingPathComponent("message_donations_owner")),
+              let owner = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !owner.isEmpty
+        else { return nil }
+        return owner
     }
 
     private func show(_ outcome: ShareCaptureOutcome) {

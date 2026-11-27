@@ -38,6 +38,25 @@ enum ShareRules {
         if id.hasPrefix("c:") && (3...200).contains(id.count) { return id }
         return nil
     }
+
+    /// Whether a picked suggestion may be taken as a hint, given the account signed in and the
+    /// account the notification extension's donations belong to (2026-11-27).
+    enum SuggestionAccount: Equatable {
+        case usable
+        /// No whole `push_context.json`: nobody is signed in to share to.
+        case noAccountSignedIn
+        /// The notification extension still holds another account's senders (its erase is owed to
+        /// its next run): a suggestion may be one of them, so none is trusted.
+        case donationsOfAnotherAccount
+    }
+
+    /// The decision, on ids alone - the same comparison the notification extension erases on
+    /// (`NotificationService.donationLedgerStep`).
+    static func suggestionAccount(signedInUserId: String?, donationsOwner: String?) -> SuggestionAccount {
+        guard let me = signedInUserId, !me.isEmpty else { return .noAccountSignedIn }
+        if let owner = donationsOwner, !owner.isEmpty, owner != me { return .donationsOfAnotherAccount }
+        return .usable
+    }
 }
 
 /// The file name a shared item is stored and offered under - Android's `share/SharedFileName.kt`.

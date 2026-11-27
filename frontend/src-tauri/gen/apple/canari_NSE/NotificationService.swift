@@ -143,7 +143,11 @@ class NotificationService: UNNotificationServiceExtension {
     let userInfo = request.content.userInfo
     let type = Self.string(userInfo["type"]) ?? "message"
     NseLog.log.notice("[CanariNSE] didReceive type=\(type, privacy: .public)")
-    dispatch(type: type, userInfo: userInfo, content: content)
+    // Every run first erases what this extension donated for an account no longer signed in -
+    // the one process that can (`settleMessageDonations`).
+    Self.settleMessageDonations {
+      self.dispatch(type: type, userInfo: userInfo, content: content)
+    }
   }
 
   /// Everything a push's payload can ask of this extension, whether it arrived in the push itself or
@@ -2036,8 +2040,9 @@ class NotificationService: UNNotificationServiceExtension {
   // MARK: - Communication notification (owner, 2026-11-21) ---------------------
 
   /// The donation group of every interaction this extension donates. Written by nothing else; the
-  /// app deletes the group at sign-out (`ShareSuggestions.clearMessageNotifications`, behind
-  /// `clear_conversation_shortcuts`). `iosCommunicationNotifications.test.ts` holds the spellings.
+  /// app asks its delete at sign-out (`ShareSuggestions.clearMessageNotifications`, behind
+  /// `clear_conversation_shortcuts`), and this extension erases it itself once its account left
+  /// (`settleMessageDonations`). `iosCommunicationNotifications.test.ts` holds the spellings.
   static let messageNotificationsGroup = "fr.emse.canari.message-notifications"
 
   /// The id a conversation is donated under: the share suggestions' `c:<conversation id>`
@@ -2187,6 +2192,14 @@ class NotificationService: UNNotificationServiceExtension {
     let donationId = UUID().uuidString
     interaction.identifier = donationId
     let donor = signedInUserId ?? ""
+    // The ledger names the donor BEFORE the donation exists, so no donation is ever one the next
+    // account's first run would not know to erase (`settleMessageDonations`).
+    guard Self.recordDonationsOwner(donor) else {
+      NseLog.log.error(
+        "[CanariNSE] ERROR communication style not applied - the donation ledger did not take this account (said above), and a donation it does not name would outlive the account; the plain notification is delivered")
+      finish()
+      return
+    }
     trace?.mark("donate")
     NseLog.log.debug(
       "[CanariNSE] communication style: donating isGroup=\(isGroup, privacy: .public) source=\(source, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
@@ -2292,6 +2305,139 @@ class NotificationService: UNNotificationServiceExtension {
       let kind = String(describing: type(of: error))
       NseLog.log.warning(
         "[CanariNSE] WARN communication style not applied - updating(from:) refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+    }
+  }
+
+  // MARK: - Whose senders the donation group holds (2026-11-27) ------------------
+
+  /// The App Group file naming the account whose senders this extension's donation group holds -
+  /// one user id, written before every donation (`recordDonationsOwner`), removed once that group is
+  /// erased. The share extension reads it too (`ShareRules.suggestionAccount`).
+  ///
+  /// WHY THE EXTENSION ERASES ITS OWN. On `1.8.2` (iPhone 12) the app's sign-out deleted this group
+  /// and called `deleteAll` from the APP process, both answered success, and two senders the
+  /// extension had donated stayed in the share sheet: `INInteraction.delete` reaches what the CALLING
+  /// bundle donated, and this extension is another bundle. Nothing the app runs can take them, so
+  /// the one process that can does, on its next run once `push_context.json` no longer names this
+  /// owner - a sign-out strips it, the next sign-in replaces it. Durable state, no clock.
+  static let messageDonationsOwnerFile = "message_donations_owner"
+
+  /// Orders the ledger among this process's concurrent runs: no run reads or writes the owner while
+  /// another run's erase is in flight, so the next account's donation can never land between
+  /// another run's decision to erase and that erase.
+  private static let donationLedgerLock = NSLock()
+  /// True while an erase is in flight in this process. Under `donationLedgerLock`.
+  private static var donationErasing = false
+  /// The runs that arrived during that erase, resumed by its completion. Under `donationLedgerLock`.
+  private static var runsAwaitingErase: [() -> Void] = []
+
+  /// What a run does with the donation group, given the account it names and the one signed in.
+  enum DonationLedgerStep: Equatable {
+    /// Nothing recorded, or the owner is the account signed in.
+    case keep
+    /// The owner is no longer signed in (signed out, or another account since).
+    case erase
+  }
+
+  /// The decision, on ids alone: never on a message, never on a clock.
+  static func donationLedgerStep(owner: String?, signedInUserId: String?) -> DonationLedgerStep {
+    guard let owner = owner, !owner.isEmpty else { return .keep }
+    return owner == signedInUserId ? .keep : .erase
+  }
+
+  /// The account the ledger names, or nil when none is recorded (the file absent or empty).
+  static func readDonationsOwner(_ dir: URL) -> String? {
+    let file = dir.appendingPathComponent(messageDonationsOwnerFile)
+    guard let data = try? Data(contentsOf: file),
+      let owner = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !owner.isEmpty
+    else { return nil }
+    return owner
+  }
+
+  /// Names `donor` as the group's owner, before a donation. False (said) when it could not be
+  /// written, or when the ledger still names ANOTHER account (its erase failed or is in flight):
+  /// overwriting it would forget donations nothing erased yet. The caller then donates nothing.
+  static func recordDonationsOwner(_ donor: String) -> Bool {
+    guard !donor.isEmpty, let dir = appGroupDir() else { return false }
+    donationLedgerLock.lock()
+    defer { donationLedgerLock.unlock() }
+    let owner = readDonationsOwner(dir)
+    if owner == donor { return true }
+    if owner != nil {
+      NseLog.log.error(
+        "[CanariNSE] ERROR donation ledger: another account's donations are not erased yet - this one is not recorded")
+      return false
+    }
+    do {
+      try Data(donor.utf8).write(
+        to: dir.appendingPathComponent(messageDonationsOwnerFile),
+        options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      NseLog.log.debug("[CanariNSE] donation ledger: owner recorded")
+      return true
+    } catch {
+      NseLog.log.error(
+        "[CanariNSE] ERROR donation ledger: the owner could not be written (\(errorReason(error), privacy: .public))")
+      return false
+    }
+  }
+
+  /// Erases this extension's donation group when the ledger names an account that is no longer
+  /// signed in, then runs `then` - on every run, before anything is drawn or donated. The common
+  /// case (nothing to erase) runs `then` at once on the caller's thread. An erase deletes exactly
+  /// this extension's group (the allowlist: the only group it donates into) and clears the ledger
+  /// only on success and only if it still names the owner it erased; a failed erase keeps the
+  /// ledger, so the next run erases again. No clock: an erase whose completion never comes leaves
+  /// the run to the system's expiry, which delivers the payload's own content.
+  static func settleMessageDonations(then: @escaping () -> Void) {
+    guard let dir = appGroupDir() else {
+      then()
+      return
+    }
+    donationLedgerLock.lock()
+    if donationErasing {
+      runsAwaitingErase.append(then)
+      donationLedgerLock.unlock()
+      return
+    }
+    let owner = readDonationsOwner(dir)
+    guard donationLedgerStep(owner: owner, signedInUserId: signedInUserId()) == .erase,
+      let erased = owner
+    else {
+      donationLedgerLock.unlock()
+      then()
+      return
+    }
+    donationErasing = true
+    donationLedgerLock.unlock()
+    INInteraction.delete(with: messageNotificationsGroup) { error in
+      Self.donationLedgerLock.lock()
+      if let error = error {
+        let kind = String(describing: type(of: error))
+        NseLog.log.error(
+          "[CanariNSE] ERROR the donations of an account no longer signed in were not erased (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the ledger is kept and the next run erases again")
+      } else {
+        if Self.readDonationsOwner(dir) == erased {
+          do {
+            try FileManager.default.removeItem(at: dir.appendingPathComponent(Self.messageDonationsOwnerFile))
+          } catch {
+            NseLog.log.error(
+              "[CanariNSE] ERROR donation ledger: erased, but the owner could not be removed (\(errorReason(error), privacy: .public)); the next run erases again")
+          }
+        }
+        NseLog.log.notice(
+          "[CanariNSE] the donations of an account no longer signed in are erased (the message-notifications group)")
+      }
+      Self.donationErasing = false
+      let waiting = Self.runsAwaitingErase
+      Self.runsAwaitingErase = []
+      Self.donationLedgerLock.unlock()
+      // Each waiting run resumes on its own thread, as it would have started: one long decrypt
+      // never holds the others back.
+      for run in waiting {
+        DispatchQueue.global(qos: .userInitiated).async(execute: run)
+      }
+      then()
     }
   }
 

@@ -1633,6 +1633,25 @@ donate the leaving account's sender again. So:
   Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one. **The expiry
   blanks too**: a run that drew a message records whose account it names (`namesContentOf`), and
   `serviceExtensionTimeWillExpire` blanks it when `signedInUserId` no longer names that account.
+- **The extension erases its own donations: the app cannot (2026-11-27).** On `1.8.2` (iPhone 12)
+  the sign-out's group delete and `deleteAll` both answered success from the APP process, the app's
+  five share suggestions left the sheet, and two senders the extension had donated stayed:
+  `INInteraction.delete` reaches what the CALLING bundle donated, and the extension is another
+  bundle ([the entry](../backlog.d/p2-the-share-sheet-still-offers-the-previous-account-s-sender-after-a-sign-out.md)).
+  So the extension keeps a ledger, `message_donations_owner` in the App Group store: the account
+  whose senders its group holds, written BEFORE every donation (`recordDonationsOwner`; a ledger it
+  cannot write, or one still naming another account whose erase failed, means no donation, ERROR). **Every run, before it dispatches anything**
+  (`settleMessageDonations`, from `didReceive`), compares that owner with the account
+  `push_context.json` names (`donationLedgerStep`, ids alone): when they differ - a sign-out
+  stripped the context, or another account signed in since - it deletes its own group (exactly that
+  group, never `deleteAll`: the allowlist) and removes the ledger only on success and only if it
+  still names the account erased; a failed delete keeps it, and the next run erases again. Runs that
+  arrive during an erase wait for its completion (no clock); the common case runs at once. The
+  share extension reads the same ledger and refuses a picked suggestion while it names another
+  account ([sharing](sharing.md#share-suggestions-ios---lot-s5)). **What it cannot do:** run without
+  a push. The senders stay in the sheet until the extension's next run - a push the server sends
+  before its deregistration lands, or the next account's first one, which erases before it donates.
+  Verified by compiling only in CI; the reading is in the entry.
 - **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
   and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
   same erase.

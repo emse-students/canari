@@ -531,6 +531,23 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     expect(swiftRules).toContain('id.hasPrefix("c:") && (3...200).contains(id.count)');
   });
 
+  it('takes a picked suggestion only for the account signed in, never another account senders', () => {
+    // The notification extension's donations may outlive a sign-out until its next run erases
+    // them (`settleMessageDonations`): the extension decides on ids, never on what the sheet showed.
+    expect(swiftRules).toContain(
+      'guard let me = signedInUserId, !me.isEmpty else { return .noAccountSignedIn }'
+    );
+    expect(swiftRules).toContain(
+      'if let owner = donationsOwner, !owner.isEmpty, owner != me { return .donationsOfAnotherAccount }'
+    );
+    expect(swiftController).toMatch(
+      /ShareRules\.suggestionAccount\([\s\S]*?\)\s*switch verdict \{\s*case \.usable:\s*return target\s*case \.noAccountSignedIn:[\s\S]*?return nil\s*case \.donationsOfAnotherAccount:[\s\S]*?return nil\s*\}/
+    );
+    // The same proof of an account the notification extension reads: the context WHOLE.
+    expect(swiftController).toContain('store.appendingPathComponent("push_context.json")');
+    expect(swiftController).toContain('!baseUrl.isEmpty');
+  });
+
   it('erases the suggestions at sign-out on iOS too, and the notification donations with them', () => {
     // The erase and its notifications' half (`eraseNotificationShortcuts`), read as one.
     const erase = capture(
