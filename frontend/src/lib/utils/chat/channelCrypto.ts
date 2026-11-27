@@ -43,6 +43,8 @@ export interface DecodedChannelMessage {
   isOwn: boolean;
   /** True for a membership notice: rendered centred and neutral, attributed to nobody. */
   isSystem: boolean;
+  /** The server vouched for this row's `@tous` (`ChannelMessageRow.mentionsEveryone`). Absent is not vouched. */
+  everyoneVouched?: boolean;
 }
 
 /**
@@ -416,6 +418,7 @@ async function decodeOpenedRow(
       ...(clientMessageId ? { clientMessageId } : {}),
       isOwn: !isSystem && senderId === userIdLower,
       isSystem,
+      ...(row.mentionsEveryone === true ? { everyoneVouched: true } : {}),
     },
   };
 }

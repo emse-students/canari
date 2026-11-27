@@ -1633,6 +1633,42 @@ donate the leaving account's sender again. So:
   Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one. **The expiry
   blanks too**: a run that drew a message records whose account it names (`namesContentOf`), and
   `serviceExtensionTimeWillExpire` blanks it when `signedInUserId` no longer names that account.
+- **The extension erases its own donations: the app cannot (2026-11-27).** On `1.8.2` (iPhone 12)
+  the sign-out's group delete and `deleteAll` both answered success from the APP process, the app's
+  five share suggestions left the sheet, and two senders the extension had donated stayed:
+  `INInteraction.delete` reaches what the CALLING bundle donated, and the extension is another
+  bundle ([the entry](../backlog.d/p2-the-share-sheet-still-offers-the-previous-account-s-sender-after-a-sign-out.md)).
+  So the extension keeps a ledger in the App Group store:
+  - `message_donations_owner` names the account whose senders its group holds, written BEFORE
+    every donation (`recordDonationsOwner`). A run donates nothing (no communication style, a
+    `debug` line) while an erase is in flight in the process, while the pre-ledger erase below is
+    not done, while the ledger still names another account, or when the ledger cannot be written
+    (that one says ERROR).
+  - **Every run, before it dispatches anything** (`settleMessageDonations`, from `didReceive`),
+    decides on ids and one file's existence (`donationLedgerStep`): the owner is no longer the
+    account `push_context.json` names (a sign-out stripped it, or another account signed in) ->
+    erase; no owner and no `message_donations_ledger_era` marker (an install from `1.8.2` or older,
+    whose donations name nobody) -> erase once, then write the marker. The erase deletes exactly
+    the extension's own group (never `deleteAll`: the allowlist); on success it removes the ledger
+    only if it still names the account erased, or writes the marker.
+  - **No run waits on another.** The in-flight flag only stops donations; a run that meets it
+    proceeds at once. The flag is reset by the erase's completion on success and failure alike, and
+    the erasing run's own continuation then runs on a global queue. A completion that never comes
+    costs that one run, which the system's expiry delivers.
+  - **A permanent erase failure** (the delete keeps failing) is one ERROR per push, from the settle:
+    `the donations of an account no longer signed in were not erased ... kept owed`. The ledger and
+    the marker stay as they were, so every run tries again, and no run donates meanwhile: the
+    banners stay plain (no face, no communication style) until a delete succeeds. That is the end
+    state, by design - privacy before the style (principle 1).
+  - **An overtaken donation it cannot withdraw** (`INInteraction.delete(with: [id])` failed after a
+    sign-out) names its account in the ledger again (`reassertDonationsOwner`), so the next run
+    erases the group for it.
+  - The share extension does NOT read the ledger: a leftover sender preselects nothing in the page,
+    which preselects only a conversation the signed-in account holds
+    ([sharing](sharing.md#share-suggestions-ios---lot-s5)). **What the ledger cannot do:** run
+    without a push. The senders stay in the sheet until the extension's next run: a push the server
+    sends before its deregistration lands, or the next account's first one, which erases before it
+    donates. Verified by compiling only in CI; the reading is in the entry.
 - **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
   and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
   same erase.

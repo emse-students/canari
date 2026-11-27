@@ -38,6 +38,15 @@ enum ShareRules {
         if id.hasPrefix("c:") && (3...200).contains(id.count) { return id }
         return nil
     }
+
+    /// Whether a picked suggestion may be taken as a hint at all (2026-11-27): only while an account
+    /// is signed in. WHICH conversation it may preselect is the page's question
+    /// (`suggestionIfHeld`, against the signed-in account's list), so a leftover sender of a previous
+    /// account preselects nothing there, and the new account's own suggestions are never refused here.
+    static func suggestionUsable(signedInUserId: String?) -> Bool {
+        guard let me = signedInUserId else { return false }
+        return !me.isEmpty
+    }
 }
 
 /// The file name a shared item is stored and offered under - Android's `share/SharedFileName.kt`.

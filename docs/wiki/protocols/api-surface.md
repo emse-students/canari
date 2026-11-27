@@ -291,8 +291,9 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | GET | `/api/users/directory` | JWT | Paginated directory |
 | GET | `/api/users/:id/avatar` | JWT | Get user avatar |
 | POST | `/api/users` | global admin | Create user manually |
-| GET | `/api/users/me/notes` | JWT | Get private notepad |
-| PUT | `/api/users/me/notes` | JWT | Update private notepad |
+| GET | `/api/users/me/notes` | JWT | Get private notepad (retiring: `410 NOTEPAD_MOVED` once moved into "Mes notes") |
+| PUT | `/api/users/me/notes` | JWT | Update a private notepad still held (`410 NOTEPAD_MOVED` otherwise) |
+| POST | `/api/users/me/notes/moved` | JWT | Delete the notepad once moved into "Mes notes" |
 | GET | `/api/users/:id` | JWT | Get public profile |
 | PATCH | `/api/users/me` | JWT | Update profile |
 | DELETE | `/api/users/me` | JWT | Delete account and all data |

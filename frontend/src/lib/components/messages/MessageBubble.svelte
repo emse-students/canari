@@ -184,6 +184,8 @@
     onReelPurged?: (messageId: string, atMs: number, conversationId: string) => void;
     /** The conversation this row is drawn in: the reel viewer keeps it when it opens (RC-6). */
     conversationId?: string;
+    /** See `MessageInlineText`'s `everyoneHonoured`: false for a salon row the server did not vouch `@tous` for. */
+    everyoneHonoured?: boolean;
     /**
      * Called when the user chooses "edit" on their own text message, with its current text. The
      * edit itself happens in the conversation's composer (user, 2026-10-02: *"modification des
@@ -251,6 +253,7 @@
     reelPurgedAt,
     onReelPurged,
     conversationId,
+    everyoneHonoured = true,
     currentUserId = '',
     authToken = '',
     shouldAnimate = false,
@@ -1356,6 +1359,7 @@
                   {authToken}
                   {reelPurgedAt}
                   {conversationId}
+                  {everyoneHonoured}
                   onReelPurged={onReelPurged
                     ? (at, openedFrom) => onReelPurged(messageId, at, openedFrom)
                     : undefined}
@@ -1376,6 +1380,7 @@
                   {firstLink}
                   jumbo={isEmojiOnly}
                   onOwnBubble={isOwn}
+                  {everyoneHonoured}
                 />
               {/if}
             {/if}

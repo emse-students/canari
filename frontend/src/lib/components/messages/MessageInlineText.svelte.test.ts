@@ -44,3 +44,28 @@ describe('MessageInlineText forwards the bubble variant to its mentions', () => 
     expect(chipClass(undefined)).toContain('text-accent-text');
   });
 });
+
+describe('MessageInlineText draws a picked @tous as a call only where it is honoured', () => {
+  const draw = (everyoneHonoured: boolean | undefined) => {
+    const target = document.body.appendChild(document.createElement('div'));
+    const run = mount(MessageInlineText, {
+      target,
+      props: { text: 'a @[everyone] b', everyoneHonoured },
+    });
+    flushSync();
+    const chip = target.querySelector('[data-mention-everyone]');
+    const text = target.textContent;
+    unmount(run);
+    return { chip, text };
+  };
+
+  it('honoured (a private conversation, or a salon row the server vouched for): the chip', () => {
+    expect(draw(true).chip).not.toBeNull();
+    expect(draw(undefined).chip).not.toBeNull();
+  });
+  it('unvouched: no chip - nobody was called - but the typed word stays readable', () => {
+    const { chip, text } = draw(false);
+    expect(chip).toBeNull();
+    expect(text).toMatch(/^a @\S+ b$/);
+  });
+});

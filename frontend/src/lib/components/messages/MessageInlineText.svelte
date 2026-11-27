@@ -28,15 +28,21 @@
     text: string;
     /** Inside the sender's own accent-filled bubble: mentions inherit the bubble's colour. */
     onOwnBubble?: boolean;
+    /**
+     * Whether a picked `@[everyone]` is a call this conversation honours (`everyoneMentionOf`): true
+     * in a private conversation and in a salon row the server vouched for. False draws the token as
+     * the typed text - an accent chip would promise a notification that never left.
+     */
+    everyoneHonoured?: boolean;
   }
 
-  let { text, onOwnBubble = false }: Props = $props();
+  let { text, onOwnBubble = false, everyoneHonoured = true }: Props = $props();
 </script>
 
 {#each splitTextWithMentions(text) as part, index (`${index}-${part.type}-${'userId' in part ? part.userId : part.value}`)}
   {#if part.type === 'mention'}
     <MessageMentionChip userId={part.userId} {onOwnBubble} />
-  {:else if part.type === 'everyone'}
+  {:else if part.type === 'everyone' && everyoneHonoured}
     <!-- A CALL TO EVERY MEMBER (a picked `@[everyone]`), drawn like a mention but pointing at
          nobody: the reader's word for it, in the mention's weight and colour (the bubble's own on
          the sender's accent fill). -->
@@ -45,6 +51,9 @@
       class="{onOwnBubble ? '' : 'text-accent-text'} align-baseline text-[0.9em] font-semibold"
       >{part.value}</span
     >
+  {:else if part.type === 'everyone'}
+    <!-- UNVOUCHED: nobody was called, so it reads as the plain text it was typed as. -->
+    <EmojiText text={part.value} />
   {:else if part.type === 'hashtag'}
     <!-- IT TAKES THE BUBBLE'S OWN COLOUR, because the bubble is the only thing that knows what it
          is filled with. `text-accent-text` was 1.68:1 on the outgoing

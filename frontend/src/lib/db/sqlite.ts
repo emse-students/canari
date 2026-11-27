@@ -35,7 +35,7 @@ import type {
   PendingMutationReseal,
   PendingMutationWrite,
 } from './types';
-import { FeedPageUnreadableError, StoreWriteRefusedError } from './types';
+import { FeedPageUnreadableError, StoreWriteRefusedError, isPendingGroupExitKind } from './types';
 import {
   joinPendingMutation,
   pendingMessageTag,
@@ -2255,10 +2255,10 @@ export class SqliteStorage implements IStorage {
     // than leaving the row alone. Anything unrecognised is skipped, which keeps the row for a build
     // that does know it.
     return rows
-      .filter((r) => r.kind === 'delete' || r.kind === 'leave')
+      .filter((r) => isPendingGroupExitKind(r.kind))
       .map((r) => ({
         groupId: String(r.group_id),
-        kind: r.kind as 'delete' | 'leave',
+        kind: r.kind as PendingGroupExit['kind'],
         requestedAt: Number(r.requested_at) || 0,
       }));
   }

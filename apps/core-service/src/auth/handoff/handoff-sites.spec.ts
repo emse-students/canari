@@ -87,10 +87,8 @@ describe('the handoff registry', () => {
   it('gives every MiConnect site a sign-in entry, and no other site one', () => {
     for (const site of ECOSYSTEM_SITES) {
       expect([site.id, site.miconnect === (site.signIn !== null)]).toEqual([site.id, true]);
-      expect([site.id, site.signIn === null || site.signIn.path.startsWith('/')]).toEqual([
-        site.id,
-        true,
-      ]);
+      // A site with no sign-in entry has no path to check: read as `true`, never skipped by a branch.
+      expect([site.id, site.signIn?.path.startsWith('/') ?? true]).toEqual([site.id, true]);
     }
   });
 });

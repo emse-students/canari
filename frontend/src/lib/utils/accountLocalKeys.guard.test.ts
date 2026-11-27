@@ -100,6 +100,8 @@ describe('the per-account key list is the one list', () => {
       'the vault slot - removed by clearDeviceKey, which the account wipe calls',
     'lib/posts/publishQueue/publishQueue.svelte.ts:`canari-publish-queue-${userId}':
       'a Web Lock name, which holds nothing once released',
+    'lib/utils/chat/notepadMigration.ts:`canari-notepad-move:${userId}':
+      "the hash input of the moved notepad's message id, never stored",
   };
 
   it('rule 4 - no key-shaped literal interpolates a user id outside the list', () => {

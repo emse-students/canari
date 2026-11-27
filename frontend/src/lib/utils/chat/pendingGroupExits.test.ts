@@ -193,6 +193,17 @@ describe('drainPendingGroupExits', () => {
     expect(storage.rows.size).toBe(0);
   });
 
+  // "Mes notes" is deleted only by a request stating its kind: the verb carries it, since the row
+  // that knew it is gone by the time a replay runs.
+  it('replays the delete of "Mes notes" with its kind stated', async () => {
+    const storage = makeStorage([{ groupId: G1, kind: 'delete-self', requestedAt: 1 }]);
+    const mlsService = makeMls();
+    const out = await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: () => {} });
+    expect(mlsService.deleteGroupOnServer).toHaveBeenCalledWith(G1, 'self');
+    expect(out).toEqual([{ groupId: G1, kind: 'delete-self', result: 'answered' }]);
+    expect(storage.rows.size).toBe(0);
+  });
+
   it('replays a leave as a self-removal', async () => {
     const storage = makeStorage([{ groupId: G1, kind: 'leave', requestedAt: 1 }]);
     const mlsService = makeMls();
