@@ -18,6 +18,7 @@ import {
   GROUP_CALLS_MODES,
   LIVES_MODES,
   LIVE_REPLAYS_MODES,
+  MAIL_MODES,
   PUSH_MODES,
   type CallRelay,
   type CallsMode,
@@ -25,6 +26,7 @@ import {
   type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
+  type MailMode,
   type PushMode,
 } from '../entities/platform-config.entity';
 
@@ -81,6 +83,11 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(LIVE_REPLAYS_MODES)
   liveReplaysMode?: LiveReplaysMode;
+
+  /** The mail switch: `off` hides the Mail tab, `on` shows it to eligible accounts (the web relay has its own switch). */
+  @IsOptional()
+  @IsIn(MAIL_MODES)
+  mailMode?: MailMode;
 
   /** The group calls switch: `off` refuses every group call, `mesh` allows peer-to-peer ones up to the cap. */
   @IsOptional()

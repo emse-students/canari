@@ -17,6 +17,7 @@ import {
   type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
+  type MailMode,
   type PushMode,
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
@@ -61,6 +62,7 @@ export type PlatformConfigPublic = {
   pushMode: PushMode;
   checkpointSkipMode: CheckpointSkipMode;
   liveReplaysMode: LiveReplaysMode;
+  mailMode: MailMode;
   groupCallsMode: GroupCallsMode;
   callRelay: CallRelay;
 } & RetentionDays;
@@ -96,6 +98,7 @@ const DEFAULT_ROW: PlatformConfig = {
   pushMode: 'full',
   checkpointSkipMode: 'off',
   liveReplaysMode: 'off',
+  mailMode: 'off',
   groupCallsMode: 'off',
   callRelay: 'none',
   lydiaContractAnniversary: null,
@@ -340,6 +343,13 @@ export class PlatformService implements OnModuleInit {
       }
       changes.liveReplaysMode = dto.liveReplaysMode;
     }
+    if (dto.mailMode !== undefined) {
+      // Whether the Mail tab appears for students and staff - who moved it, and when, is a warn line.
+      if (dto.mailMode !== row.mailMode) {
+        this.logger.warn(`mailMode ${row.mailMode} -> ${dto.mailMode} by=${by}`);
+      }
+      changes.mailMode = dto.mailMode;
+    }
     if (dto.groupCallsMode !== undefined) {
       // Whether a group conversation may start a call - a peer-to-peer mesh that shows members'
       // network addresses to each other - so who moved it, and when, is a warn line like callsMode's.
@@ -384,7 +394,7 @@ export class PlatformService implements OnModuleInit {
     this.configInFlight = null;
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay} retention=${RETENTION_SETTINGS.map((setting) => `${setting.key}:${saved[setting.key]}`).join(',')}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode} mailMode=${saved.mailMode} groupCallsMode=${saved.groupCallsMode} callRelay=${saved.callRelay} retention=${RETENTION_SETTINGS.map((setting) => `${setting.key}:${saved[setting.key]}`).join(',')}`
     );
     // Media-service HOLDS the durations it stamps (it has no database): told after the save, it
     // re-reads them. Best-effort and logged; the save stands either way.
@@ -480,6 +490,7 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     pushMode: row.pushMode,
     checkpointSkipMode: row.checkpointSkipMode,
     liveReplaysMode: row.liveReplaysMode,
+    mailMode: row.mailMode,
     groupCallsMode: row.groupCallsMode,
     callRelay: row.callRelay,
     retentionReelDays: row.retentionReelDays,

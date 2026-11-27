@@ -1,4 +1,5 @@
 import { MailError } from './mailErrors';
+import { ROOT_FOLDER_ID } from './zimbraRequests';
 import type {
   AttachmentRef,
   ConversationSummary,
@@ -163,6 +164,19 @@ export function parseFolders(body: Json): MailFolder[] {
   return list(root.folder)
     .map((f) => folderOf(f, null))
     .filter((f): f is MailFolder => f !== null);
+}
+
+/**
+ * `CreateFolderResponse`: the folder created (or found, with `fie`). A folder made under the mailbox
+ * root gets `parentId: null`, as {@link parseFolders} gives the root's own children - the root is
+ * not a folder the tree lists.
+ */
+export function parseCreatedFolder(body: Json): MailFolder {
+  const f = list(responseOf(body, 'CreateFolderResponse').folder)[0];
+  const parent = f ? str(f.l) : null;
+  const folder = f ? folderOf(f, parent === ROOT_FOLDER_ID ? null : parent) : null;
+  if (!folder) throw new MailError('server', 'malformed-CreateFolderResponse-folder');
+  return folder;
 }
 
 /** Every folder of a tree, depth first. */

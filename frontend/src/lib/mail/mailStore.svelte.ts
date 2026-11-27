@@ -31,6 +31,22 @@ const LEAVES_FOLDER: ReadonlySet<MailActionOp> = new Set([
 /** The page size of a conversation list. */
 export const MAIL_PAGE_SIZE = 50;
 
+/**
+ * The folder "Archiver" moves to (owner decision, lot 3): a root-level folder of this name, created
+ * on first use when the mailbox has none. Zimbra has no system archive folder; the name is the one
+ * the school's webmail users already create, so an existing folder is reused rather than doubled.
+ */
+export const ARCHIVE_FOLDER_NAME = 'Archives';
+
+/** Whether `folder` is the archive folder: a root-level user folder named {@link ARCHIVE_FOLDER_NAME}. */
+export function isArchiveFolder(folder: Pick<MailFolder, 'name' | 'parentId' | 'role'>): boolean {
+  return (
+    folder.role === null &&
+    folder.parentId === null &&
+    folder.name.toLowerCase() === ARCHIVE_FOLDER_NAME.toLowerCase()
+  );
+}
+
 /** The eligibility of what a session state names (D1). */
 export function eligibilityOf(state: MailSessionState): MailEligibility {
   const address =
@@ -48,8 +64,10 @@ export class MailStore {
   sessionState = $state<MailSessionState>({ kind: 'signed_out' });
   /** The folder tree. */
   folders = $state<MailFolder[]>([]);
-  /** The folder listed; `null` before the first open. */
+  /** The folder listed; `null` before the first open, and for a search of the whole mailbox. */
   currentFolderId = $state<string | null>(null);
+  /** Whether a list was opened (a folder, or the whole mailbox) since the last reset. */
+  opened = $state(false);
   /** The search typed for the list, in Zimbra's query syntax. */
   query = $state('');
   /** The conversations listed, newest first, every page loaded so far. */
@@ -109,6 +127,7 @@ export class MailStore {
     this.generation++;
     this.folders = [];
     this.currentFolderId = null;
+    this.opened = false;
     this.query = '';
     this.conversations = [];
     this.hasMore = false;
@@ -138,11 +157,18 @@ export class MailStore {
     }
   }
 
-  /** Lists `folderId` (with the search `query`) from its first page; the selection is cleared. */
-  async openFolder(folderId: string, query = ''): Promise<void> {
-    Log.d('MAIL-STORE', `open folder (search: ${query.trim() ? 'yes' : 'no'})`);
+  /**
+   * Lists `folderId` (with the search `query`) from its first page; the selection is cleared.
+   * `null` lists the whole mailbox (the "Suivis" view, a search everywhere).
+   */
+  async openFolder(folderId: string | null, query = ''): Promise<void> {
+    Log.d(
+      'MAIL-STORE',
+      `open ${folderId === null ? 'the whole mailbox' : 'a folder'} (search: ${query.trim() ? 'yes' : 'no'})`
+    );
     this.generation++;
     this.currentFolderId = folderId;
+    this.opened = true;
     this.query = query;
     this.conversations = [];
     this.hasMore = false;
@@ -153,7 +179,7 @@ export class MailStore {
 
   /** Loads the next page of the list, when there is one and none is loading. */
   async loadMore(): Promise<void> {
-    if (!this.hasMore || this.loading || this.currentFolderId === null) return;
+    if (!this.hasMore || this.loading || !this.opened) return;
     Log.d('MAIL-STORE', `load more from ${this.conversations.length}`);
     await this.loadPage(this.conversations.length);
   }
@@ -247,6 +273,34 @@ export class MailStore {
     if (op === 'read' || op === 'unread') await this.reloadListed();
     else this.applyLocally(op, targets, folderId);
     await this.refreshFolders();
+  }
+
+  /**
+   * "Archiver": moves `ids` (the selection by default) to the archive folder, created at the root on
+   * first use when the mailbox has none ({@link ARCHIVE_FOLDER_NAME}). Rethrows the typed failure,
+   * as {@link act} does.
+   */
+  async archive(ids: readonly string[] = this.selected): Promise<void> {
+    const targets = [...ids];
+    if (targets.length === 0) return;
+    const folder = await this.archiveFolder();
+    await this.act('move', targets, folder.id);
+  }
+
+  /** The archive folder of the tree, or the one created now (the folder counts reload after). */
+  private async archiveFolder(): Promise<MailFolder> {
+    const existing = this.folders.find(isArchiveFolder);
+    if (existing) return existing;
+    Log.i('MAIL-STORE', 'no archive folder in the mailbox - it is created');
+    const generation = this.generation;
+    try {
+      return await this.api.createFolder(ARCHIVE_FOLDER_NAME);
+    } catch (err) {
+      const failure = classifyMailFailure(err);
+      if (generation === this.generation) this.error = failure;
+      Log.w('MAIL-STORE', `the archive folder was not created (${failure.kind})`);
+      throw failure;
+    }
   }
 
   /** Re-reads every row listed so far from the server, in one search (the counts are its to say). */

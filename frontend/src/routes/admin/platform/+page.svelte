@@ -24,12 +24,14 @@
     GROUP_CALLS_MODES,
     LIVES_MODES,
     LIVE_REPLAYS_MODES,
+    MAIL_MODES,
     type CallRelay,
     type CallsMode,
     type CheckpointSkipMode,
     type GroupCallsMode,
     type LivesMode,
     type LiveReplaysMode,
+    type MailMode,
   } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
   import { RETENTION_ADMIN_SETTINGS, type RetentionAdminKey } from '$lib/legal/retention';
@@ -46,6 +48,7 @@
     pushMode: PushMode;
     checkpointSkipMode: CheckpointSkipMode;
     liveReplaysMode: LiveReplaysMode;
+    mailMode: MailMode;
     groupCallsMode: GroupCallsMode;
     callRelay: CallRelay;
   } & Record<RetentionAdminKey, number>;
@@ -76,6 +79,7 @@
   let pushMode = $state<PushMode>('full');
   let checkpointSkipMode = $state<CheckpointSkipMode>('off');
   let liveReplaysMode = $state<LiveReplaysMode>('off');
+  let mailMode = $state<MailMode>('off');
   let groupCallsMode = $state<GroupCallsMode>('off');
   let callRelay = $state<CallRelay>('none');
   /**
@@ -138,6 +142,14 @@
   };
   const LIVE_REPLAYS_MODE_OPTIONS: PickerOption[] = $derived(
     LIVE_REPLAYS_MODES.map((mode) => ({ value: mode, label: LIVE_REPLAYS_MODE_LABELS[mode]() }))
+  );
+  /** One label per mail mode, typed so a new mode cannot reach the picker unlabelled. */
+  const MAIL_MODE_LABELS: Record<MailMode, () => string> = {
+    off: m.admin_platform_mail_mode_off,
+    on: m.admin_platform_mail_mode_on,
+  };
+  const MAIL_MODE_OPTIONS: PickerOption[] = $derived(
+    MAIL_MODES.map((mode) => ({ value: mode, label: MAIL_MODE_LABELS[mode]() }))
   );
   /** One label per group calls mode, typed so a new mode cannot reach the picker unlabelled. */
   const GROUP_CALLS_MODE_LABELS: Record<GroupCallsMode, () => string> = {
@@ -293,6 +305,7 @@
     pushMode = data.pushMode;
     checkpointSkipMode = data.checkpointSkipMode;
     liveReplaysMode = data.liveReplaysMode;
+    mailMode = data.mailMode;
     groupCallsMode = data.groupCallsMode;
     callRelay = data.callRelay;
     retention = Object.fromEntries(
@@ -317,6 +330,7 @@
       pushMode,
       checkpointSkipMode,
       liveReplaysMode,
+      mailMode,
       groupCallsMode,
       callRelay,
       ...retention,
@@ -629,6 +643,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_live_replays_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="mail-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_mail_mode_label()}
+        </label>
+        <Picker
+          id="mail-mode"
+          value={mailMode}
+          options={MAIL_MODE_OPTIONS}
+          label={m.admin_platform_mail_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = MAIL_MODES.find((known) => known === v);
+            if (mode) mailMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_mail_mode_hint()}
         </p>
       </div>
 

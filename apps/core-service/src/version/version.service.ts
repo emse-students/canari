@@ -8,6 +8,7 @@ import type {
   CheckpointSkipMode,
   LivesMode,
   LiveReplaysMode,
+  MailMode,
   GroupCallsMode,
   CallRelay,
 } from '../platform/entities/platform-config.entity';
@@ -75,6 +76,14 @@ export type AppVersionResponse = {
    */
   liveReplays: {
     mode: LiveReplaysMode;
+  };
+  /**
+   * The server's switch for the Mail tab (`platform_config.mail_mode`): `on` shows it to eligible
+   * accounts (etu.emse.fr, emse.fr). A DISPLAY switch only - the web relay is gated separately by
+   * chat-gateway's `MAIL_RELAY_ENABLED`. A client reads an absent or unknown value as `off`.
+   */
+  mail: {
+    mode: MailMode;
   };
   /**
    * The retention durations in force, in days (`platform_config.retention_*`, migration 025). The
@@ -199,6 +208,7 @@ export class VersionService {
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },
+      mail: { mode: platform.mailMode },
       retention: publicRetention(platform),
       oidcPkce: true,
       presencePost: true,

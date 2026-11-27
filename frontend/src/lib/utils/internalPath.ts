@@ -138,7 +138,10 @@ export function isSignedOutPath(path: string): boolean {
     path.startsWith('/login') ||
     path.startsWith('/auth') ||
     path.startsWith('/legal') ||
-    path.startsWith('/f/')
+    path.startsWith('/f/') ||
+    // The dev-only previews (`/dev/*`, fake data, a 404 outside `vite dev`): the constant is false in
+    // every build, so the branch is not even compiled into one.
+    (import.meta.env.DEV && path.startsWith('/dev/'))
   );
 }
 

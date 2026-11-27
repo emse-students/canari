@@ -4,7 +4,7 @@ import { FakeZimbra, zimbraBody, zimbraFault } from '../../test/mailFakes';
 import { MailApi } from './mailApi';
 import { MailError } from './mailErrors';
 import { MailSession } from './mailSession';
-import { eligibilityOf, MailStore } from './mailStore.svelte';
+import { ARCHIVE_FOLDER_NAME, eligibilityOf, isArchiveFolder, MailStore } from './mailStore.svelte';
 import { ZimbraSoapClient } from './soapClient';
 
 /**
@@ -20,8 +20,9 @@ function conv(id: string, flags: string) {
   return { id, su: `s${id}`, d: 1, n: 2, u: flags.includes('u') ? 1 : 0, f: flags, e: [] };
 }
 
-function setup() {
+function setup(options: { archiveExists?: boolean } = {}) {
   let inboxUnread = 3;
+  let archiveExists = options.archiveExists ?? false;
   let closed = false;
   /** The conversations the server holds as read (every other one is unread). */
   const read: string[] = [];
@@ -46,6 +47,7 @@ function setup() {
                 { id: '2', name: 'Inbox', n: 10, u: inboxUnread },
                 { id: '3', name: 'Trash' },
                 { id: '300', name: 'School' },
+                ...(archiveExists ? [{ id: '412', name: 'Archives' }] : []),
               ],
             },
           ],
@@ -59,6 +61,14 @@ function setup() {
         SearchResponse: {
           c: ids.map((id) => conv(id, read.includes(id) ? '' : 'u')),
           more: offset === 0 && ids.length === 2,
+        },
+      });
+    }
+    if (name === 'CreateFolderRequest') {
+      archiveExists = true;
+      return zimbraBody({
+        CreateFolderResponse: {
+          folder: [{ id: '412', name: 'Archives', l: '1', view: 'message' }],
         },
       });
     }
@@ -197,6 +207,59 @@ describe('MailStore', () => {
     await store.openFolder('300');
     await trashing;
     expect(store.conversations.map((c) => c.id)).toEqual(['x1']);
+  });
+
+  it('"Archiver" creates the Archives folder once, at the root, then moves into it', async () => {
+    const { zimbra, session, store } = setup();
+    await session.signIn('pw', false);
+    await store.refreshFolders();
+    await store.openFolder('2');
+    await store.archive(['c1']);
+    const creates = zimbra.requests.filter((r) => r.soap?.name === 'CreateFolderRequest');
+    expect(creates.map((r) => r.soap!.element.folder)).toEqual([
+      { name: ARCHIVE_FOLDER_NAME, l: '1', view: 'message', fie: 1 },
+    ]);
+    expect(store.conversations.map((c) => c.id)).toEqual(['c2']);
+    // The tree reloaded after the move: the folder is now in it, and the next archive reuses it.
+    expect(store.folders.some(isArchiveFolder)).toBe(true);
+    await store.archive(['c2']);
+    expect(zimbra.soapNames.filter((n) => n === 'CreateFolderRequest')).toHaveLength(1);
+    const moves = zimbra.requests
+      .filter((r) => r.soap?.name === 'ConvActionRequest')
+      .map((r) => r.soap!.element.action as { op: string; l?: string });
+    expect(moves.map((a) => [a.op, a.l])).toEqual([
+      ['move', '412'],
+      ['move', '412'],
+    ]);
+  });
+
+  it('"Archiver" reuses an Archives folder the mailbox already has', async () => {
+    const { zimbra, session, store } = setup({ archiveExists: true });
+    await session.signIn('pw', false);
+    await store.refreshFolders();
+    await store.openFolder('2');
+    await store.archive(['c1']);
+    expect(zimbra.soapNames).not.toContain('CreateFolderRequest');
+  });
+
+  it('only a root-level user folder named Archives is the archive folder', () => {
+    const folder = { name: 'archives', parentId: null, role: null };
+    expect(isArchiveFolder(folder)).toBe(true);
+    expect(isArchiveFolder({ ...folder, parentId: '2' })).toBe(false);
+    expect(isArchiveFolder({ ...folder, role: 'inbox' as const })).toBe(false);
+    expect(isArchiveFolder({ ...folder, name: 'Archive 2024' })).toBe(false);
+  });
+
+  it('the whole mailbox lists with no folder constraint, and loadMore waits for a list to be opened', async () => {
+    const { zimbra, session, store } = setup();
+    await session.signIn('pw', false);
+    await store.loadMore();
+    expect(zimbra.soapNames).not.toContain('SearchRequest');
+    expect(store.opened).toBe(false);
+    await store.openFolder(null, 'is:flagged');
+    expect(store.opened).toBe(true);
+    const search = zimbra.requests.find((r) => r.soap?.name === 'SearchRequest')!;
+    expect((search.soap!.element as { query: string }).query).toBe('(is:flagged)');
   });
 
   it('a sign-out empties it too', async () => {

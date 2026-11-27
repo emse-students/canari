@@ -8,6 +8,7 @@ import {
   ShoppingBag,
   ClipboardList,
   CalendarClock,
+  Mail,
 } from '@lucide/svelte';
 import type { AppPlace } from './places';
 
@@ -26,4 +27,5 @@ export const PLACE_ICONS = {
   'shopping-bag': ShoppingBag,
   'clipboard-list': ClipboardList,
   'calendar-clock': CalendarClock,
+  mail: Mail,
 } as const satisfies Record<AppPlace['icon'], unknown>;

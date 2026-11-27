@@ -1,6 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+import {
+  APP_PLACES,
+  mobileNavPlaces,
+  resolveActivePlaceId,
+  shownPlaces,
+} from '$lib/navigation/places';
 import { getLocale, locales, overwriteGetLocale } from '$lib/paraglide/runtime';
 
 /**
@@ -32,8 +37,28 @@ function asLocale<T>(locale: (typeof locales)[number], read: () => T): T {
 describe('every tab the bottom bar draws has a name it does not show', () => {
   const drawn = APP_PLACES.filter((place) => place.mobileNav);
 
-  it('draws four places, in the order the bar reads left to right', () => {
-    expect(drawn.map((p) => p.id)).toEqual(['posts', 'communities', 'chat', 'dashboard']);
+  it('draws four places, and Mail before the Dashboard while its gate is open (D10)', () => {
+    expect(drawn.map((p) => p.id)).toEqual(['posts', 'communities', 'chat', 'mail', 'dashboard']);
+    expect(mobileNavPlaces({ mail: false }).map((p) => p.id)).toEqual([
+      'posts',
+      'communities',
+      'chat',
+      'dashboard',
+    ]);
+    expect(mobileNavPlaces({ mail: true }).map((p) => p.id)).toEqual([
+      'posts',
+      'communities',
+      'chat',
+      'mail',
+      'dashboard',
+    ]);
+  });
+
+  it('the sidebar hides a gated place whose gate is shut, and only that one', () => {
+    const shut = shownPlaces(APP_PLACES, { mail: false }).map((p) => p.id);
+    expect(shut).not.toContain('mail');
+    expect(shut).toHaveLength(APP_PLACES.length - 1);
+    expect(shownPlaces(APP_PLACES, { mail: true })).toHaveLength(APP_PLACES.length);
   });
 
   it.each(drawn.flatMap((place) => locales.map((locale) => [place.id, locale] as const)))(

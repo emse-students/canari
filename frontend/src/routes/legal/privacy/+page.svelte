@@ -117,6 +117,22 @@
         </dd>
       </div>
       <div>
+        <dt>Messagerie de l'École</dt>
+        <dd>
+          Quand l'onglet Mail est ouvert, Canari affiche votre boîte mail de l'École sans en rien
+          garder : votre appareil ouvre lui-même une connexion chiffrée avec le serveur mail de
+          l'École, et le serveur de Canari ne fait que relayer ces octets chiffrés, sans pouvoir les
+          lire (principe 1 de « Nos principes », vos messages sont à vous). Il n'en connaît que
+          l'heure, la durée et le volume de chaque connexion, rattachés à votre compte. Vos mails
+          restent dans la mémoire de l'application le temps de les lire et ne sont jamais copiés
+          ailleurs. Votre mot de passe n'est conservé que si vous cochez « Se souvenir », et
+          seulement sur votre appareil, chiffré avec la clé de cet appareil ; il est effacé à la
+          déconnexion. Les images distantes d'un mail ne sont chargées que si vous le demandez pour
+          ce mail, pour qu'aucun expéditeur ne sache quand et où vous l'avez lu (principe 3, votre
+          attention n'est pas à vendre).
+        </dd>
+      </div>
+      <div>
         <dt>Messages privés et de groupe</dt>
         <dd>
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le

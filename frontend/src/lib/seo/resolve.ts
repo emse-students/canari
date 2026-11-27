@@ -56,6 +56,8 @@ export const PRIVATE_PREFIXES = [
   '/institutions',
   '/lists',
   '/login',
+  // The school mailbox (D10): a signed-in reader's own mail.
+  '/mail',
   '/notifications',
   '/profile',
   '/settings',
@@ -148,6 +150,8 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/camera': () => m.reels_camera_title(),
   '/login': () => m.seo_login_title(),
   '/directory': () => m.directory_heading(),
+  // The dev-only preview of the mail screens (a 404 in every build).
+  '/dev/mail-preview': () => m.mail_title(),
   '/documents': () => m.reviewer_docs_title(),
   '/events': () => m.events_heading(),
   '/forms/cancel': () => m.form_cancel_title(),

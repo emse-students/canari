@@ -1,6 +1,7 @@
 <script lang="ts">
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
-  import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { mobileNavPlaces, resolveActivePlaceId } from '$lib/navigation/places';
+  import { mailTabVisible, watchMailTab } from '$lib/mail/mailClient.svelte';
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { m } from '$lib/paraglide/messages';
   import { page } from '$app/state';
@@ -9,6 +10,9 @@
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
+  // The Mail tab is shown while its gate is open (D10, D12): the bar follows both facts.
+  watchMailTab();
+  const places = $derived(mobileNavPlaces({ mail: mailTabVisible() }));
 
   function getIcon(icon: keyof typeof PLACE_ICONS) {
     return PLACE_ICONS[icon];
@@ -61,7 +65,7 @@
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-(--bottom-nav-height) items-stretch justify-around">
-    {#each MOBILE_NAV_PLACES as place (place.id)}
+    {#each places as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
       {@const badge = placeBadge(place.id, isActive)}
@@ -89,7 +93,9 @@
                 ? m.admin_hub_pending_count({ count: badge })
                 : place.id === 'notifications'
                   ? m.dashboard_unread_notifications_label({ count: badge })
-                  : m.chat_unread_messages_label({ count: badge })}
+                  : place.id === 'mail'
+                    ? m.mail_unread_count_label({ count: badge })
+                    : m.chat_unread_messages_label({ count: badge })}
             ></span>
           {/if}
         </span>

@@ -88,6 +88,19 @@ export class PlatformConfig {
   liveReplaysMode!: LiveReplaysMode;
 
   /**
+   * Whether the Mail tab (the school mailbox inside Canari) is shown to eligible accounts (migration
+   * 033). Published by `GET /api/version` as `mail.mode`; it does NOT gate the web relay, which is
+   * chat-gateway's own `MAIL_RELAY_ENABLED`.
+   */
+  @Column({
+    name: 'mail_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  mailMode!: MailMode;
+
+  /**
    * Whether a group conversation may hold a call (migration 022). Read by chat-delivery-service at
    * `initiate`; published by `GET /api/version` as `calls.groupMode`. `calls_mode = off` still wins.
    */
@@ -208,6 +221,16 @@ export type LiveReplaysMode = 'off' | 'on';
 
 /** Every {@link LiveReplaysMode}, for the DTO's validation. */
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
+
+/**
+ * Whether the Mail tab is shown (decision D12 of the mail client). `off` hides it; `on` shows it to
+ * accounts whose address is on etu.emse.fr or emse.fr. A client-side display switch only: the web
+ * relay has its own server switch (chat-gateway `MAIL_RELAY_ENABLED`).
+ */
+export type MailMode = 'off' | 'on';
+
+/** Every {@link MailMode}, for the DTO's validation. */
+export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
 
 /**
  * Whether a group conversation may hold a call (owner decision D-A). `off` refuses every group

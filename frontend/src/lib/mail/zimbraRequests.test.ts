@@ -6,6 +6,7 @@ import {
   authRequest,
   autoCompleteRequest,
   conversationConstraint,
+  createFolderRequest,
   endSessionRequest,
   getConvRequest,
   getFolderRequest,
@@ -40,6 +41,18 @@ describe('session requests', () => {
       GetInfoRequest: { _jsns: 'urn:zimbraAccount', sections: 'mbox,attrs' },
     });
     expect(getFolderRequest()).toEqual({ GetFolderRequest: { _jsns: 'urn:zimbraMail' } });
+  });
+
+  it('CreateFolder makes a mail folder at the root, and returns the existing one (fie)', () => {
+    expect(createFolderRequest('Archives')).toEqual({
+      CreateFolderRequest: {
+        _jsns: 'urn:zimbraMail',
+        folder: { name: 'Archives', l: '1', view: 'message', fie: 1 },
+      },
+    });
+    expect(createFolderRequest('Clubs', '300')).toMatchObject({
+      CreateFolderRequest: { folder: { l: '300' } },
+    });
   });
 });
 

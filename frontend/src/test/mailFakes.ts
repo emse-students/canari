@@ -7,7 +7,8 @@ import type {
 import type { PlaintextStream, StreamEnd, TlsEngine } from '$lib/mail/tlsConnection';
 
 /**
- * Test doubles for the mail transport's tests (no production code imports this file).
+ * Test doubles for the mail transport's tests, and the dev-only mail preview's mailbox
+ * (`mailPreview/`, behind `import.meta.env.DEV`): no build contains this file.
  *
  * {@link FakeTransport} is the far side of a pipe the test drives by hand; {@link FakeEngine} is a
  * TLS session whose "encryption" is the identity, so a test reads what crossed in clear: the
