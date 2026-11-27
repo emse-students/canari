@@ -9,7 +9,13 @@ import { flushSync, mount, unmount } from 'svelte';
 
 const warm = vi.fn<(ref: unknown) => string | null>();
 const release = vi.fn();
+let arrival: (() => void) | null = null;
+const cancelArrival = vi.fn();
 vi.mock('$lib/utils/mediaBlobCache', () => ({
+  onDecryptedMediaHeld: (_ref: unknown, cb: () => void) => {
+    arrival = cb;
+    return cancelArrival;
+  },
   retainWarmDecryptedMediaBlobUrl: (ref: unknown) => warm(ref),
   releaseDecryptedMediaBlobUrl: (ref: unknown) => release(ref),
 }));
@@ -29,6 +35,8 @@ const mounted: (() => void)[] = [];
 beforeEach(() => {
   warm.mockReset();
   release.mockReset();
+  cancelArrival.mockReset();
+  arrival = null;
 });
 afterEach(() => {
   while (mounted.length) mounted.pop()?.();
@@ -100,5 +108,39 @@ describe('MessageReplyQuote - the quoted photo', () => {
     expect(t.querySelector('button')!.textContent).toContain('coucou');
     while (mounted.length) mounted.pop()?.();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches from the placeholder to the photo when the blob lands after mount, no remount', () => {
+    warm.mockReturnValue(null);
+    const t = render({ ref: { ...photo, placeholder: 'abc' }, caption: '' });
+    const before = t.querySelector('img[data-testid="reply-media-thumb"]')!;
+    expect(before.getAttribute('src')).toBe('data:image/png;base64,HASH');
+    warm.mockReturnValue('blob:late');
+    arrival!();
+    flushSync();
+    const after = t.querySelector('img[data-testid="reply-media-thumb"]')!;
+    expect(after.getAttribute('src')).toBe('blob:late');
+    while (mounted.length) mounted.pop()?.();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches from the text label to the photo when the blob lands after mount', () => {
+    warm.mockReturnValue(null);
+    const t = render({ ref: photo, caption: '' });
+    expect(t.querySelector('[data-testid="reply-media-thumb"]')).toBeNull();
+    warm.mockReturnValue('blob:late');
+    arrival!();
+    flushSync();
+    expect(t.querySelector('img[data-testid="reply-media-thumb"]')!.getAttribute('src')).toBe(
+      'blob:late'
+    );
+  });
+
+  it('stops waiting when the quote goes away before the blob lands', () => {
+    warm.mockReturnValue(null);
+    render({ ref: photo, caption: '' });
+    while (mounted.length) mounted.pop()?.();
+    expect(cancelArrival).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
   });
 });

@@ -63,6 +63,7 @@
   import { onMount } from 'svelte';
   import type { QuotedVisual } from '$lib/utils/chat/quotedMedia';
   import {
+    onDecryptedMediaHeld,
     releaseDecryptedMediaBlobUrl,
     retainWarmDecryptedMediaBlobUrl,
   } from '$lib/utils/mediaBlobCache';
@@ -124,19 +125,34 @@
   const mediaLabel = $derived(quotedMedia ? mediaKindLabel(quotedMedia.ref) : '');
   const mediaCaption = $derived(quotedMedia ? shortenReplyPreview(quotedMedia.caption) : '');
 
+  // Takes the held blob when there is one, else waits for the store to say it landed - the
+  // original's own bubble may still be downloading. One hold at a time, released on teardown.
   onMount(() => {
     const ref = quotedMedia?.ref;
     if (!ref) return;
-    const warm = retainWarmDecryptedMediaBlobUrl(ref);
-    if (!warm) {
+    let held = false;
+    let cancelWait: (() => void) | null = null;
+    const take = (): boolean => {
+      const warm = retainWarmDecryptedMediaBlobUrl(ref);
+      if (!warm) return false;
+      held = true;
+      heldBlobUrl = warm;
+      return true;
+    };
+    if (!take()) {
       Log.d(
         'MessageReplyQuote',
-        `quoted ${ref.mediaId.slice(0, 8)} is not held in memory - ${hashUrl ? 'its embedded placeholder' : 'the text label'} stands in`
+        `quoted ${ref.mediaId.slice(0, 8)} is not held in memory - ${hashUrl ? 'its embedded placeholder' : 'the text label'} stands in until it lands`
       );
-      return;
+      cancelWait = onDecryptedMediaHeld(ref, () => {
+        cancelWait = null;
+        take();
+      });
     }
-    heldBlobUrl = warm;
-    return () => releaseDecryptedMediaBlobUrl(ref);
+    return () => {
+      cancelWait?.();
+      if (held) releaseDecryptedMediaBlobUrl(ref);
+    };
   });
 
   /** Who answered whom, in one line; drops the replier when the header above already names them. */

@@ -8430,5 +8430,5 @@ its ref to `MessageReplyQuote`, which draws `ReplyMediaThumb` (60% opacity, `ari
 label) from, in order: the decrypted blob already in memory (`retainWarmDecryptedMediaBlobUrl`,
 released on teardown; a video shows its first frame), else the ThumbHash the sender embedded, else
 today's text label. The last two states are legitimate (original not loaded, expired, never opened)
-and log at debug only. The blob is read once at mount: a quote mounted before its original finished
-downloading keeps the placeholder or label until it remounts.
+and log at debug only. A quote mounted before its original finished downloading takes the blob the moment it lands
+(`onDecryptedMediaHeld`, a one-shot arrival listener on `BlobUrlPool`; no polling, no remount).

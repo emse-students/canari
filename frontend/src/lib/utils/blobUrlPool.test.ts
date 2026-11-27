@@ -155,4 +155,18 @@ describe('BlobUrlPool', () => {
     expect(pool.tryRetain('idle')).toBeNull();
     expect(pool.tryRetain('held')).toBe('blob:held');
   });
+
+  it('tells a waiting reader once when its key lands, and not after it cancelled', () => {
+    const pool = new BlobUrlPool();
+    const told = vi.fn();
+    const cancelled = vi.fn();
+    pool.onArrival('a', told);
+    pool.onArrival('a', cancelled)();
+    expect(told).not.toHaveBeenCalled();
+    pool.retain('a', 'blob:a');
+    expect(told).toHaveBeenCalledTimes(1);
+    expect(cancelled).not.toHaveBeenCalled();
+    pool.retain('a', 'blob:a');
+    expect(told).toHaveBeenCalledTimes(1);
+  });
 });
