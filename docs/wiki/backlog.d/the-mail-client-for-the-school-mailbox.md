@@ -13,5 +13,10 @@ The lots, in order:
 3. the screens and the "Mail" tab, the HTML sandbox, and the register and privacy lines;
 4. Android notifications, with a battery measurement.
 
+**How it is run** (owner, 2026-11-27): a dedicated session leads it in full autonomy, one draft PR
+per lot coded by a background agent and reviewed adversarially. **The lead session (Master) merges
+them.** A short report and, for the UI, an artifact follow each lot, and the next lot does not wait
+for the owner's approval.
+
 The whole is built behind a server switch, off by default. It ships with the desktop app
 ([entry](a-desktop-app-for-windows-macos-and-linux.md)).
