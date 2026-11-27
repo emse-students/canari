@@ -1543,7 +1543,7 @@
   "admin_platform_message_placeholder": "E.g.: Server update in progress, back around 2pm.",
   "admin_platform_min_version_label": "Minimum client version",
   "admin_platform_min_version_hint_prefix": "Semver format",
-  "admin_platform_min_version_hint_suffix": "(e.g. 0.4.0).",
+  "admin_platform_min_version_hint_suffix": "(e.g. 0.4.0, or 1.8.3-alpha.1 to name a first pre-release).",
   "admin_platform_payment_provider_label": "Payment provider",
   "admin_platform_payment_provider_disabled": "Payments disabled",
   "admin_platform_payment_provider_hint": "Switches immediately, no restart needed - every payment written from now on (forms, shop) will go through this provider as soon as you save.",

@@ -1575,7 +1575,7 @@
   "admin_platform_message_placeholder": "Ex. : Mise à jour serveur en cours, retour prévu vers 14h.",
   "admin_platform_min_version_label": "Version client minimale",
   "admin_platform_min_version_hint_prefix": "Format semver",
-  "admin_platform_min_version_hint_suffix": "(ex. 0.4.0).",
+  "admin_platform_min_version_hint_suffix": "(ex. 0.4.0, ou 1.8.3-alpha.1 pour nommer une première préversion).",
   "admin_platform_payment_provider_label": "Fournisseur de paiement",
   "admin_platform_payment_provider_disabled": "Paiements désactivés",
   "admin_platform_payment_provider_hint": "Bascule immédiatement, sans redémarrage - tous les paiements en cours d'écriture (formulaires, boutique) passeront par ce fournisseur dès l'enregistrement.",

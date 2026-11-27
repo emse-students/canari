@@ -1,27 +1,19 @@
+import { compareSemver } from './semver-compare';
+
+export { compareSemver };
+
 /** Shape a client version must have to be compared at all. */
 export const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 
 /**
- * Compares two `major.minor.patch` strings.
- *
- * The frontend carries the same function (`utils/appVersion.ts`) because there is no build seam
- * between the SvelteKit bundle and the Nest build: this repo has no shared TypeScript package. It
- * had one, `libs/shared-ts`, which nothing imported; it was deleted on 2026-08-27. Both copies are
- * pure arithmetic over the same three integers and both are pinned by tests. A THIRD copy is the
- * signal to create a shared package deliberately, not to copy again.
- *
- * @returns negative if a < b, positive if a > b, else 0
+ * Shape of a CLIENT FLOOR (`minClientVersion`): `major.minor.patch`, optionally followed by an
+ * `-alpha.N` pre-release. A pre-release orders BELOW its stable, so a floor naming the first ALPHA
+ * that shipped a reader (`1.8.3-alpha.1`) admits every build from that alpha on, while a floor of
+ * the bare `1.8.3` would lock out the estate's own pre-release builds. Only `alpha.N` is accepted
+ * (the one shape `release_kind()` cuts), with no leading zero on N, so a typo cannot slip in as a
+ * floor nobody can satisfy.
  */
-export function compareSemver(a: string, b: string): number {
-  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length, 3);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff < 0 ? -1 : 1;
-  }
-  return 0;
-}
+export const FLOOR_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-alpha\.(?:0|[1-9]\d*))?$/;
 
 /**
  * Whether `version` falls inside an inclusive `[min, max]` range, either bound optional.
