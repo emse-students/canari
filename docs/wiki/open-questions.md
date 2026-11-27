@@ -744,8 +744,10 @@ it would live in is planned ([entry](backlog.d/a-desktop-app-for-windows-macos-a
   owner confirmed the **ENT password** logs in over IMAP. A Canari client would therefore hold the key
   to the student's whole school account.
 - The Zimbra SOAP endpoint answers (`/service/soap`), but its CORS preflight returns no
-  `Access-Control-Allow-Origin`, so a page on `canari-emse.fr` cannot call it. Whether RENATER accepts
-  a password `AuthRequest` on it was not tested.
+  `Access-Control-Allow-Origin`, so a page on `canari-emse.fr` cannot call it. **Measured
+  2026-11-27 with a student account, by the owner on their own machine: a password `AuthRequest`
+  (JSON SOAP) is ACCEPTED with the ENT password,** and `GetInfoRequest` and `GetFolderRequest`
+  (`/Inbox` counters) answer. `EndSessionRequest` (`logoff`) closes the session.
 - The webmail sends `X-Frame-Options: sameorigin`, so it cannot be embedded in Canari.
 
 **What principle 1 fixes.** Mail is not end-to-end encrypted. A server that logs into the mailbox for
@@ -763,8 +765,9 @@ a mail server, so it is irrelevant here. The connection must start from the devi
     2026-11-27 from the production host (a bare TCP connect): egress to `partage.emse.fr` 993, 465
     and 587 is BLOCKED, and 443 is open.** From our backend, the relay can only reach Partage on 443,
     so the browser would have to speak Zimbra's SOAP API (`SendMsgRequest` included) through the
-    tunnel instead of IMAP/SMTP. That is only possible if RENATER accepts a password `AuthRequest`
-    there, which is the first thing to test.
+    tunnel instead of IMAP/SMTP. RENATER accepts a password `AuthRequest` there (measured, above),
+    so this home is viable. What is left to verify: that `SendMsgRequest` sends, and that TLS done
+    in WASM inside the browser completes against Partage's certificate chain.
 
   Its risks: principle 4 for Cloudflare; RENATER's brute-force protection seeing every student come
   from one set of addresses; and an ENT password typed into a web page.
