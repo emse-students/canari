@@ -26,9 +26,9 @@ describe('presetToRules', () => {
     expect(presetToRules('campus', 'gardanne', [])).toEqual([
       { formation: null, campus: 'gardanne' },
     ]);
-    expect(presetToRules('formations', 'gardanne', ['ICM', 'FSSS'])).toEqual([
+    expect(presetToRules('formations', 'gardanne', ['ICM', 'FISA'])).toEqual([
       { formation: 'ICM', campus: 'gardanne' },
-      { formation: 'FSSS', campus: 'gardanne' },
+      { formation: 'FISA', campus: 'gardanne' },
     ]);
     expect(presetToRules('everyone', '', [])).toEqual([{ formation: null, campus: null }]);
   });

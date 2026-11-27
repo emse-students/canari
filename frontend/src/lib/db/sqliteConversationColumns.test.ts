@@ -191,3 +191,30 @@ describe("SqliteStorage - the server's newest visible frame time", () => {
     expect(await storage.getConversation('g3')).not.toHaveProperty('serverLastMessageAt');
   });
 });
+
+describe('SqliteStorage - the "deleted here" mark (`deleted_conversations`)', () => {
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/plugin-sql');
+  });
+
+  it('a delete sets it, the removed stub keeps it, a return clears it, and an account reset takes it', async () => {
+    const storage = await initialisedSqlite();
+    await storage.saveConversation(conversation('g1'));
+    expect(await storage.wasConversationDeleted('g1')).toBe(false);
+
+    await storage.deleteConversation('g1');
+    expect(await storage.wasConversationDeleted('g1')).toBe(true);
+
+    // The stub the mirror recreates for a shade reply is the deletion's own trace, not a return.
+    await storage.mergeConversation({ ...conversation('g1'), lifecycle: 'removed' });
+    expect(await storage.wasConversationDeleted('g1')).toBe(true);
+
+    // The member in it again (a Welcome writing the row): the mark ends.
+    await storage.saveConversation(conversation('g1'));
+    expect(await storage.wasConversationDeleted('g1')).toBe(false);
+
+    await storage.deleteConversation('g1');
+    await storage.clear().catch(() => undefined);
+    expect(await storage.wasConversationDeleted('g1')).toBe(false);
+  });
+});

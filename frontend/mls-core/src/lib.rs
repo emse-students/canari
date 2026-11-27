@@ -185,6 +185,13 @@ pub enum MlsError {
     /// classifying (Mi 9T, 2026-09-28).
     #[error("KEYSTORE_KEY_UNAVAILABLE: {0}")]
     KeystoreKeyUnavailable(String),
+    /// Biometric mode, and the user dismissed the biometric sheet (cancel, negative button, system or
+    /// app cancel): the key IS in the keystore, it was simply not read. Like
+    /// [`Self::KeystoreKeyUnavailable`] it says nothing about the saved state and destroys nothing -
+    /// the caller hands the user to the PIN keypad - but it is its own code so no log or reader is
+    /// sent looking for a wiped keystore (owner's Android log, 2026-11-25).
+    #[error("KEYSTORE_PROMPT_DISMISSED: {0}")]
+    KeystorePromptDismissed(String),
     /// An EXTERNAL commit whose Remove proposals reach beyond the joiner's own prior leaf, refused
     /// before it merged (RFC 9420 section 12.4.3.2; `messaging.rs`, `refuse_foreign_external_remove`).
     ///
@@ -281,6 +288,7 @@ impl MlsError {
     pub fn state_load_code(&self) -> Option<&'static str> {
         match self {
             MlsError::KeystoreKeyUnavailable(_) => Some(KEYSTORE_KEY_UNAVAILABLE),
+            MlsError::KeystorePromptDismissed(_) => Some(KEYSTORE_PROMPT_DISMISSED),
             other => other.state_verdict_code(),
         }
     }
@@ -313,6 +321,9 @@ pub struct StateLoadRefusal {
 /// ([`StateLoadRefusal::is_keystore_key_unavailable`]) cannot drift apart.
 const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
 
+/// The code of [`MlsError::KeystorePromptDismissed`], written and tested through this one constant.
+const KEYSTORE_PROMPT_DISMISSED: &str = "KEYSTORE_PROMPT_DISMISSED";
+
 /// The code of [`MlsError::StateSealedUnderAnotherKey`] - one constant for the code written
 /// ([`MlsError::state_verdict_code`]) and the code tested
 /// ([`StateLoadRefusal::is_sealed_under_another_key`]).
@@ -342,6 +353,12 @@ impl StateLoadRefusal {
     /// `code` field, never from `message`.
     pub fn is_keystore_key_unavailable(&self) -> bool {
         self.code == Some(KEYSTORE_KEY_UNAVAILABLE)
+    }
+
+    /// True when the user dismissed the biometric sheet (`KEYSTORE_PROMPT_DISMISSED`): the key is
+    /// there, unread. The same recovery as [`Self::is_keystore_key_unavailable`], a different fact.
+    pub fn is_keystore_prompt_dismissed(&self) -> bool {
+        self.code == Some(KEYSTORE_PROMPT_DISMISSED)
     }
 
     /// True when the saved state is framed under ANOTHER device key (`STATE_KEY_MISMATCH`): the PIN
@@ -411,7 +428,8 @@ impl From<MlsError> for StateLoadRefusal {
             | MlsError::StateSealedUnderAnotherKey(detail)
             | MlsError::StateUndecryptable(detail)
             | MlsError::StateIdentityMismatch(detail)
-            | MlsError::KeystoreKeyUnavailable(detail) => detail,
+            | MlsError::KeystoreKeyUnavailable(detail)
+            | MlsError::KeystorePromptDismissed(detail) => detail,
             other => other.to_string(),
         };
         Self { code, message }

@@ -19,10 +19,16 @@
     activityLabel,
     categoryLabel,
     hourMapMax,
+    headline,
+    peopleSeries,
     versionsOf,
+    USAGE_RANGES,
     type UsagePeriod,
+    type UsageRange,
     type UsageView,
   } from '$lib/admin/usageDashboard';
+  import { versionLabel } from '$lib/admin/presencePlatforms';
+  import LineChart from '$lib/components/admin/LineChart.svelte';
 
   /**
    * THE USAGE DASHBOARD (owner, 2026-11-16 and 2026-11-19; docs/wiki/usage-dashboard.md): who uses
@@ -34,9 +40,15 @@
   let loading = $state(true);
   let failed = $state(false);
 
-  /** How many days the bar chart and the activity table show. */
-  const CHART_DAYS = 31;
+  /** How many days the activity table shows; the charts take the reader's range. */
   const ACTIVITY_DAYS = 14;
+  /** The window of the day charts, chosen by the reader. */
+  let range = $state<UsageRange>(30);
+
+  function chooseRange(days: UsageRange) {
+    Log.d('admin.usage.range', days);
+    range = days;
+  }
 
   async function load() {
     Log.d('admin.usage.load');
@@ -78,7 +90,10 @@
   const today = $derived(view?.days.find((d) => d.start === view?.today));
   const thisWeek = $derived(last(view?.weeks));
   const thisMonth = $derived(last(view?.months));
-  const chartDays = $derived(view ? calendarDays(view.days, view.today, CHART_DAYS) : []);
+  const chartDays = $derived(view ? calendarDays(view.days, view.today, range) : []);
+  const figures = $derived(view ? headline(view) : null);
+  const byCategory = $derived(peopleSeries(chartDays, 'category'));
+  const byVersion = $derived(peopleSeries(chartDays, 'version'));
   const chartMax = $derived(Math.max(1, ...chartDays.map((d) => d.period?.people.all ?? 0)));
   const activityDays = $derived(view ? view.days.slice(-ACTIVITY_DAYS).reverse() : []);
   const activityMonths = $derived(view ? activityByMonth(view.days, view.today).reverse() : []);
@@ -115,6 +130,32 @@
   {/snippet}
 </PageHeader>
 
+{#snippet lineChart(data: ReturnType<typeof peopleSeries>, axis: 'category' | 'version')}
+  <LineChart
+    times={data.times}
+    series={data.series}
+    total={data.total}
+    labelOf={axis === 'category' ? categoryLabel : versionLabel}
+    ariaLabel={axis === 'category'
+      ? m.admin_usage_chart_aria_categories()
+      : m.admin_usage_chart_aria_versions()}
+    resolution={m.admin_usage_chart_resolution()}
+    readingText={(i) =>
+      data.total[i] === null
+        ? m.admin_usage_day_gap_tooltip({ day: dayFmt.format(new Date(data.times[i] * 1000)) })
+        : m.admin_usage_day_tooltip({
+            day: dayFmt.format(new Date(data.times[i] * 1000)),
+            count: data.total[i] as number,
+          })}
+    stamp={(t) => dayFmt.format(new Date(t * 1000))}
+    tick={(t) => dayFmt.format(new Date(t * 1000))}
+    empty={data.total.every((v) => v === null)}
+    emptyLabel={m.admin_usage_empty()}
+    gapLabel={m.admin_usage_headline_none()}
+    logName="usage {axis}"
+  />
+{/snippet}
+
 {#if failed}
   <div
     class="border-red-err/30 text-red-err mb-4 rounded-xl border bg-[color-mix(in_srgb,var(--red-err)_8%,var(--cn-surface))] px-4 py-3 text-sm"
@@ -134,30 +175,65 @@
     <h2 id="usage-people" class="text-text-muted mb-3 text-xs font-semibold">
       {m.admin_usage_people_heading()}
     </h2>
-    <div class="grid grid-cols-3 gap-3">
-      {#each [{ label: m.admin_usage_period_today(), period: today, id: 'today' }, { label: m.admin_usage_period_week(), period: thisWeek, id: 'week' }, { label: m.admin_usage_period_month(), period: thisMonth, id: 'month' }] as tile (tile.id)}
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {#each [{ label: m.admin_usage_period_today(), period: today, id: 'today', previous: m.admin_usage_headline_previous_day( { count: figures?.previous.day ?? m.admin_usage_headline_none() } ) }, { label: m.admin_usage_period_week(), period: thisWeek, id: 'week', previous: m.admin_usage_headline_previous_week( { count: figures?.previous.week ?? m.admin_usage_headline_none() } ) }, { label: m.admin_usage_period_month(), period: thisMonth, id: 'month', previous: m.admin_usage_headline_previous_month( { count: figures?.previous.month ?? m.admin_usage_headline_none() } ) }] as tile (tile.id)}
         <div class="border-cn-border rounded-xl border bg-(--cn-surface) p-4">
-          <p class="text-text-main text-3xl font-semibold" data-testid="usage-people-{tile.id}">
+          <p class="text-text-muted text-sm">{tile.label}</p>
+          <p
+            class="text-text-main mt-1 text-4xl font-semibold tabular-nums"
+            data-testid="usage-people-{tile.id}"
+          >
             {tile.period?.people.all ?? 0}
           </p>
-          <p class="text-text-muted text-sm">{tile.label}</p>
+          <p
+            class="text-text-muted border-cn-border mt-3 border-t pt-2 text-sm tabular-nums"
+            data-testid="usage-previous-{tile.id}"
+          >
+            {tile.previous}
+          </p>
         </div>
       {/each}
     </div>
+    <p class="text-text-muted mt-3 text-sm" data-testid="usage-mean">
+      {m.admin_usage_headline_mean({
+        week: figures?.mean[7] ?? m.admin_usage_headline_none(),
+        month: figures?.mean[30] ?? m.admin_usage_headline_none(),
+      })}
+    </p>
+    <p class="text-text-muted mt-1 text-xs">{m.admin_usage_headline_hint()}</p>
   </section>
 
   <!-- People per day: one series, so the title names it and no legend is drawn -->
   <section class="mb-8" aria-labelledby="usage-days">
-    <h2 id="usage-days" class="text-text-muted mb-3 text-xs font-semibold">
-      {m.admin_usage_days_heading({ days: CHART_DAYS })}
-    </h2>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2 id="usage-days" class="text-text-muted text-xs font-semibold">
+        {m.admin_usage_days_heading({ days: range })}
+      </h2>
+      <div
+        role="group"
+        aria-label={m.admin_usage_range_label()}
+        class="border-cn-border flex overflow-hidden rounded-lg border bg-(--cn-surface) text-sm"
+      >
+        {#each USAGE_RANGES as days (days)}
+          <Button
+            variant={range === days ? 'primary' : 'ghost'}
+            size="compact"
+            aria-pressed={range === days}
+            data-testid="usage-range-{days}"
+            onclick={() => chooseRange(days)}
+          >
+            {m.admin_usage_range_option({ days })}
+          </Button>
+        {/each}
+      </div>
+    </div>
     {#if chartDays.every((d) => d.period === undefined)}
       <p class="text-text-muted text-sm">{m.admin_usage_empty()}</p>
     {:else}
       <div
         class="border-cn-border flex h-40 items-end gap-0.5 rounded-xl border bg-(--cn-surface) p-3"
         role="img"
-        aria-label={m.admin_usage_days_heading({ days: CHART_DAYS })}
+        aria-label={m.admin_usage_days_heading({ days: range })}
       >
         {#each chartDays as d (d.start)}
           {#if d.period}
@@ -187,6 +263,19 @@
         <span>{dayFmt.format(asDate(chartDays[chartDays.length - 1].start))}</span>
       </div>
     {/if}
+  </section>
+
+  <!-- The earlier line charts of /admin/status, on people per day (owner, 2026-11-26) -->
+  <section class="mb-8" aria-labelledby="usage-lines">
+    <h2 id="usage-lines" class="text-text-main mb-1 text-sm font-medium">
+      {m.admin_usage_chart_categories_heading()}
+    </h2>
+    {@render lineChart(byCategory, 'category')}
+    <h2 class="text-text-main mt-6 mb-1 text-sm font-medium">
+      {m.admin_usage_chart_versions_heading()}
+    </h2>
+    {@render lineChart(byVersion, 'version')}
+    <p class="text-text-muted mt-3 text-xs">{m.admin_usage_chart_hint()}</p>
   </section>
 
   <!-- By device type -->

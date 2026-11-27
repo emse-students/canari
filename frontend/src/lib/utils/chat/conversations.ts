@@ -377,6 +377,20 @@ export async function retireConversation(params: {
 }
 
 /**
+ * The STORED row of a conversation this device deleted, recreated `removed` to hold a reply typed in
+ * a notification for it (`adoptOrphanedMirrorEntries`, owner 2026-11-22): the reply is shown as not
+ * sent, with its Delete, instead of staying native for ever.
+ *
+ * Built HERE because this file is the only writer of `lifecycle: 'removed'` (see
+ * {@link retireConversation}). Nothing is forgotten with it: there is no live row to retire, and the
+ * deletion already took everything keyed by the group. The `removed` lifecycle is also what keeps
+ * the store's "deleted here" mark (`clearDeletedMark`), since the stub is the deletion's own trace.
+ */
+export function deletedConversationStub(id: string, updatedAt: number): ConversationMeta {
+  return { id, name: m.chat_deleted_conversation_name(), lifecycle: 'removed', updatedAt };
+}
+
+/**
  * Records that this device holds no usable MLS state for the group and is WAITING to be let back
  * in - the disposition for a removal this device itself asked for.
  *
