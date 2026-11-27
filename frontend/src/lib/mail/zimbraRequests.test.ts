@@ -12,6 +12,8 @@ import {
   getInfoRequest,
   getMsgRequest,
   saveDraftRequest,
+  parenthesesBalanced,
+  quoteSearchValue,
   searchQuery,
   searchRequest,
   sendMsgRequest,
@@ -49,7 +51,28 @@ describe('search', () => {
     );
     expect(searchQuery({ folderId: null, query: 'exam' })).toBe('(exam)');
     expect(searchQuery({ folderId: null, query: '' })).toBe('is:anywhere');
-    expect(searchQuery({ folderId: '2"x', query: '' })).toBe('inid:"2x"');
+    expect(searchQuery({ folderId: '2"x', query: '' })).toBe('inid:"2\\"x"');
+  });
+
+  it('a query whose parentheses do not balance is refused, it cannot escape the folder (M7)', () => {
+    for (const query of ['exam) or (in:sent', 'exam)', '(exam', '"open']) {
+      expect(() => searchQuery({ folderId: '2', query })).toThrow(
+        expect.objectContaining({ name: 'MailError', kind: 'invalid_query' })
+      );
+    }
+    expect(searchQuery({ folderId: '2', query: 'subject:"a ) b"' })).toBe(
+      'inid:"2" (subject:"a ) b")'
+    );
+    expect(parenthesesBalanced('(a (b)) "x\\")"')).toBe(true);
+  });
+
+  it('quoteSearchValue cannot be closed by the value it quotes (M7)', () => {
+    expect(quoteSearchValue('plain')).toBe('"plain"');
+    expect(quoteSearchValue('a"b')).toBe('"a\\"b"');
+    expect(quoteSearchValue('a\\')).toBe('"a\\\\"');
+    const query = `subject:${quoteSearchValue('x") or (in:sent')}`;
+    expect(parenthesesBalanced(query)).toBe(true);
+    expect(searchQuery({ folderId: '2', query })).toBe(`inid:"2" (${query})`);
   });
 
   it('SearchRequest pages newest first, by conversation or by message', () => {
@@ -147,6 +170,7 @@ describe('SendMsg and SaveDraft', () => {
     expect(sendMsgRequest(base)).toEqual({
       SendMsgRequest: {
         _jsns: 'urn:zimbraMail',
+        suid: base.suid,
         m: {
           e: [
             { t: 't', a: 'a@emse.fr', p: 'Ada' },

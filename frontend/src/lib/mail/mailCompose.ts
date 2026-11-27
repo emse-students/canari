@@ -1,6 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
-import type { MailAddress, MailMessage, OutgoingMessage } from './mailTypes';
+import type { MailAccount, MailAddress, MailMessage, OutgoingMessage } from './mailTypes';
 
 /**
  * REPLY, REPLY-ALL AND FORWARD, PREFILLED (docs/wiki/mail-client-transport.md#as-built---lot-2).
@@ -32,6 +32,7 @@ export function emptyMessage(): OutgoingMessage {
     forwardedParts: [],
     origin: null,
     draftId: null,
+    suid: crypto.randomUUID(),
   };
 }
 
@@ -104,9 +105,13 @@ function bodyText(original: MailMessage): string {
   return original.fragment;
 }
 
-/** The original's body as HTML. */
+/**
+ * The original's body as HTML for a quote: ALWAYS rebuilt from its text, escaped - never the
+ * server's HTML. Zimbra's defanged HTML still carries `dfsrc` remote images and `cid:` references,
+ * and quoting it would send the original's trackers and markup on, under the account's name.
+ */
 function bodyHtml(original: MailMessage): string {
-  return original.html ?? textToHtml(bodyText(original));
+  return textToHtml(bodyText(original));
 }
 
 function formatDate(ms: number): string {
@@ -134,16 +139,17 @@ function distinct(addresses: MailAddress[], exclude: Set<string>): MailAddress[]
 
 /**
  * A reply to `original` (`reply_all` also answers its other recipients), written by `self` (the
- * signed-in address, never among the recipients). The reply goes to the original's `Reply-To` when
- * it named one, otherwise its sender - and to its recipients when `self` sent it (a reply from Sent).
+ * signed-in account: its address and its aliases, never among the recipients). The reply goes to the
+ * original's `Reply-To` when it named one, otherwise its sender - and to its recipients when the
+ * account sent it (a reply from Sent).
  */
 export function replyMessage(
   original: MailMessage,
   mode: 'reply' | 'reply_all',
-  self: string
+  self: Pick<MailAccount, 'address' | 'aliases'>
 ): OutgoingMessage {
-  const me = self.toLowerCase();
-  const fromSelf = original.from?.address.toLowerCase() === me;
+  const mine = [self.address, ...self.aliases].map((a) => a.toLowerCase());
+  const fromSelf = !!original.from && mine.includes(original.from.address.toLowerCase());
   const primary = fromSelf
     ? original.to
     : original.replyTo.length
@@ -151,7 +157,7 @@ export function replyMessage(
       : original.from
         ? [original.from]
         : [];
-  const seen = new Set<string>([me]);
+  const seen = new Set<string>(mine);
   const to = distinct(primary, seen);
   const cc = mode === 'reply_all' ? distinct([...original.to, ...original.cc], seen) : [];
   const attribution = m.mail_quote_attribution({
@@ -192,8 +198,8 @@ export function forwardMessage(original: MailMessage): OutgoingMessage {
     html:
       `<br><br><div>${header.map(escapeHtml).join('<br>')}</div><br>` +
       `<div>${bodyHtml(original)}</div>`,
-    // Inline images too: the forwarded HTML names them by `cid:`, and an image carried as an
-    // attachment is better than one lost.
+    // Inline images too: the quote is rebuilt from text, so an image the original showed inline
+    // travels as an attachment rather than being lost.
     forwardedParts: original.attachments.map((a) => ({ messageId: a.messageId, part: a.part })),
     origin: { kind: 'forward', messageId: original.id, messageIdHeader: original.messageIdHeader },
   };

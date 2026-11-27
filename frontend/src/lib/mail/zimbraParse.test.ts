@@ -39,7 +39,20 @@ describe('session answers', () => {
   it('GetInfoResponse: the canonical address and the display name', () => {
     expect(
       parseInfo({ GetInfoResponse: { name: 'a@emse.fr', attrs: { _attrs: { displayName: 'A' } } } })
-    ).toEqual({ address: 'a@emse.fr', displayName: 'A' });
+    ).toEqual({ address: 'a@emse.fr', displayName: 'A', aliases: [] });
+    expect(
+      parseInfo({
+        GetInfoResponse: { name: 'a@emse.fr', attrs: { _attrs: { zimbraMailAlias: 'b@emse.fr' } } },
+      }).aliases
+    ).toEqual(['b@emse.fr']);
+    expect(
+      parseInfo({
+        GetInfoResponse: {
+          name: 'a@emse.fr',
+          attrs: { _attrs: { zimbraMailAlias: ['b@emse.fr', 'c@emse.fr'] } },
+        },
+      }).aliases
+    ).toEqual(['b@emse.fr', 'c@emse.fr']);
     expect(parseInfo({ GetInfoResponse: { name: 'a@emse.fr' } }).displayName).toBeNull();
   });
 });

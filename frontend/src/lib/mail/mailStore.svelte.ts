@@ -36,7 +36,7 @@ export function eligibilityOf(state: MailSessionState): MailEligibility {
   const address =
     state.kind === 'ready'
       ? state.account.address
-      : state.kind === 'needs_password' || state.kind === 'closed'
+      : state.kind === 'needs_password' || state.kind === 'closed' || state.kind === 'unavailable'
         ? state.account
         : null;
   if (address === null) return 'unknown';
@@ -129,6 +129,10 @@ export class MailStore {
       }
       this.folders = folders;
     } catch (err) {
+      if (generation !== this.generation) {
+        Log.d('MAIL-STORE', 'a folder failure for a store reset since was dropped');
+        return;
+      }
       this.error = classifyMailFailure(err);
       Log.w('MAIL-STORE', `the folders did not load (${this.error.kind})`);
     }
@@ -209,8 +213,10 @@ export class MailStore {
   }
 
   /**
-   * Applies `op` to `ids` (the selection by default) in ONE call, then updates the list in place and
-   * reloads the folder counts. `folderId` is the destination of a move. Rethrows the typed failure:
+   * Applies `op` to `ids` (the selection by default) in ONE call, then updates the list - in place
+   * where the result is certain (a row leaves, a flag), from the SERVER where it is a count (read,
+   * unread: how many messages a conversation action touched is the server's to say) - and reloads the
+   * folder counts. Nothing is applied to a store reset or re-listed while the call was out. `folderId` is the destination of a move. Rethrows the typed failure:
    * an action is a press, and the screen that pressed it owes the answer.
    */
   async act(
@@ -221,22 +227,49 @@ export class MailStore {
     const targets = [...ids];
     Log.d('MAIL-STORE', `act ${op} on ${targets.length}`);
     if (targets.length === 0) return;
+    const generation = this.generation;
     try {
       await this.api.act('conversation', op, targets, {
         folderId,
         listedRole: this.currentFolder?.role ?? null,
       });
     } catch (err) {
-      this.error = classifyMailFailure(err);
-      Log.w('MAIL-STORE', `act ${op} failed (${this.error.kind})`);
-      throw this.error;
+      const failure = classifyMailFailure(err);
+      if (generation === this.generation) this.error = failure;
+      Log.w('MAIL-STORE', `act ${op} failed (${failure.kind})`);
+      throw failure;
     }
-    this.applyLocally(op, targets, folderId);
+    if (generation !== this.generation) {
+      Log.d('MAIL-STORE', `act ${op} answered for a list no longer shown - not applied`);
+      return;
+    }
     this.selected = this.selected.filter((id) => !targets.includes(id));
+    if (op === 'read' || op === 'unread') await this.reloadListed();
+    else this.applyLocally(op, targets, folderId);
     await this.refreshFolders();
   }
 
-  /** What `op` did to the listed rows, applied without reloading the list. */
+  /** Re-reads every row listed so far from the server, in one search (the counts are its to say). */
+  private async reloadListed(): Promise<void> {
+    const generation = this.generation;
+    try {
+      const page = await this.api.conversations({
+        folderId: this.currentFolderId,
+        query: this.query,
+        offset: 0,
+        limit: Math.max(this.pageSize, this.conversations.length),
+      });
+      if (generation !== this.generation) return;
+      this.conversations = page.items;
+      this.hasMore = page.hasMore;
+    } catch (err) {
+      if (generation !== this.generation) return;
+      this.error = classifyMailFailure(err);
+      Log.w('MAIL-STORE', `the list did not reload (${this.error.kind})`);
+    }
+  }
+
+  /** What `op` certainly did to the listed rows (a row left, a flag), applied without a reload. */
   private applyLocally(op: MailActionOp, ids: readonly string[], folderId?: string): void {
     if (LEAVES_FOLDER.has(op) && !(op === 'move' && folderId === this.currentFolderId)) {
       this.conversations = this.conversations.filter((c) => !ids.includes(c.id));
@@ -245,10 +278,6 @@ export class MailStore {
     this.conversations = this.conversations.map((c) => {
       if (!ids.includes(c.id)) return c;
       switch (op) {
-        case 'read':
-          return { ...c, unreadCount: 0, flags: { ...c.flags, unread: false } };
-        case 'unread':
-          return { ...c, unreadCount: c.messageCount, flags: { ...c.flags, unread: true } };
         case 'flag':
           return { ...c, flags: { ...c.flags, flagged: true } };
         case 'unflag':

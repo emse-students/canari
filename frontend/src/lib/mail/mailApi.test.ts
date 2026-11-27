@@ -74,7 +74,7 @@ describe('MailApi actions', () => {
   });
 
   it('send and save draft answer the written id', async () => {
-    const { session, api } = setup((r) =>
+    const { zimbra, session, api } = setup((r) =>
       r.soap?.name === 'SendMsgRequest'
         ? zimbraBody({ SendMsgResponse: { m: [{ id: '101' }] } })
         : r.soap?.name === 'SaveDraftRequest'
@@ -85,6 +85,10 @@ describe('MailApi actions', () => {
     const message = { ...emptyMessage(), to: [{ address: 'b@emse.fr', name: null }], text: 'x' };
     expect(await api.saveDraft(message)).toBe('55');
     expect(await api.send({ ...message, draftId: '55' })).toBe('101');
+    // The message's own send id travels with it (M6): a second send of it is the same suid.
+    await api.send({ ...message, draftId: '55' });
+    const sent = zimbra.requests.filter((r) => r.soap?.name === 'SendMsgRequest');
+    expect(sent.map((r) => r.soap!.element.suid)).toEqual([message.suid, message.suid]);
   });
 
   it('an empty directory query sends nothing', async () => {
@@ -156,7 +160,9 @@ describe('MailApi attachments', () => {
     ]);
   });
 
-  it('uploadFilename turns everything outside printable ASCII, quotes and ampersands into entities', () => {
+  it('uploadFilename turns everything outside printable ASCII, quotes, ampersands and backslashes into entities', () => {
     expect(uploadFilename('a"b&c\r\nd€.txt')).toBe('a&#34;b&#38;c&#13;&#10;d&#8364;.txt');
+    // A backslash would escape the closing quote of the header's quoted-string (M8).
+    expect(uploadFilename('x\\')).toBe('x&#92;');
   });
 });

@@ -18,8 +18,17 @@ export type MailErrorKind =
   | 'bad_credentials'
   /** The school requires a new password before the next sign-in (`account.CHANGE_PASSWORD`). */
   | 'password_change_required'
-  /** The account is closed, inactive or gone (D8: the device erases what it kept). */
+  /**
+   * The account no longer exists (D8: the device erases what it kept). ONLY from the session's own
+   * `AuthRequest` / `GetInfoRequest` answering `account.NO_SUCH_ACCOUNT` - never a guess from
+   * another call.
+   */
   | 'account_closed'
+  /**
+   * The account is not active (`account.ACCOUNT_INACTIVE`): closed, but also locked, locked out or
+   * pending - so NOTHING is erased until a probe on Partage proves which code a closed account gets.
+   */
+  | 'account_unavailable'
   /** The mailbox is in maintenance: temporary, nothing is erased. */
   | 'maintenance'
   /** The session ended and could not be renewed: the password is asked again. */
@@ -66,8 +75,9 @@ export class MailError extends Error {
 const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
   'account.AUTH_FAILED': 'bad_credentials',
   'account.CHANGE_PASSWORD': 'password_change_required',
-  'account.ACCOUNT_INACTIVE': 'account_closed',
-  'account.NO_SUCH_ACCOUNT': 'account_closed',
+  'account.ACCOUNT_INACTIVE': 'account_unavailable',
+  // On an ordinary call it names ANOTHER account (a mountpoint of a deleted owner), not this one.
+  'account.NO_SUCH_ACCOUNT': 'not_found',
   'account.MAINTENANCE_MODE': 'maintenance',
   'service.AUTH_REQUIRED': 'session_expired',
   'service.AUTH_EXPIRED': 'session_expired',
@@ -83,8 +93,20 @@ const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
   'mail.QUOTA_EXCEEDED': 'quota_exceeded',
 };
 
-/** The kind of a Zimbra fault code. */
-export function faultKind(code: string): MailErrorKind {
+/**
+ * Where a fault was answered: the session's OWN `AuthRequest` / `GetInfoRequest` (`auth`), about the
+ * signed-in account itself, or any other call (`call`), whose account faults may name another one.
+ */
+export type FaultOrigin = 'auth' | 'call';
+
+/** What a fault means only when the session's own sign-in answered it. */
+const AUTH_FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
+  'account.NO_SUCH_ACCOUNT': 'account_closed',
+};
+
+/** The kind of a Zimbra fault code, answered by `origin`. */
+export function faultKind(code: string, origin: FaultOrigin = 'call'): MailErrorKind {
+  if (origin === 'auth' && AUTH_FAULT_KINDS[code]) return AUTH_FAULT_KINDS[code];
   return FAULT_KINDS[code] ?? 'server';
 }
 
@@ -93,9 +115,9 @@ export function faultKind(code: string): MailErrorKind {
  * them typed is `internal` and logged as a defect: a failure this deliberate path did not classify
  * is the visible end of something upstream.
  */
-export function classifyMailFailure(err: unknown): MailError {
+export function classifyMailFailure(err: unknown, origin: FaultOrigin = 'call'): MailError {
   if (err instanceof MailError) return err;
-  if (err instanceof ZimbraFault) return new MailError(faultKind(err.code), err.code, err);
+  if (err instanceof ZimbraFault) return new MailError(faultKind(err.code, origin), err.code, err);
   if (err instanceof ZimbraUnreadableAnswer) {
     return new MailError('server', `unreadable-${err.status}`, err);
   }

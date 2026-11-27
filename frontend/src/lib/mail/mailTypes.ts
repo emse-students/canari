@@ -116,6 +116,8 @@ export interface MailAccount {
   /** The account's canonical address, as Zimbra names it (`GetInfo.name`). */
   address: string;
   displayName: string | null;
+  /** The account's other addresses (`zimbraMailAlias`): mail to them is mail to the account. */
+  aliases: string[];
 }
 
 /** A file uploaded to Zimbra, attached by its upload id when the message is sent or saved. */
@@ -148,6 +150,11 @@ export interface OutgoingMessage {
   origin: { kind: 'reply' | 'forward'; messageId: string; messageIdHeader: string | null } | null;
   /** The draft this message was saved as: a send deletes it, a save overwrites it. */
   draftId: string | null;
+  /**
+   * A unique id for THIS message, sent with `SendMsg` (`suid`): Zimbra refuses to send the same one
+   * twice, so a send resent after a renewal, or by a second press, cannot go out twice.
+   */
+  suid: string;
 }
 
 /** One suggestion of the address autocomplete. */

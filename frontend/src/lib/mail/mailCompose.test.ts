@@ -13,7 +13,8 @@ import type { MailMessage } from './mailTypes';
 
 /** Reply, reply-all and forward: recipients, subject, the quote, and what the message answers. */
 
-const SELF = 'me@etu.emse.fr';
+const ME = 'me@etu.emse.fr';
+const SELF = { address: ME, aliases: ['me@emse.fr'] };
 
 function original(overrides: Partial<MailMessage> = {}): MailMessage {
   return {
@@ -25,7 +26,7 @@ function original(overrides: Partial<MailMessage> = {}): MailMessage {
     date: Date.UTC(2026, 10, 27, 9, 30),
     from: { address: 'prof@emse.fr', name: 'Prof' },
     to: [
-      { address: SELF, name: 'Me' },
+      { address: ME, name: 'Me' },
       { address: 'bob@etu.emse.fr', name: null },
     ],
     cc: [
@@ -79,7 +80,10 @@ describe('replyMessage', () => {
   });
 
   it('reply-all adds the other recipients, without self or duplicates (case aside)', () => {
-    const reply = replyMessage(original(), 'reply_all', 'ME@etu.emse.fr');
+    const reply = replyMessage(original(), 'reply_all', {
+      address: 'ME@etu.emse.fr',
+      aliases: [],
+    });
     expect(reply.to.map((a) => a.address)).toEqual(['prof@emse.fr']);
     expect(reply.cc.map((a) => a.address)).toEqual(['bob@etu.emse.fr', 'carol@etu.emse.fr']);
   });
@@ -87,7 +91,7 @@ describe('replyMessage', () => {
   it('goes to Reply-To when the original named one, and to its recipients when self sent it', () => {
     const list = { address: 'list@emse.fr', name: null };
     expect(replyMessage(original({ replyTo: [list] }), 'reply', SELF).to).toEqual([list]);
-    const fromSelf = original({ from: { address: SELF, name: null } });
+    const fromSelf = original({ from: { address: ME, name: null } });
     expect(replyMessage(fromSelf, 'reply', SELF).to.map((a) => a.address)).toEqual([
       'bob@etu.emse.fr',
     ]);
@@ -100,7 +104,45 @@ describe('replyMessage', () => {
       SELF
     );
     expect(reply.text).toContain('> Hello you\n> 2');
-    expect(reply.html).toContain('<p>Hello&nbsp;<b>you</b></p>');
+    expect(reply.html).toContain('<blockquote type="cite">Hello you<br>2</blockquote>');
+    expect(reply.html).not.toContain('<p>');
+  });
+
+  it('never quotes the server HTML: remote images and markup stay out of the reply (M9)', () => {
+    const reply = replyMessage(
+      original({
+        text: null,
+        html: '<p>Hi <img dfsrc="https://tracker.example/p.gif"><a href="x">link</a></p>',
+      }),
+      'reply',
+      SELF
+    );
+    expect(reply.html).not.toContain('dfsrc');
+    expect(reply.html).not.toContain('<img');
+    expect(reply.html).not.toContain('<a ');
+    expect(reply.html).toContain('Hi link');
+  });
+
+  it('an alias of the account counts as the account: from-self and reply-all (M10)', () => {
+    const viaAlias = original({
+      from: { address: 'ME@emse.fr', name: null },
+      to: [{ address: 'bob@etu.emse.fr', name: null }],
+      cc: [{ address: 'me@emse.fr', name: null }],
+    });
+    expect(replyMessage(viaAlias, 'reply', SELF).to.map((a) => a.address)).toEqual([
+      'bob@etu.emse.fr',
+    ]);
+    const toAlias = original({ to: [{ address: 'me@emse.fr', name: null }], cc: [] });
+    const all = replyMessage(toAlias, 'reply_all', SELF);
+    expect([...all.to, ...all.cc].map((a) => a.address)).toEqual(['prof@emse.fr']);
+  });
+
+  it('every message carries its own send id (suid, M6)', () => {
+    const a = replyMessage(original(), 'reply', SELF);
+    const b = replyMessage(original(), 'reply', SELF);
+    expect(a.suid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(a.suid).not.toBe(b.suid);
+    expect(emptyMessage().suid).not.toBe(emptyMessage().suid);
   });
 });
 

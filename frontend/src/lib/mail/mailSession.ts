@@ -28,10 +28,19 @@ import { authRequest, endSessionRequest, getInfoRequest } from './zimbraRequests
  * - session ended -> ONE renewal, shared by every call that saw the same token end, then the call
  *   is sent ONCE more. A fault is an answer: the server refused the call before carrying it out, so
  *   sending it again cannot do it twice (unlike a connection lost mid-call, which is never re-sent).
- * - account closed -> D8: the mail data on this device is erased (an allowlist) and the state says
- *   so.
+ * - account gone (`account.NO_SUCH_ACCOUNT` answered to the session's OWN sign-in, never another
+ *   call) -> D8: the mail data on this device is erased (an allowlist) and the state says so. An
+ *   inactive account (`account.ACCOUNT_INACTIVE`, which also means locked or pending) erases
+ *   NOTHING: state `unavailable`.
  * - a remembered password the server refuses -> forgotten at once, and asked for: a stale password
  *   replayed at every renewal would lock the account.
+ *
+ * AN EPOCH ORDERS THE SESSION'S LIFE AGAINST ITS AWAITS. A sign-out, a closed account and a new
+ * sign-in each bump it; a sign-in or a renewal captures it and re-checks it after EVERY await
+ * before it installs a token, sets a state or stores a password. A sign-out that lands while an
+ * `AuthRequest` is in flight therefore ends the token that request brings back instead of installing
+ * it, and a password whose sealed write waited behind the device-key gate is not written back after
+ * the sign-out forgot it.
  */
 
 /**
@@ -60,10 +69,12 @@ export type PasswordAskReason =
   | 'not_remembered'
   /** The remembered password was refused by the server (changed at the school): it is forgotten. */
   | 'password_refused'
-  /** A password is remembered but this device key does not open it. */
+  /** A password was remembered but this device key did not open it: it is removed. */
   | 'remembered_unopenable'
   /** A password is remembered but the Canari session is locked (no device key right now). */
-  | 'device_locked';
+  | 'device_locked'
+  /** A session renewed a moment ago was refused at once: the server does not take it. */
+  | 'session_refused';
 
 /** Where the mail session stands - what the screens render. */
 export type MailSessionState =
@@ -73,7 +84,9 @@ export type MailSessionState =
   | { kind: 'needs_password'; account: string | null; reason: PasswordAskReason }
   /** Signed in. */
   | { kind: 'ready'; account: MailAccount; remembered: boolean }
-  /** The school closed the account (D8): its mail data was erased from this device. */
+  /** The account is inactive (locked, pending, possibly closed): nothing was erased. */
+  | { kind: 'unavailable'; account: string | null }
+  /** The account no longer exists (D8): its mail data was erased from this device. */
   | { kind: 'closed'; account: string | null };
 
 /** The part of `ZimbraSoapClient` the session uses (a test double needs only these). */
@@ -82,11 +95,23 @@ export type MailSoap = Pick<ZimbraSoapClient, 'call' | 'exchange' | 'close'>;
 /** Reads one HTTP answer of the session (an upload, a download), or throws it typed. */
 export type HttpAnswerReader<T> = (response: HttpResponse) => T;
 
+/** The error an operation overtaken by a sign-out, a closed account or a newer sign-in ends with. */
+function superseded(): MailError {
+  return new MailError('not_signed_in', 'superseded');
+}
+
+/** The address as Zimbra names it. */
+function normalized(address: string): string {
+  return address.trim().toLowerCase();
+}
+
 export class MailSession {
   private token: string | null = null;
   /** The address the token was obtained for: the renewal signs in to that one, never another. */
   private authName: string | null = null;
   private renewing: Promise<void> | null = null;
+  /** Bumped by a sign-out, a closed account and a new sign-in (see the module comment). */
+  private epoch = 0;
   private current: MailSessionState = { kind: 'signed_out' };
   private readonly listeners = new Set<(state: MailSessionState) => void>();
 
@@ -135,50 +160,68 @@ export class MailSession {
    * Signs in to the account's OWN mailbox - its address comes from {@link MailContext.mailAddress},
    * never from what a user typed - with `password`, and remembers the password sealed under the
    * device key when `remember` is set (forgets any remembered one otherwise). An address off the
-   * eligible domains is refused before a byte is sent (D1).
+   * eligible domains is refused before a byte is sent (D1). A session already open is ended on the
+   * server once the new one is in place.
    *
-   * @throws {MailError} `address_unknown`, `not_eligible`, `bad_credentials`, `account_closed`, ...
+   * @throws {MailError} `address_unknown`, `not_eligible`, `bad_credentials`, `not_signed_in` (a
+   * sign-out overtook it), ...
    */
   async signIn(password: string, remember: boolean): Promise<MailAccount> {
+    const epoch = ++this.epoch;
     Log.d('MAIL', `sign-in requested (remember: ${remember})`);
     const address = await this.context.mailAddress();
+    if (epoch !== this.epoch) throw superseded();
     if (address === null) {
       Log.w('MAIL', 'sign-in refused: the account identity carries no address');
       throw new MailError('address_unknown', 'no-identity-address');
     }
-    const name = address.trim().toLowerCase();
+    const name = normalized(address);
     if (!isMailEligibleAddress(name)) {
       Log.d('MAIL', 'sign-in refused: the address is not on an eligible domain');
       throw new MailError('not_eligible', 'domain');
     }
-    const account = await this.authenticate(name, password);
+    const { token, account } = await this.authenticate(name, password, epoch);
+    let remembered = false;
     if (remember) {
       const key = this.context.deviceKey();
-      if (key) {
-        await rememberMailPassword(
-          this.context.userId,
-          key,
-          { account: name, password },
-          this.store
-        );
+      if (!key) {
+        Log.w('MAIL', 'remember was asked while the device key is not held - not remembered');
       } else {
-        Log.w(
-          'MAIL',
-          'ERROR: remember was asked while the device key is not held - not remembered'
-        );
-        remember = false;
+        try {
+          remembered = await rememberMailPassword(
+            this.context.userId,
+            key,
+            { account: name, password },
+            this.store,
+            () => epoch === this.epoch
+          );
+        } catch (err) {
+          Log.w('MAIL', 'the password could not be remembered - signed in without it', err);
+        }
+      }
+      if (epoch !== this.epoch) {
+        await this.endQuietly(token);
+        throw superseded();
       }
     } else {
       forgetMailPassword(this.context.userId, this.store);
     }
-    this.setState({ kind: 'ready', account, remembered: remember });
+    const previous = this.token;
+    this.token = token;
+    this.authName = name;
+    this.setState({ kind: 'ready', account, remembered });
+    if (previous && previous !== token) {
+      Log.d('MAIL', 'the session this sign-in replaced is ended on the server');
+      void this.endQuietly(previous);
+    }
     return account;
   }
 
   /**
-   * Opens the mailbox from the remembered password, when there is one. Resolves `true` when signed
-   * in; `false` when the state now says what is missing (nothing remembered, the device locked, the
-   * password refused).
+   * Opens the mailbox from the remembered password, when there is one - through the SAME renewal a
+   * lapsed call would start, so the two never sign in twice. Resolves `true` when signed in; `false`
+   * when the state now says what is missing (nothing remembered, the device locked, the password
+   * refused).
    */
   async resume(): Promise<boolean> {
     Log.d('MAIL', `resume requested (state ${this.current.kind})`);
@@ -186,7 +229,7 @@ export class MailSession {
     // A closed mailbox stays closed: what it kept is erased, and only a new sign-in reopens one.
     if (this.current.kind === 'closed') return false;
     try {
-      await this.renewFromRemembered();
+      await this.renewOnce();
       return true;
     } catch (err) {
       const failure = classifyMailFailure(err);
@@ -198,7 +241,8 @@ export class MailSession {
   /**
    * One SOAP call with the session's token, renewed once if the server says it ended.
    *
-   * @throws {MailError} typed; `not_signed_in` with no session.
+   * @throws {MailError} typed; `session_expired` while the password is asked for, `not_signed_in`
+   * with no session.
    */
   async call(body: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withToken((token) => this.soap.call(body, token));
@@ -213,66 +257,96 @@ export class MailSession {
   }
 
   /**
-   * Signs out: the token is dropped and the remembered password forgotten BEFORE the first await (a
-   * renewal must find nothing to renew with), then the server is told, then the connection closed.
+   * Signs out: the epoch moves, the token is dropped and the remembered password forgotten BEFORE
+   * the first await (a renewal or a sign-in in flight finds the epoch moved and installs nothing),
+   * then the server is told, then the connection closed.
    */
   async signOut(): Promise<void> {
     Log.d('MAIL', 'sign-out requested');
+    this.epoch++;
     const token = this.token;
     this.token = null;
     this.authName = null;
     forgetMailPassword(this.context.userId, this.store);
     this.setState({ kind: 'signed_out' });
-    if (token) {
-      try {
-        await this.soap.call(endSessionRequest(), token);
-      } catch (err) {
-        // The token is gone from this device either way; it lapses on the server by itself.
-        Log.w('MAIL', 'the server was not told of the sign-out', classifyMailFailure(err));
-      }
-    }
+    if (token) await this.endQuietly(token);
     this.soap.close();
   }
 
-  /** `AuthRequest` then `GetInfoRequest`: the token, and the canonical account, eligible (D1). */
-  private async authenticate(name: string, password: string): Promise<MailAccount> {
+  /** Ends `token` on the server; a failure is logged, never thrown (it lapses by itself). */
+  private async endQuietly(token: string): Promise<void> {
+    try {
+      await this.soap.call(endSessionRequest(), token);
+    } catch (err) {
+      Log.w('MAIL', 'a session was not ended on the server', classifyMailFailure(err));
+    }
+  }
+
+  /**
+   * `AuthRequest` then `GetInfoRequest`: a token and the canonical account, eligible (D1). Installs
+   * NOTHING - the caller does, in the same synchronous step as its last epoch check. A token obtained
+   * for an epoch that has moved is ended on the server and the call ends `not_signed_in`. Faults are
+   * classified as answers to the session's own sign-in (`auth`).
+   */
+  private async authenticate(
+    name: string,
+    password: string,
+    epoch: number
+  ): Promise<{ token: string; account: MailAccount }> {
     let token: string;
     try {
       token = parseAuth(await this.soap.call(authRequest(name, password))).token;
     } catch (err) {
-      throw this.settle(classifyMailFailure(err), name);
+      if (epoch !== this.epoch) throw superseded();
+      throw this.settle(classifyMailFailure(err, 'auth'), name);
+    }
+    if (epoch !== this.epoch) {
+      await this.endQuietly(token);
+      throw superseded();
     }
     let account: MailAccount;
     try {
       account = parseInfo(await this.soap.call(getInfoRequest(), token));
     } catch (err) {
-      throw this.settle(classifyMailFailure(err), name);
+      if (epoch !== this.epoch) {
+        await this.endQuietly(token);
+        throw superseded();
+      }
+      const failure = this.settle(classifyMailFailure(err, 'auth'), name);
+      if (failure.kind !== 'account_closed') await this.endQuietly(token);
+      throw failure;
+    }
+    if (epoch !== this.epoch) {
+      await this.endQuietly(token);
+      throw superseded();
     }
     if (!isMailEligibleAddress(account.address)) {
       Log.w('MAIL', 'sign-in refused: the canonical address is not on an eligible domain');
-      try {
-        await this.soap.call(endSessionRequest(), token);
-      } catch (err) {
-        Log.w('MAIL', 'the refused session was not ended on the server', classifyMailFailure(err));
-      }
+      await this.endQuietly(token);
       throw new MailError('not_eligible', 'canonical-domain');
     }
-    this.token = token;
-    this.authName = name;
-    Log.d('MAIL', 'signed in');
-    return account;
+    if (epoch !== this.epoch) throw superseded();
+    Log.d('MAIL', 'authenticated');
+    return { token, account };
   }
 
   /** Runs `op` with the token; on a session-ended answer, renews ONCE and runs it ONCE more. */
   private async withToken<T>(op: (token: string) => Promise<T>): Promise<T> {
     if (this.renewing) await this.renewing.catch(() => undefined);
     const token = this.token;
-    if (!token) throw new MailError('not_signed_in', 'no-token');
+    if (!token) {
+      // Asked for its password, the session is not renewed again by every call that comes along.
+      throw this.current.kind === 'needs_password'
+        ? new MailError('session_expired', 'password-needed')
+        : new MailError('not_signed_in', 'no-token');
+    }
+    const epoch = this.epoch;
     try {
       return await op(token);
     } catch (err) {
       const failure = classifyMailFailure(err);
       if (failure.kind !== 'session_expired') throw this.settle(failure, this.authName);
+      if (epoch !== this.epoch) throw superseded();
       Log.d('MAIL', `the session ended (${failure.code}) - renewing it`);
       try {
         await this.renew(token);
@@ -290,9 +364,9 @@ export class MailSession {
         return await op(renewed);
       } catch (again) {
         const second = classifyMailFailure(again);
-        if (second.kind === 'session_expired') {
+        if (second.kind === 'session_expired' && this.token === renewed) {
           Log.w('MAIL', 'ERROR: a freshly renewed session was refused - the password is asked');
-          this.dropToken('not_remembered', this.authName);
+          this.dropToken('session_refused', this.authName);
         }
         throw this.settle(second, this.authName);
       }
@@ -308,6 +382,11 @@ export class MailSession {
    */
   private renew(stale: string): Promise<void> {
     if (this.token !== null && this.token !== stale) return Promise.resolve();
+    return this.renewOnce();
+  }
+
+  /** The renewal in flight, or a new one: never two at once. */
+  private renewOnce(): Promise<void> {
     if (!this.renewing) {
       this.renewing = this.renewFromRemembered().finally(() => {
         this.renewing = null;
@@ -316,51 +395,73 @@ export class MailSession {
     return this.renewing;
   }
 
-  /** Signs in again from the remembered password, or sets the state that asks for it. */
+  /**
+   * Signs in again from the remembered password, or sets the state that asks for it. The address is
+   * the account's own (never the one stored beside the password): an entry for another address is
+   * removed, and an ineligible address is refused before a byte is sent.
+   */
   private async renewFromRemembered(): Promise<void> {
-    const account =
+    const epoch = this.epoch;
+    const known =
       this.current.kind === 'ready'
         ? this.current.account.address
-        : this.current.kind === 'needs_password'
+        : this.current.kind === 'needs_password' || this.current.kind === 'unavailable'
           ? this.current.account
           : this.authName;
     const key = this.context.deviceKey();
     if (!key) {
-      this.dropToken('device_locked', account);
+      this.dropToken('device_locked', known);
       throw new MailError('session_expired', 'device-locked');
     }
+    const address = await this.context.mailAddress();
+    if (epoch !== this.epoch) throw superseded();
+    if (address === null) {
+      Log.w('MAIL', 'renewal refused: the account identity carries no address');
+      throw new MailError('address_unknown', 'no-identity-address');
+    }
+    const name = normalized(address);
+    if (!isMailEligibleAddress(name)) {
+      Log.w('MAIL', 'renewal refused: the account address is not on an eligible domain');
+      throw new MailError('not_eligible', 'domain');
+    }
     const read = await readRememberedMailPassword(this.context.userId, key, this.store);
+    if (epoch !== this.epoch) throw superseded();
     if (read.kind === 'none') {
       if (this.authName === null && this.current.kind === 'signed_out') {
         Log.d('MAIL', 'nothing is remembered: the mailbox stays signed out');
       } else {
-        this.dropToken('not_remembered', account);
+        this.dropToken('not_remembered', known ?? name);
       }
       throw new MailError('session_expired', 'not-remembered');
     }
     if (read.kind === 'unopenable') {
-      this.dropToken('remembered_unopenable', account);
+      forgetMailPassword(this.context.userId, this.store);
+      this.dropToken('remembered_unopenable', known ?? name);
       throw new MailError('session_expired', 'remembered-unopenable');
     }
     const { remembered } = read;
-    if (this.authName !== null && remembered.account !== this.authName) {
-      Log.w('MAIL', 'ERROR: the remembered password is for another mailbox - not used');
-      this.dropToken('not_remembered', account);
+    if (normalized(remembered.account) !== name) {
+      Log.w('MAIL', 'ERROR: the remembered password is for another mailbox - removed');
+      forgetMailPassword(this.context.userId, this.store);
+      this.dropToken('not_remembered', name);
       throw new MailError('session_expired', 'remembered-other-account');
     }
+    let signedIn: { token: string; account: MailAccount };
     try {
-      const signedIn = await this.authenticate(remembered.account, remembered.password);
-      this.setState({ kind: 'ready', account: signedIn, remembered: true });
-      Log.d('MAIL', 'the session was renewed from the remembered password');
+      signedIn = await this.authenticate(name, remembered.password, epoch);
     } catch (err) {
       const failure = classifyMailFailure(err);
       if (failure.kind === 'bad_credentials' || failure.kind === 'password_change_required') {
         Log.i('MAIL', `the remembered password was refused (${failure.code}) - it is forgotten`);
         forgetMailPassword(this.context.userId, this.store);
-        this.dropToken('password_refused', remembered.account);
+        this.dropToken('password_refused', name);
       }
       throw failure;
     }
+    this.token = signedIn.token;
+    this.authName = name;
+    this.setState({ kind: 'ready', account: signedIn.account, remembered: true });
+    Log.d('MAIL', 'the session was renewed from the remembered password');
   }
 
   /** The session is over with nothing to renew it now: the password is asked for `account`. */
@@ -369,15 +470,26 @@ export class MailSession {
     this.setState({ kind: 'needs_password', account, reason });
   }
 
-  /** What a classified failure does to the session (D8 for a closed account), returned to throw. */
+  /**
+   * What a classified failure does to the session, returned to throw: D8 for an account gone, the
+   * `unavailable` state (nothing erased) for an inactive one.
+   */
   private settle(failure: MailError, account: string | null): MailError {
     if (failure.kind === 'account_closed') {
-      Log.i('MAIL', `the mailbox answered ${failure.code}: the account is closed (D8)`);
+      Log.i('MAIL', `the sign-in answered ${failure.code}: the account is gone (D8)`);
+      this.epoch++;
       this.token = null;
       this.authName = null;
       eraseMailLocalData(this.context.userId, this.store);
       this.soap.close();
       this.setState({ kind: 'closed', account });
+    } else if (failure.kind === 'account_unavailable') {
+      Log.i(
+        'MAIL',
+        `the mailbox answered ${failure.code}: the account is inactive - nothing erased`
+      );
+      this.token = null;
+      this.setState({ kind: 'unavailable', account });
     }
     return failure;
   }

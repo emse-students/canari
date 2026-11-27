@@ -115,7 +115,9 @@ export function parseInfo(body: Json): MailAccount {
   if (!address) throw new MailError('server', 'malformed-GetInfoResponse-name');
   const attrs = (response.attrs as { _attrs?: Json } | undefined)?._attrs ?? {};
   const displayName = str(attrs.displayName);
-  return { address, displayName: displayName || null };
+  const alias = attrs.zimbraMailAlias;
+  const aliases = (Array.isArray(alias) ? alias : [alias]).map(str).filter((a): a is string => !!a);
+  return { address, displayName: displayName || null, aliases };
 }
 
 /** Zimbra's fixed ids of the system folders. */

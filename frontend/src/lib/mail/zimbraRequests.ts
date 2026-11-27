@@ -1,3 +1,4 @@
+import { MailError } from './mailErrors';
 import type { MailActionOp, MailAddress, OutgoingMessage } from './mailTypes';
 
 /**
@@ -56,10 +57,40 @@ export interface SearchOptions {
  */
 export function searchQuery(options: Pick<SearchOptions, 'folderId' | 'query'>): string {
   const parts: string[] = [];
-  if (options.folderId !== null) parts.push(`inid:"${options.folderId.replace(/"/g, '')}"`);
+  if (options.folderId !== null) parts.push(`inid:${quoteSearchValue(options.folderId)}`);
   const own = options.query.trim();
-  if (own) parts.push(`(${own})`);
+  if (own) {
+    if (!parenthesesBalanced(own)) throw new MailError('invalid_query', 'unbalanced-parentheses');
+    parts.push(`(${own})`);
+  }
   return parts.length ? parts.join(' ') : 'is:anywhere';
+}
+
+/**
+ * A value quoted for Zimbra's query language (`subject:${quoteSearchValue(text)}`): in double quotes,
+ * the backslash and the quote escaped, so a value can never close its quotes and add a term.
+ */
+export function quoteSearchValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Whether `query`'s parentheses balance outside quoted values. An unbalanced `)` would close the
+ * parentheses {@link searchQuery} puts around the reader's query and let it escape the folder.
+ */
+export function parenthesesBalanced(query: string): boolean {
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < query.length; i++) {
+    const c = query[i];
+    if (quoted) {
+      if (c === '\\') i++;
+      else if (c === '"') quoted = false;
+    } else if (c === '"') quoted = true;
+    else if (c === '(') depth++;
+    else if (c === ')' && --depth < 0) return false;
+  }
+  return depth === 0 && !quoted;
 }
 
 /** `SearchRequest` for a page of conversations or of messages, newest first. */
@@ -192,7 +223,7 @@ export function messageElement(message: OutgoingMessage): Record<string, unknown
 export function sendMsgRequest(message: OutgoingMessage): Body {
   const m = messageElement(message);
   if (message.draftId) m.did = message.draftId;
-  return { SendMsgRequest: { _jsns: MAIL, m } };
+  return { SendMsgRequest: { _jsns: MAIL, suid: message.suid, m } };
 }
 
 /** `SaveDraftRequest`: saves `message` as a draft, over the draft it already is (`id`). */

@@ -12,8 +12,8 @@ describe('faultKind', () => {
     const table: Record<string, string> = {
       'account.AUTH_FAILED': 'bad_credentials',
       'account.CHANGE_PASSWORD': 'password_change_required',
-      'account.ACCOUNT_INACTIVE': 'account_closed',
-      'account.NO_SUCH_ACCOUNT': 'account_closed',
+      'account.ACCOUNT_INACTIVE': 'account_unavailable',
+      'account.NO_SUCH_ACCOUNT': 'not_found',
       'account.MAINTENANCE_MODE': 'maintenance',
       'service.AUTH_REQUIRED': 'session_expired',
       'service.AUTH_EXPIRED': 'session_expired',
@@ -32,6 +32,16 @@ describe('faultKind', () => {
     };
     for (const [code, kind] of Object.entries(table)) expect(faultKind(code)).toBe(kind);
   });
+
+  it('NO_SUCH_ACCOUNT closes the account ONLY when the session asks about itself (I1)', () => {
+    expect(faultKind('account.NO_SUCH_ACCOUNT', 'auth')).toBe('account_closed');
+    expect(faultKind('account.NO_SUCH_ACCOUNT', 'call')).toBe('not_found');
+    expect(faultKind('account.ACCOUNT_INACTIVE', 'auth')).toBe('account_unavailable');
+    expect(faultKind('account.AUTH_FAILED', 'auth')).toBe('bad_credentials');
+    expect(
+      classifyMailFailure(new ZimbraFault('account.NO_SUCH_ACCOUNT', 500, 'x'), 'auth')
+    ).toMatchObject({ kind: 'account_closed' });
+  });
 });
 
 describe('classifyMailFailure', () => {
@@ -39,7 +49,7 @@ describe('classifyMailFailure', () => {
     const a = classifyMailFailure(new ZimbraFault('account.AUTH_FAILED', 500, 'same text'));
     const b = classifyMailFailure(new ZimbraFault('account.ACCOUNT_INACTIVE', 500, 'same text'));
     expect(a).toMatchObject({ kind: 'bad_credentials', code: 'account.AUTH_FAILED' });
-    expect(b).toMatchObject({ kind: 'account_closed', code: 'account.ACCOUNT_INACTIVE' });
+    expect(b).toMatchObject({ kind: 'account_unavailable', code: 'account.ACCOUNT_INACTIVE' });
   });
 
   it('transport, TLS and HTTP framing failures are transport; an unreadable answer is server', () => {

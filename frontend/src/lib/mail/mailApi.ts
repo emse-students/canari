@@ -64,14 +64,17 @@ export interface FileToUpload {
 
 /**
  * A filename for `Content-Disposition`, written the way Zimbra's own web client writes it: every
- * character outside printable ASCII, and the quote and the ampersand, as an HTML numeric entity,
+ * character outside printable ASCII, and the quote, the ampersand and the backslash, as an HTML numeric entity,
  * which the upload servlet decodes. No line break can reach the header.
  */
 export function uploadFilename(filename: string): string {
   let out = '';
   for (const char of filename) {
     const code = char.codePointAt(0) ?? 0;
-    out += code < 0x20 || code > 0x7e || char === '"' || char === '&' ? `&#${code};` : char;
+    out +=
+      code < 0x20 || code > 0x7e || char === '"' || char === '&' || char === '\\'
+        ? `&#${code};`
+        : char;
   }
   return out;
 }

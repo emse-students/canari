@@ -1,17 +1,19 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeZimbra, zimbraBody, zimbraFault, type FakeZimbraRequest } from '../../test/mailFakes';
+import { gateStorage, holdStorageForKeyChange } from '$lib/db/deviceKeyGate';
+import type { IStorage } from '$lib/db/types';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { MailError } from './mailErrors';
-import { MailSession, type MailContext, type MailSessionState } from './mailSession';
+import { MailSession, type MailContext, type MailSessionState, type MailSoap } from './mailSession';
 import { readRememberedMailPassword, rememberMailPassword } from './sealedMailPassword';
 import { ZimbraSoapClient } from './soapClient';
 import { getFolderRequest } from './zimbraRequests';
 
 /**
  * THE MAIL SESSION (D6, D7, D8): sign-in, the remembered password, the renewal driven by the
- * server's answer - exactly once for every call that saw the same token end - and the erasure of a
- * closed account.
+ * server's answer - exactly once for every call that saw the same token end - the epoch that keeps a
+ * sign-out from being undone by an await in flight, and the erasure of an account that is gone.
  */
 
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -26,7 +28,9 @@ function mailbox() {
   let issued = 0;
   /** Codes to answer the next AuthRequests with, in order, instead of a token. */
   const authFaults: string[] = [];
-  /** A code every token-carrying call answers with, when set. */
+  /** A code GetInfo answers with, when set. */
+  let infoFault: string | null = null;
+  /** A code every other token-carrying call answers with, when set. */
   let callFault: string | null = null;
   const zimbra = new FakeZimbra((r: FakeZimbraRequest) => {
     const soap = r.soap!;
@@ -41,16 +45,20 @@ function mailbox() {
         AuthResponse: { authToken: [{ _content: token }], lifetime: 172800000 },
       });
     }
-    if (callFault) return zimbraFault(callFault);
+    if (soap.name === 'EndSessionRequest') {
+      live.delete(soap.token!);
+      return zimbraBody({ EndSessionResponse: {} });
+    }
+    if (soap.name === 'GetInfoRequest' && infoFault) return zimbraFault(infoFault);
+    if (soap.name !== 'GetInfoRequest' && callFault) return zimbraFault(callFault);
     if (!soap.token || !live.has(soap.token)) return zimbraFault('service.AUTH_EXPIRED');
     if (soap.name === 'GetInfoRequest') {
       return zimbraBody({
-        GetInfoResponse: { name: ADDRESS, attrs: { _attrs: { displayName: 'Ada' } } },
+        GetInfoResponse: {
+          name: ADDRESS,
+          attrs: { _attrs: { displayName: 'Ada', zimbraMailAlias: 'ada@emse.fr' } },
+        },
       });
-    }
-    if (soap.name === 'EndSessionRequest') {
-      live.delete(soap.token);
-      return zimbraBody({ EndSessionResponse: {} });
     }
     return zimbraBody({ GetFolderResponse: { folder: [{ id: '1', folder: [] }] } });
   });
@@ -58,36 +66,71 @@ function mailbox() {
     zimbra,
     authFaults,
     expireAll: () => live.clear(),
+    failInfoWith: (code: string | null) => (infoFault = code),
     failCallsWith: (code: string | null) => (callFault = code),
     authCount: () => zimbra.soapNames.filter((n) => n === 'AuthRequest').length,
+    ended: () =>
+      zimbra.requests.filter((r) => r.soap?.name === 'EndSessionRequest').map((r) => r.soap!.token),
   };
 }
 
-function session(
-  server: ReturnType<typeof mailbox>,
-  key: string | null = KEY,
-  address: string | null = ADDRESS
-) {
+interface Options {
+  key?: string | null;
+  address?: string | null;
+  soap?: (real: MailSoap) => MailSoap;
+  store?: Storage;
+}
+
+function session(server: ReturnType<typeof mailbox>, options: Options = {}) {
+  let key = options.key === undefined ? KEY : options.key;
+  let address = options.address === undefined ? ADDRESS : options.address;
   const context: MailContext = {
     userId: USER,
     deviceKey: () => key,
     mailAddress: async () => address,
   };
-  const s = new MailSession(new ZimbraSoapClient(server.zimbra.openStream), context);
+  const real = new ZimbraSoapClient(server.zimbra.openStream);
+  const s = new MailSession(options.soap ? options.soap(real) : real, context, options.store);
   const states: MailSessionState['kind'][] = [];
   s.onState((state) => states.push(state.kind));
-  return { s, states };
+  return {
+    s,
+    states,
+    lock: () => (key = null),
+    becomes: (next: string | null) => (address = next),
+  };
+}
+
+/** A SOAP client whose answer to `name` waits until the test releases it. */
+function holding(name: string) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const arrived = new Promise<void>((resolve) => (reached = resolve));
+  const wrap = (real: MailSoap): MailSoap => ({
+    call: async (body, token) => {
+      const answer = await real.call(body, token);
+      if (name in body) {
+        reached();
+        await gate;
+      }
+      return answer;
+    },
+    exchange: (request) => real.exchange(request),
+    close: () => real.close(),
+  });
+  return { wrap, arrived, release };
 }
 
 beforeEach(() => localStorage.clear());
 
 describe('MailSession.signIn', () => {
-  it('signs in, holds the token in memory only, and remembers nothing unticked', async () => {
+  it('signs in to the identity address, holds the token in memory only, remembers nothing unticked', async () => {
     const server = mailbox();
-    const { s } = session(server, KEY, ' Ada.Lovelace@ETU.emse.fr ');
+    const { s } = session(server, { address: ' Ada.Lovelace@ETU.emse.fr ' });
     expect(await s.eligibility()).toBe('eligible');
     const account = await s.signIn(GOOD, false);
-    expect(account).toEqual({ address: ADDRESS, displayName: 'Ada' });
+    expect(account).toEqual({ address: ADDRESS, displayName: 'Ada', aliases: ['ada@emse.fr'] });
     expect(s.state).toMatchObject({ kind: 'ready', remembered: false });
     expect(server.zimbra.soapNames).toEqual(['AuthRequest', 'GetInfoRequest']);
     const auth = server.zimbra.requests[0].soap!.element as { account: { _content: string } };
@@ -97,7 +140,7 @@ describe('MailSession.signIn', () => {
 
   it('refuses an address off the eligible domains before any byte is sent (D1)', async () => {
     const server = mailbox();
-    const { s } = session(server, KEY, 'ada@gmail.com');
+    const { s } = session(server, { address: 'ada@gmail.com' });
     expect(await s.eligibility()).toBe('not_eligible');
     await expect(s.signIn(GOOD, true)).rejects.toMatchObject({ kind: 'not_eligible' });
     expect(server.zimbra.requests).toHaveLength(0);
@@ -105,7 +148,7 @@ describe('MailSession.signIn', () => {
 
   it('an identity with no address has no mailbox to sign in to', async () => {
     const server = mailbox();
-    const { s } = session(server, KEY, null);
+    const { s } = session(server, { address: null });
     expect(await s.eligibility()).toBe('unknown');
     await expect(s.signIn(GOOD, true)).rejects.toMatchObject({ kind: 'address_unknown' });
     expect(server.zimbra.requests).toHaveLength(0);
@@ -146,12 +189,107 @@ describe('MailSession.signIn', () => {
     expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
   });
 
+  it('a sign-in over a live session ends the session it replaces on the server', async () => {
+    const server = mailbox();
+    const { s } = session(server);
+    await s.signIn(GOOD, false);
+    await s.signIn(GOOD, false);
+    await vi.waitFor(() => expect(server.ended()).toEqual(['token-1']));
+    await s.call(getFolderRequest());
+    expect(server.zimbra.requests.at(-1)!.soap!.token).toBe('token-2');
+  });
+
   it('does not remember while the device key is not held, and says so in the state', async () => {
     const server = mailbox();
-    const { s } = session(server, null);
+    const { s } = session(server, { key: null });
     await s.signIn(GOOD, true);
     expect(s.state).toMatchObject({ kind: 'ready', remembered: false });
     expect(localStorage.length).toBe(0);
+  });
+
+  it('a password that cannot be stored still ends ready, typed remembered: false - never half open', async () => {
+    const server = mailbox();
+    const failing: Storage = {
+      get length() {
+        return localStorage.length;
+      },
+      clear: () => localStorage.clear(),
+      key: (i) => localStorage.key(i),
+      getItem: (k) => localStorage.getItem(k),
+      removeItem: (k) => localStorage.removeItem(k),
+      setItem: () => {
+        throw new Error('quota');
+      },
+    };
+    const { s } = session(server, { store: failing });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(s.signIn(GOOD, true)).resolves.toMatchObject({ address: ADDRESS });
+    warn.mockRestore();
+    expect(s.state).toMatchObject({ kind: 'ready', remembered: false });
+    await s.call(getFolderRequest());
+  });
+});
+
+describe('MailSession and a sign-out in flight (the epoch)', () => {
+  it('a sign-out while a renewal AuthRequest is out: the new token is ended, never installed', async () => {
+    const server = mailbox();
+    const hold = holding('AuthRequest');
+    const { s } = session(server, { soap: hold.wrap });
+    // The first sign-in also goes through the wrapper: let it pass.
+    const signingIn = s.signIn(GOOD, true);
+    await hold.arrived;
+    hold.release();
+    await signingIn;
+
+    const second = holding('AuthRequest');
+    const { s: renewing } = session(server, { soap: second.wrap });
+    await rememberMailPassword(USER, KEY, { account: ADDRESS, password: GOOD });
+    const resumed = renewing.resume();
+    await second.arrived;
+    await renewing.signOut();
+    second.release();
+    await expect(resumed).rejects.toMatchObject({ kind: 'not_signed_in' });
+    expect(renewing.state.kind).toBe('signed_out');
+    await expect(renewing.call(getFolderRequest())).rejects.toMatchObject({
+      kind: 'not_signed_in',
+    });
+    // token-1 was the first session's; the renewal brought token-2 back after the sign-out.
+    expect(server.ended()).toContain('token-2');
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+  });
+
+  it('a sign-out while a sign-in AuthRequest is out: nothing installed, nothing remembered', async () => {
+    const server = mailbox();
+    const hold = holding('AuthRequest');
+    const { s } = session(server, { soap: hold.wrap });
+    const signingIn = s.signIn(GOOD, true);
+    await hold.arrived;
+    await s.signOut();
+    hold.release();
+    await expect(signingIn).rejects.toMatchObject({ kind: 'not_signed_in' });
+    expect(s.state.kind).toBe('signed_out');
+    expect(server.ended()).toEqual(['token-1']);
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+  });
+
+  it('a sign-out while the remembered write waits behind the device-key gate: not written back', async () => {
+    const keyA = btoa(String.fromCharCode(...new Uint8Array(32).fill(41)));
+    const keyB = btoa(String.fromCharCode(...new Uint8Array(32).fill(42)));
+    const server = mailbox();
+    const { s } = session(server, { key: keyA });
+    const gated = gateStorage({ ping: async () => {} } as unknown as IStorage, USER);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const change = holdStorageForKeyChange(gated, keyA, keyB, () => held);
+    const signingIn = s.signIn(GOOD, true);
+    await vi.waitFor(() => expect(server.zimbra.soapNames).toContain('GetInfoRequest'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await s.signOut();
+    release();
+    await change;
+    await expect(signingIn).rejects.toMatchObject({ kind: 'not_signed_in' });
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+    expect(s.state.kind).toBe('signed_out');
   });
 });
 
@@ -181,7 +319,7 @@ describe('MailSession renewal (driven by the answer, never a clock)', () => {
     ]);
   });
 
-  it('with nothing remembered, asks for the password and sends nothing more', async () => {
+  it('with nothing remembered, asks for the password and renews nothing more', async () => {
     const server = mailbox();
     const { s } = session(server);
     await s.signIn(GOOD, false);
@@ -189,7 +327,9 @@ describe('MailSession renewal (driven by the answer, never a clock)', () => {
     await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'session_expired' });
     expect(s.state).toEqual({ kind: 'needs_password', account: ADDRESS, reason: 'not_remembered' });
     expect(server.authCount()).toBe(1);
-    await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'not_signed_in' });
+    const sent = server.zimbra.requests.length;
+    await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'session_expired' });
+    expect(server.zimbra.requests.length).toBe(sent);
   });
 
   it('forgets a remembered password the server refuses, and never replays it', async () => {
@@ -208,7 +348,7 @@ describe('MailSession renewal (driven by the answer, never a clock)', () => {
     expect(server.authCount()).toBe(2);
   });
 
-  it('a renewal the network failed keeps the old token, so the next call renews again', async () => {
+  it('a renewal the server failed keeps the old token, so the next call renews again', async () => {
     const server = mailbox();
     const { s } = session(server);
     await s.signIn(GOOD, true);
@@ -220,16 +360,25 @@ describe('MailSession renewal (driven by the answer, never a clock)', () => {
     expect(server.authCount()).toBe(3);
   });
 
+  it('a session refused again right after its renewal asks for the password, said as such', async () => {
+    const server = mailbox();
+    const { s } = session(server);
+    await s.signIn(GOOD, true);
+    server.failCallsWith('service.AUTH_EXPIRED');
+    await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'session_expired' });
+    expect(s.state).toEqual({
+      kind: 'needs_password',
+      account: ADDRESS,
+      reason: 'session_refused',
+    });
+    expect(server.authCount()).toBe(2);
+  });
+
   it('a locked device asks for the password rather than renewing', async () => {
     const server = mailbox();
-    let key: string | null = KEY;
-    const s = new MailSession(new ZimbraSoapClient(server.zimbra.openStream), {
-      userId: USER,
-      deviceKey: () => key,
-      mailAddress: async () => ADDRESS,
-    });
+    const { s, lock } = session(server);
     await s.signIn(GOOD, true);
-    key = null;
+    lock();
     server.expireAll();
     await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'session_expired' });
     expect(s.state).toEqual({ kind: 'needs_password', account: ADDRESS, reason: 'device_locked' });
@@ -246,24 +395,51 @@ describe('MailSession renewal (driven by the answer, never a clock)', () => {
     expect(second.state).toMatchObject({ kind: 'ready', remembered: true });
   });
 
-  it('resume with a password the device key does not open asks for it', async () => {
+  it('two resumes at once share ONE renewal', async () => {
+    const server = mailbox();
+    await rememberMailPassword(USER, KEY, { account: ADDRESS, password: GOOD });
+    const { s } = session(server);
+    expect(await Promise.all([s.resume(), s.resume()])).toEqual([true, true]);
+    expect(server.authCount()).toBe(1);
+  });
+
+  it('a remembered password the device key does not open is REMOVED, and asked for', async () => {
     const server = mailbox();
     await rememberMailPassword(USER, OTHER_KEY, { account: ADDRESS, password: GOOD });
     const { s } = session(server);
     expect(await s.resume()).toBe(false);
     expect(s.state).toMatchObject({ kind: 'needs_password', reason: 'remembered_unopenable' });
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+    expect(server.zimbra.requests).toHaveLength(0);
+  });
+
+  it('a remembered password for another address than the identity is removed, no byte sent', async () => {
+    const server = mailbox();
+    await rememberMailPassword(USER, KEY, { account: 'someone@etu.emse.fr', password: GOOD });
+    const { s } = session(server);
+    expect(await s.resume()).toBe(false);
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+    expect(server.zimbra.requests).toHaveLength(0);
+  });
+
+  it('resume checks the identity address is eligible before any byte', async () => {
+    const server = mailbox();
+    await rememberMailPassword(USER, KEY, { account: 'ada@gmail.com', password: GOOD });
+    const { s } = session(server, { address: 'ada@gmail.com' });
+    await expect(s.resume()).rejects.toMatchObject({ kind: 'not_eligible' });
     expect(server.zimbra.requests).toHaveLength(0);
   });
 });
 
-describe('MailSession and a closed account (D8)', () => {
-  it('erases the mail data, and only it, and says the account is closed', async () => {
+describe('MailSession and an account the school ended (D8)', () => {
+  it('NO_SUCH_ACCOUNT answered to its own sign-in erases the mail data, and only it', async () => {
     const server = mailbox();
     const { s } = session(server);
     localStorage.setItem(ACCOUNT_KEY.backupRecoveryCode(USER), 'kept');
     localStorage.setItem('unrelated', 'kept');
     await s.signIn(GOOD, true);
-    server.failCallsWith('account.ACCOUNT_INACTIVE');
+    server.expireAll();
+    server.failInfoWith('account.NO_SUCH_ACCOUNT');
     await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'account_closed' });
     expect(s.state).toEqual({ kind: 'closed', account: ADDRESS });
     expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
@@ -273,15 +449,29 @@ describe('MailSession and a closed account (D8)', () => {
     expect(s.state.kind).toBe('closed');
   });
 
-  it('a closed account met at the renewal erases too', async () => {
+  it('NO_SUCH_ACCOUNT on any other call names another account: not_found, nothing erased', async () => {
     const server = mailbox();
     const { s } = session(server);
     await s.signIn(GOOD, true);
-    server.expireAll();
-    server.authFaults.push('account.ACCOUNT_INACTIVE');
-    await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'account_closed' });
-    expect(s.state.kind).toBe('closed');
-    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+    server.failCallsWith('account.NO_SUCH_ACCOUNT');
+    await expect(s.call(getFolderRequest())).rejects.toMatchObject({ kind: 'not_found' });
+    expect(s.state.kind).toBe('ready');
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).not.toBeNull();
+  });
+
+  it('ACCOUNT_INACTIVE (also locked or pending) is unavailable: nothing erased', async () => {
+    const server = mailbox();
+    const { s } = session(server);
+    await s.signIn(GOOD, true);
+    server.failCallsWith('account.ACCOUNT_INACTIVE');
+    await expect(s.call(getFolderRequest())).rejects.toMatchObject({
+      kind: 'account_unavailable',
+    });
+    expect(s.state).toEqual({ kind: 'unavailable', account: ADDRESS });
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).not.toBeNull();
+    // The next resume tries again, once the school has reactivated it.
+    server.failCallsWith(null);
+    expect(await s.resume()).toBe(true);
   });
 
   it('maintenance is temporary: nothing is erased', async () => {
