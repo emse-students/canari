@@ -766,8 +766,37 @@ a mail server, so it is irrelevant here. The connection must start from the devi
     and 587 is BLOCKED, and 443 is open.** From our backend, the relay can only reach Partage on 443,
     so the browser would have to speak Zimbra's SOAP API (`SendMsgRequest` included) through the
     tunnel instead of IMAP/SMTP. RENATER accepts a password `AuthRequest` there (measured, above),
-    so this home is viable. What is left to verify: that `SendMsgRequest` sends, and that TLS done
-    in WASM inside the browser completes against Partage's certificate chain.
+    so this home is viable.
+
+  **Prototyped end to end on 2026-11-27, locally (owner's account, owner's approval; nothing
+  deployed).** The setup:
+  - a ~60-line bun relay, WebSocket to TCP to `partage.emse.fr:443` only, logging the TLS record
+    types it carries;
+  - TLS 1.3 done in the client by [subtls](https://github.com/jawj/subtls), pure JS on WebCrypto,
+    the library Neon's serverless driver uses with the same relay shape. It is not
+    production-grade; the real build would weigh rustls in WASM;
+  - Zimbra JSON SOAP over HTTP/1.1 inside the tunnel.
+
+  The results:
+  - Partage negotiates TLS 1.3 `TLS_AES_128_GCM_SHA256` with P-256 and an RSA-PSS signature. Its
+    chain (GEANT TLS RSA 1, then HARICA TLS RSA Root CA 2021) verifies against the HARICA root
+    alone. A wrong root is refused ("Ran out of certificates without reaching a trusted root"), so
+    the relay cannot impersonate Partage.
+  - The relay saw `handshake`, `ccs` and then only `appdata` records, never plaintext.
+  - `GetInfoRequest`, `GetFolderRequest`, `SearchRequest`, `GetMsgRequest` and **`SendMsgRequest`
+    (a multipart text/HTML mail to the account itself, accents intact, received)** each took
+    80-225 ms, with one TLS connection per request.
+  - It ran the same in bun and in headless Chrome 158 (a page on `http://127.0.0.1`, which is a
+    secure context, so WebCrypto is available).
+  - `GetMsgRequest` with `html: 1` returns Zimbra's DEFANGED HTML (entities, sanitised), which is
+    a first layer, not a substitute for our own sandbox.
+  - A session token from one password login served every call. The client can keep the TOKEN
+    instead of the ENT password, so the password is typed at sign-in and stored nowhere.
+
+  Before a real build:
+  - one persistent TLS connection (keep-alive) instead of one per request;
+  - the relay's limits: one destination, per-user connection caps and byte budgets;
+  - the page origin: from `https://` the WebSocket must be `wss://`, which Nginx already terminates.
 
   Its risks: principle 4 for Cloudflare; RENATER's brute-force protection seeing every student come
   from one set of addresses; and an ENT password typed into a web page.
