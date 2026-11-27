@@ -218,6 +218,33 @@ describe('one salon, one page in flight', () => {
   });
 });
 
+describe('every load that starts says why it did not join (S17: one open, several requests)', () => {
+  it('names the press, and for the next load the stale declaration that made the first unjoinable', async () => {
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    let release!: (rows: unknown[]) => void;
+    listMessages.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const log = vi.fn();
+    const ctx = { ...(makeCtx() as object), log } as never;
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx, { atTap: true });
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
+    convs.invalidateChannelHistoryCache(SALON);
+    const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(2));
+    release([{ id: 'old' }]);
+    await Promise.all([first, second]);
+
+    const starts = log.mock.calls
+      .map(([line]) => String(line))
+      .filter((l) => l.includes('starts ('));
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toContain('at the tap');
+    expect(starts[0]).toContain('none in flight');
+    expect(starts[1]).toContain('the one in flight is not joined');
+  });
+});
+
 describe('a declaration for another salon does not split a load', () => {
   it('a second load of this salon still joins when a NEIGHBOUR was declared stale meanwhile', async () => {
     const convs = useConversations();
