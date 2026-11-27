@@ -19,8 +19,9 @@
 #   frontend-test [shard]     vitest with coverage, the whole suite or shard N of 4
 #   frontend-test-related <base>   the push's vitest: only what `base..HEAD` reaches (owner, 2026-11-16)
 #   frontend-build <sha>      the production web build, then what it must carry
-#   mls-wasm-build            frontend/mls-wasm -> frontend/src/lib/wasm, warnings denied
-#   mls-wasm-verify           the built WASM exists and carries no unsupported-platform panic
+#   mls-wasm-build            frontend/mls-wasm -> frontend/src/lib/wasm, and frontend/mail-tls ->
+#                             frontend/src/lib/wasm/mail-tls, warnings denied
+#   mls-wasm-verify           both built WASMs exist and carry no unsupported-platform panic
 #   lockfile-version          every committed bun.lock is lockfileVersion 1
 #   tauri-parity              the Tauri plugins' JS and Rust halves agree on major.minor
 set -euo pipefail
@@ -42,6 +43,9 @@ rust_task() {
   case "$1" in
     apps/chat-gateway | apps/call-service | frontend/mls-core) echo "cargo test" ;;
     frontend/mls-wasm) echo "cargo build --target wasm32-unknown-unknown --release" ;;
+    # The mail client's TLS (docs/wiki/mail-client-transport.md): its handshake tests, natively.
+    # Its wasm32 build is `mls-wasm-build`, which every frontend job runs with warnings denied.
+    frontend/mail-tls) echo "cargo test" ;;
     frontend/src-tauri) echo "cargo test --all-targets" ;;
     *) return 1 ;;
   esac
@@ -219,17 +223,30 @@ check_frontend_build() {
 
 # `-D warnings` here and not in `package.json`'s `wasm:build`: this is the gate, that is the
 # developer's quick build, and a warning must fail the gate on every machine alike.
+#
+# The mail client's TLS is a SECOND WASM, built here beside the MLS one (one place, one wasm-pack,
+# one cache): it is loaded only when the Mail tab is used, so it is its own file and never part of
+# the boot download (docs/wiki/mail-client-transport.md). Built AFTER mls-wasm, whose out-dir holds
+# it, so nothing the first build writes can stand on the second.
 check_mls_wasm_build() {
   (cd frontend/mls-wasm && RUSTFLAGS='-D warnings' wasm-pack build --target web --out-dir ../src/lib/wasm)
+  (cd frontend/mail-tls && RUSTFLAGS='-D warnings' wasm-pack build --target web --out-dir ../src/lib/wasm/mail-tls)
 }
 
 check_mls_wasm_verify() {
-  local wasm=frontend/src/lib/wasm/mls_wasm_bg.wasm
+  local wasm
+  for wasm in frontend/src/lib/wasm/mls_wasm_bg.wasm frontend/src/lib/wasm/mail-tls/mail_tls_bg.wasm; do
+    verify_one_wasm "$wasm"
+  done
+}
+
+verify_one_wasm() {
+  local wasm="$1"
   if [ ! -s "$wasm" ]; then
-    echo "::error::MLS WASM is missing after the build step (cache-hit=${CACHE_HIT:-n/a})"
+    echo "::error::$wasm is missing after the build step (cache-hit=${CACHE_HIT:-n/a})"
     exit 1
   fi
-  ls -l frontend/src/lib/wasm/
+  ls -l "$(dirname "$wasm")"
   if grep -qa 'not implemented on this platform' "$wasm"; then
     # `std` prefixes the sentence with the API's own name ("time", "random", ...), which is what
     # turns this refusal into a lead rather than a verdict.
@@ -238,7 +255,7 @@ check_mls_wasm_verify() {
     echo "::error::The built WASM can panic on wasm32: ...${found}. A std API that does not exist on this target still compiles for it and panics at runtime, in the browser, on a path no test here covers. Gate the call behind #[cfg(not(target_arch = \"wasm32\"))], or take the value it needs (a clock, an entropy source) as a parameter from the caller, which has one on every target. See CHANGELOG v0.16.5."
     exit 1
   fi
-  echo "wasm carries no unsupported-platform panic (cache-hit=${CACHE_HIT:-n/a})"
+  echo "$wasm carries no unsupported-platform panic (cache-hit=${CACHE_HIT:-n/a})"
 }
 
 # ── Lockfile guards (code-analysis.yml's `guards` job) ───────────────────────────────────────────

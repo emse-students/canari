@@ -30,13 +30,13 @@ git checkout -q -b main
 # changelog, and the manifests a pre-release bump writes (the same set `bump-version.test.sh` builds).
 mkdir -p scripts .github/scripts/lib changelog.d \
   frontend/src-tauri/gen/apple/canari.xcodeproj frontend/src-tauri/gen/apple/canari_iOS \
-  frontend/mls-wasm frontend/mls-core
+  frontend/mls-wasm frontend/mail-tls frontend/mls-core
 cp "$REPO_ROOT/scripts/bump-app-version.sh" scripts/
 cp "$REPO_ROOT/.github/scripts/land-release.sh" .github/scripts/
 cp "$REPO_ROOT/.github/scripts/lib/release-preconditions.sh" .github/scripts/lib/
 printf '{\n  "name": "canari",\n  "version": "0.9.0"\n}\n' > frontend/package.json
 printf '{\n  "version": "0.9.0",\n  "bundle": {\n    "active": true\n  }\n}\n' > frontend/src-tauri/tauri.conf.json
-for crate in src-tauri mls-wasm mls-core; do
+for crate in src-tauri mls-wasm mail-tls mls-core; do
   printf '[package]\nname = "canari-%s"\nversion = "0.9.0"\n' "$crate" > "frontend/$crate/Cargo.toml"
 done
 printf 'MARKETING_VERSION = 0.9.0;\nCURRENT_PROJECT_VERSION = 900099;\n' \

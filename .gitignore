@@ -141,6 +141,7 @@ apps/media-service/upload_sessions/
 !libs/handoff/bun.lock
 !frontend/src-tauri/Cargo.lock
 !frontend/mls-wasm/Cargo.lock
+!frontend/mail-tls/Cargo.lock
 !apps/*/Cargo.lock
 
 # Apple artefacts

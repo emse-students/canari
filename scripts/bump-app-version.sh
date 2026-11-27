@@ -375,6 +375,7 @@ discover_cargo_files() {
   local -a files=(
     "$ROOT/frontend/src-tauri/Cargo.toml"
     "$ROOT/frontend/mls-wasm/Cargo.toml"
+    "$ROOT/frontend/mail-tls/Cargo.toml"
     "$ROOT/frontend/mls-core/Cargo.toml"
   )
   local cargo

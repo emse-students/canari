@@ -1,0 +1,4 @@
+{
+  "description": "The school mailbox's eligible accounts (owner, 2026-11-27; docs/wiki/mail-client.md D1): an account may use the Mail tab and the mail relay when the domain of its MiConnect address is EXACTLY one of these (lowercase, no subdomain). Read by the relay that admits a socket (apps/chat-gateway/src/mail_relay.rs, MAIL_DOMAINS) and by the client that shows the tab (frontend/src/lib/mail/eligibility.ts); each side's test asserts its constant equals this list, so the two cannot drift apart.",
+  "domains": ["etu.emse.fr", "emse.fr"]
+}

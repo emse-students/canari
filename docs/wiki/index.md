@@ -38,6 +38,7 @@
 ### Backend services
 
 - [chat-gateway](services/chat-gateway.md) — Rust/Axum WebSocket gateway, Redis pub/sub
+- [Mail client transport, as built (lot 1)](mail-client-transport.md) - the pipe to the school mailbox: rustls in WASM, the blind relay on chat-gateway (one upstream, eligible accounts only, off by default), the native Tauri socket, HTTP/1.1 and Zimbra JSON SOAP on bytes
 - [Usage dashboard](usage-dashboard.md) - who uses Canari, anonymously: distinct people per day, week and month by platform category and version (HyperLogLogs, no id stored), the week-by-hour map, the daily activity totals, and where each is counted
 - [call-service](services/call-service.md) — Rust/Axum WebRTC SFU, Cloudflare TURN
 - [chat-delivery-service](services/chat-delivery.md) — NestJS MLS API, message queue, sync engine, push

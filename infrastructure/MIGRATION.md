@@ -345,6 +345,14 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 Unset (the state of both estates), the gateway uses 4096 and 240; a value under 256 or 60 is refused
 ([chat-gateway](../docs/wiki/services/chat-gateway.md#what-one-connection-may-send-2026-11-14)).
 
+**Two more read by chat-gateway, for the mail relay:** `MAIL_RELAY_ENABLED` (unset on both estates:
+the relay is OFF and `/api/mail/relay` answers 404; `1` switches it on) and `MAIL_RELAY_UPSTREAM`
+(the relay's one destination, `partage.emse.fr:443` by default in the compose files). ON, the gateway
+also needs `CORE_SERVICE_URL` (set by the compose files) and `INTERNAL_SECRET`, and core-service needs
+`MICONNECT_READER_TOKEN` to answer a mail domain - production holds one, dev does not yet. A switch
+that is not readable, or an upstream that is not exactly one `host:port`, stops the gateway at boot
+([mail-client-transport](../docs/wiki/mail-client-transport.md#the-relay)).
+
 ## 3bis. Repository settings that are not secrets, and that no file in the tree carries
 
 **A SETTING NO FILE CARRIES IS REPRODUCED FROM NOWHERE ON A FORK OR A REBUILD**, and these three

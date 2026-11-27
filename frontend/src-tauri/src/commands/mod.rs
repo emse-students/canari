@@ -13,6 +13,8 @@ pub mod conversation_nicknames;
 pub mod cookies;
 pub mod display_names;
 pub mod handoff;
+// The mail client's native socket: one destination, raw bytes both ways (2026-11-27).
+pub mod mail_socket;
 pub mod mls;
 // One MLS state per account on a shared install: the slot, the parked states, the switch.
 pub mod mls_account_state;

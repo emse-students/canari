@@ -1,0 +1,147 @@
+import { Log } from '$lib/utils/Log';
+import { Http1Connection } from './http1';
+import type { PlaintextStream } from './tlsConnection';
+
+/**
+ * ZIMBRA JSON SOAP OVER THE MAIL CLIENT'S OWN TLS (docs/wiki/mail-client.md D2).
+ *
+ * One persistent connection serves every call; when the server ends it (keep-alive expiry, the
+ * relay's idle bound) the NEXT call opens a new one. A call is never re-sent on its own: `SendMsg`
+ * is not idempotent, and a call whose connection died mid-flight may have been carried out.
+ */
+
+/** The mailbox host: the `Host` header, and the one name the TLS certificate must carry. */
+export const MAIL_HOST = 'partage.emse.fr';
+/** Zimbra's SOAP endpoint, JSON flavour. */
+const SOAP_PATH = '/service/soap';
+
+/** A Zimbra fault, typed by its `Code` (`service.AUTH_REQUIRED`, `account.AUTH_FAILED`, ...). */
+export class ZimbraFault extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+    detail: string
+  ) {
+    super(`Zimbra fault ${code} (HTTP ${status}): ${detail}`);
+    this.name = 'ZimbraFault';
+  }
+}
+
+/** An answer that is neither a SOAP body nor a SOAP fault: the server, or what stands in for it. */
+export class ZimbraUnreadableAnswer extends Error {
+  constructor(
+    readonly status: number,
+    detail: string
+  ) {
+    super(`Zimbra answered HTTP ${status} with no readable SOAP envelope: ${detail}`);
+    this.name = 'ZimbraUnreadableAnswer';
+  }
+}
+
+/** The envelope of one call, with the session token when there is one. */
+export function soapEnvelope(body: Record<string, unknown>, authToken?: string): unknown {
+  return authToken
+    ? {
+        Header: { context: { _jsns: 'urn:zimbra', authToken: { _content: authToken } } },
+        Body: body,
+      }
+    : { Body: body };
+}
+
+interface FaultShape {
+  Code?: { Value?: string };
+  Reason?: { Text?: string };
+  Detail?: { Error?: { Code?: string } };
+}
+
+/**
+ * Reads a Zimbra answer: the `Body` of a success, or a {@link ZimbraFault} carrying the fault's
+ * `Detail.Error.Code` (Zimbra answers a fault with HTTP 500 and a JSON body, so the status alone
+ * says nothing). The JSON is decoded from the WHOLE body's bytes.
+ */
+export function readSoapAnswer(status: number, body: Uint8Array): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
+  } catch (err) {
+    throw new ZimbraUnreadableAnswer(status, `not JSON (${body.length} bytes): ${String(err)}`);
+  }
+  const envelopeBody = (parsed as { Body?: Record<string, unknown> } | null)?.Body;
+  if (!envelopeBody || typeof envelopeBody !== 'object') {
+    throw new ZimbraUnreadableAnswer(status, 'no Body');
+  }
+  const fault = envelopeBody.Fault as FaultShape | undefined;
+  if (fault) {
+    const code = fault.Detail?.Error?.Code ?? fault.Code?.Value ?? 'unknown';
+    throw new ZimbraFault(code, status, fault.Reason?.Text ?? '');
+  }
+  if (status !== 200) {
+    throw new ZimbraUnreadableAnswer(status, 'a non-200 answer without a Fault');
+  }
+  return envelopeBody;
+}
+
+/** Opens a new plaintext stream to the mailbox (a TLS connection over a transport). */
+export type StreamOpener = () => Promise<PlaintextStream>;
+
+/** Zimbra SOAP calls over one persistent connection, reopened when the server ended it. */
+export class ZimbraSoapClient {
+  private connection: Http1Connection | null = null;
+  private stream: PlaintextStream | null = null;
+  /** The open in flight, shared by every call that needs a connection meanwhile: one, never two. */
+  private opening: Promise<Http1Connection> | null = null;
+
+  constructor(private readonly openStream: StreamOpener) {}
+
+  /** Calls Zimbra with `body` (`{ GetInfoRequest: {...} }`), resolving with the answer's `Body`. */
+  async call(body: Record<string, unknown>, authToken?: string): Promise<Record<string, unknown>> {
+    const request = Object.keys(body).join(',');
+    const connection = await this.usableConnection();
+    const payload = new TextEncoder().encode(JSON.stringify(soapEnvelope(body, authToken)));
+    Log.d('MAIL-SOAP', `${request} (${payload.length} bytes)`);
+    const response = await connection.request({
+      method: 'POST',
+      path: SOAP_PATH,
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json' },
+      body: payload,
+    });
+    try {
+      const answer = readSoapAnswer(response.status, response.body);
+      Log.d('MAIL-SOAP', `${request} answered`);
+      return answer;
+    } catch (err) {
+      if (err instanceof ZimbraFault) Log.d('MAIL-SOAP', `${request} fault ${err.code}`);
+      else Log.w('MAIL-SOAP', `${request} unreadable`, err);
+      throw err;
+    }
+  }
+
+  /** Ends the connection, if one is open. */
+  close(): void {
+    this.stream?.close();
+    this.stream = null;
+    this.connection = null;
+  }
+
+  /** The open connection, or a new one when there is none or it is spent. */
+  private usableConnection(): Promise<Http1Connection> {
+    if (this.connection?.usable) return Promise.resolve(this.connection);
+    if (this.opening) return this.opening;
+    if (this.connection) {
+      Log.d('MAIL-SOAP', 'the connection is spent - opening a new one');
+      this.stream?.close();
+    }
+    this.connection = null;
+    this.stream = null;
+    this.opening = this.openStream()
+      .then((stream) => {
+        this.stream = stream;
+        this.connection = new Http1Connection(stream, MAIL_HOST);
+        return this.connection;
+      })
+      .finally(() => {
+        this.opening = null;
+      });
+    return this.opening;
+  }
+}

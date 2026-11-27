@@ -728,6 +728,39 @@ server {\n\
     proxy_send_timeout 120s;\n\
     }\n\
     \n\
+    # THE MAIL RELAY (docs/wiki/mail-client-transport.md): a WebSocket the gateway pipes to the school\n\
+    # mailbox, ciphertext only. Authenticated like /api/ws (the gateway reads the token itself and\n\
+    # checks the origin), so the same lines, the same error_log rule and the same idle bound: a\n\
+    # connection silent for 120 s both ways is ended here, and the client opens a new one when it\n\
+    # next has something to send. Exact match: it widens nothing. Off on the gateway (404) unless\n\
+    # MAIL_RELAY_ENABLED is set there.\n\
+    location = /api/mail/relay {\n\
+    error_log /var/log/nginx/error.log crit;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    auth_request_set $session_id $upstream_http_x_session_id;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    proxy_set_header X-Session-Id $session_id;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_gateway;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Upgrade $http_upgrade;\n\
+    proxy_set_header Connection "upgrade";\n\
+    proxy_set_header Cookie $http_cookie;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    proxy_read_timeout 120s;\n\
+    proxy_send_timeout 120s;\n\
+    }\n\
+    \n\
     # THE USAGE DASHBOARD IS SERVED BY social-service, which holds the durable figures (usage-dashboard.md);\n\
     # every other /api/admin path stays on the gateway. Exact match, so it widens nothing.\n\
     location = /api/admin/usage {\n\

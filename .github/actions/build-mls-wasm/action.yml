@@ -1,6 +1,7 @@
 name: Build MLS WASM
 description: >
-  Compile frontend/mls-wasm into frontend/src/lib/wasm. The output is a build artefact and is
+  Compile frontend/mls-wasm into frontend/src/lib/wasm, and the mail client's TLS
+  (frontend/mail-tls) into frontend/src/lib/wasm/mail-tls. The output is a build artefact and is
   never committed, so EVERY pipeline that ships a client - web, Android, iOS - builds
   it here. One place, one pinned wasm-pack, one cache key: a client cannot be a crypto fix behind
   another without this file changing.
@@ -37,7 +38,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: frontend/src/lib/wasm
-        key: mls-wasm-${{ runner.os }}${{ steps.host.outputs.tag }}-wp0.15.0-${{ hashFiles('frontend/mls-wasm/**', 'frontend/mls-core/**', 'rust-toolchain.toml') }}
+        key: mls-wasm-${{ runner.os }}${{ steps.host.outputs.tag }}-wp0.15.0-${{ hashFiles('frontend/mls-wasm/**', 'frontend/mls-core/**', 'frontend/mail-tls/**', 'rust-toolchain.toml') }}
 
     - name: Setup Rust
       if: steps.cache.outputs.cache-hit != 'true'
@@ -48,7 +49,9 @@ runs:
         # The repository root holds no workspace manifest, so the default (`.`) makes the bundled
         # rust-cache run `cargo metadata` there and print `failed with exit code 101` on every
         # run - a red line that means nothing and teaches its reader to skip red lines.
-        cache-workspaces: frontend/mls-wasm
+        cache-workspaces: |
+          frontend/mls-wasm
+          frontend/mail-tls
         # The Xcode major on macOS, empty elsewhere (see "Name the host toolchain"): the restored
         # `target/` holds host proc macros linked by that Xcode and loaded by that image's dyld.
         cache-key: ${{ steps.host.outputs.xcode }}
@@ -73,6 +76,36 @@ runs:
       shell: bash
       run: ./scripts/install-wasm-pack.sh
 
+    # RING COMPILES C FOR wasm32 (frontend/mail-tls, the mail client's TLS), and Apple's clang has
+    # no WebAssembly backend, so on macOS the C compiler for that one target is Homebrew's LLVM.
+    # Named for the wasm32 target ONLY (`CC_wasm32_unknown_unknown`) and only in the build step's
+    # env, never $GITHUB_ENV: the iOS build that follows keeps Xcode's compiler for everything else.
+    # Linux images carry an LLVM clang, which has the backend. A missing compiler is said HERE.
+    - name: Find a C compiler for wasm32
+      id: wasmcc
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cc=clang
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          prefix="$(brew --prefix llvm 2>/dev/null || true)"
+          if [ -z "$prefix" ] || [ ! -x "$prefix/bin/clang" ]; then
+            echo "no Homebrew LLVM on this image: installing it (Apple clang cannot target wasm32)"
+            brew install llvm
+            prefix="$(brew --prefix llvm)"
+          fi
+          cc="$prefix/bin/clang"
+          echo "cc=$cc" >> "$GITHUB_OUTPUT"
+          echo "ar=$prefix/bin/llvm-ar" >> "$GITHUB_OUTPUT"
+        fi
+        "$cc" --version | sed -n 1p
+        echo 'int canari_wasm_cc_probe(void) { return 0; }' > "$RUNNER_TEMP/probe.c"
+        if ! "$cc" --target=wasm32-unknown-unknown -c "$RUNNER_TEMP/probe.c" -o "$RUNNER_TEMP/probe.o"; then
+          echo "::error::$cc cannot compile for wasm32-unknown-unknown, which ring (frontend/mail-tls) needs"
+          exit 1
+        fi
+
     # The command is `checks.sh mls-wasm-build` (2026-11-15), the one copy the local pre-push run
     # calls too. It sets `RUSTFLAGS=-D warnings` itself - where that belongs: on OUR crypto crates,
     # and nowhere else. Registry dependencies are lint-capped by Cargo, so this reaches mls-wasm and
@@ -80,7 +113,16 @@ runs:
     - name: Build WASM
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: bash .github/scripts/checks.sh mls-wasm-build
+      env:
+        WASM_CC: ${{ steps.wasmcc.outputs.cc }}
+        WASM_AR: ${{ steps.wasmcc.outputs.ar }}
+      run: |
+        set -euo pipefail
+        # Only when the step above named one (macOS); elsewhere the default clang is the one probed.
+        if [ -n "$WASM_CC" ]; then
+          export CC_wasm32_unknown_unknown="$WASM_CC" AR_wasm32_unknown_unknown="$WASM_AR"
+        fi
+        bash .github/scripts/checks.sh mls-wasm-build
 
     # A cache that restores an empty directory would otherwise be found by a module-resolution
     # error three steps later, in a job that has nothing to do with crypto. Say it here.
