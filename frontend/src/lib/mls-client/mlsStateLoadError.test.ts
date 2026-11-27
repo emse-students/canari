@@ -1,5 +1,6 @@
 import {
   KeystoreKeyUnavailableError,
+  KeystorePromptDismissedError,
   MlsSlotMoveUnfinishedError,
   MlsSlotOwnerUnrecordedError,
   MlsStateLoadUntypedError,
@@ -37,6 +38,14 @@ describe('mlsStateLoadErrorOf', () => {
     const typed = mlsStateLoadErrorOf({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'no key' });
     expect(typed).toBeInstanceOf(KeystoreKeyUnavailableError);
     expect(typed.message).toBe('KEYSTORE_KEY_UNAVAILABLE: no key');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('types a dismissed biometric sheet as KeystorePromptDismissedError, never an empty keystore', () => {
+    const typed = mlsStateLoadErrorOf({ code: 'KEYSTORE_PROMPT_DISMISSED', message: 'dismissed' });
+    expect(typed).toBeInstanceOf(KeystorePromptDismissedError);
+    expect(typed).not.toBeInstanceOf(KeystoreKeyUnavailableError);
+    expect(typed.message).toBe('KEYSTORE_PROMPT_DISMISSED: dismissed');
     expect(error).not.toHaveBeenCalled();
   });
 

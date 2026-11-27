@@ -113,7 +113,7 @@ import {
   outboxServerErrorsStatement,
   outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
-import { settleRetainedTables } from './sqliteRetained';
+import { executeOwnTransaction, settleRetainedTables } from './sqliteRetained';
 import {
   newStoreIncarnation,
   STORE_INCARNATION_KEEP_STATEMENT,
@@ -293,6 +293,27 @@ export class SqliteStorage implements IStorage {
     }
   }
 
+  /**
+   * Closes THIS file's pool and loads a fresh one in its place (`PoolRecycler`, `sqliteRetained.ts`): what a script
+   * holding its own `BEGIN` asks for when it fails, so no transaction it left open survives on a
+   * pooled connection. The close names the path - a bare `close()` closes every pool of the plugin.
+   */
+  private readonly recyclePool = async (): Promise<void> => {
+    console.warn(
+      `[SQLite] a script holding its own transaction failed - recycling the pool of ${this.dbPath}`
+    );
+    const Database = (await import('@tauri-apps/plugin-sql')).default;
+    try {
+      await this.db?.close(this.dbPath);
+    } catch (e) {
+      // The load below replaces the pool whatever the close did; the line says why it may linger.
+      console.warn(
+        `[SQLite] the failed pool could not be closed before its replacement: ${String(e)}`
+      );
+    }
+    this.db = await Database.load(this.dbPath);
+  };
+
   /** The body of {@link init}; never called but through it. */
   private async openAndMigrate(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
@@ -322,7 +343,7 @@ export class SqliteStorage implements IStorage {
     // FIRST, before anything reads or writes a table: a copy a migration set aside and could not yet
     // release - a kill, or a defect its proof caught - is restored from and released here
     // (`sqliteRetained.ts`, charter principle 2). One read of `sqlite_master` when there is none.
-    await settleRetainedTables(this.db);
+    await settleRetainedTables(this.db, this.recyclePool);
 
     // Schema: conversations carry their lifecycle state (active|pending|removed).
     // Older databases (with an `is_ready` column) are migrated in v4 below.
@@ -829,7 +850,7 @@ export class SqliteStorage implements IStorage {
     // The swap re-proves both facts INSIDE its own transaction (`messageRekeySteps`): the count
     // above explains a refusal, the guards in the swap are what make the drop safe.
     try {
-      await this.db.execute(steps.swap);
+      await executeOwnTransaction(this.db, steps.swap, this.recyclePool);
     } catch (e) {
       console.error(
         `[SQLite] Migration v22->v23: the swap REFUSED or failed and rolled back - both tables are left as they were for the next open: ${String(e)}`
@@ -842,7 +863,7 @@ export class SqliteStorage implements IStorage {
     );
     // The old table was set aside, not dropped: proved against the new one, restored from if it is
     // not whole, and released only then (`sqliteRetained.ts`).
-    await settleRetainedTables(this.db);
+    await settleRetainedTables(this.db, this.recyclePool);
   }
 
   // -- Conversations -------------------------------------------------------
