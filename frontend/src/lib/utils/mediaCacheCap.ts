@@ -65,7 +65,7 @@ export interface LedgerRecord {
 }
 
 /** Whether the server still holds the copy for certain at `now`: the evictable test of one record. */
-export function isHeldByServer(record: LedgerRecord, now: number): boolean {
+function isHeldByServer(record: LedgerRecord, now: number): boolean {
   if (record.confirmedAt <= 0) return false;
   if (record.holdWindowMs === null) return true;
   return now - record.confirmedAt < (record.holdWindowMs ?? SERVER_HOLD_WINDOW_MS);
