@@ -19,6 +19,10 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
 let opens = 0;
 /** Set to make the NEXT open fail, the way a full disk does. */
 let failNextOpen = false;
+/** When set, `close()` waits for it - a close still in flight while a caller opens again. */
+let closeGate: Promise<void> | null = null;
+/** The order `init`/`close` ran in, per call. */
+const trace: string[] = [];
 
 vi.mock('./sqlite', () => ({
   SqliteStorage: class {
@@ -28,6 +32,7 @@ vi.mock('./sqlite', () => ({
     }
     async init(): Promise<void> {
       opens++;
+      trace.push('init');
       if (failNextOpen) {
         failNextOpen = false;
         throw new Error('database or disk is full');
@@ -35,6 +40,9 @@ vi.mock('./sqlite', () => ({
       this.db = {};
     }
     async close(): Promise<void> {
+      trace.push('close-start');
+      await closeGate;
+      trace.push('close-end');
       this.db = null;
     }
   },
@@ -54,6 +62,8 @@ describe('getStorage shares one open handle per user', () => {
   beforeEach(() => {
     opens = 0;
     failNextOpen = false;
+    closeGate = null;
+    trace.length = 0;
     vi.resetModules();
   });
 
@@ -119,5 +129,32 @@ describe('getStorage shares one open handle per user', () => {
     const recovered = await getStorage('alice');
     expect(recovered.isOpen).toBe(true);
     expect(opens).toBe(2);
+  });
+
+  it('an open never starts while a close of the same file is still in flight', async () => {
+    // The plugin shares one pool per file: the older handle's close would shut the newer open's pool.
+    const { getStorage, closeCachedStore } = await import('../db');
+    await getStorage('alice');
+    let release!: () => void;
+    closeGate = new Promise<void>((r) => (release = r));
+    trace.length = 0;
+
+    const closing = closeCachedStore('alice');
+    const reopening = getStorage('alice');
+    await Promise.resolve();
+    release();
+    await Promise.all([closing, reopening]);
+
+    expect(trace).toEqual(['close-start', 'close-end', 'init']);
+    expect((await reopening).isOpen).toBe(true);
+  });
+
+  it('a second close joins the first instead of answering that nothing is open', async () => {
+    const { getStorage, closeCachedStore } = await import('../db');
+    await getStorage('alice');
+    expect(await Promise.all([closeCachedStore('alice'), closeCachedStore('alice')])).toEqual([
+      true,
+      true,
+    ]);
   });
 });
