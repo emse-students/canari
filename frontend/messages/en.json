@@ -7236,7 +7236,7 @@
   "admin_usage_activity_forms": "Forms",
   "admin_usage_months_heading": "People per month",
   "admin_usage_range_label": "Period shown",
-  "admin_usage_range_option": "Last {days} days",
+  "admin_usage_range_option": "{days} d",
   "admin_usage_headline_previous_day": "Yesterday: {count}",
   "admin_usage_headline_previous_week": "Last week: {count}",
   "admin_usage_headline_previous_month": "Last month: {count}",

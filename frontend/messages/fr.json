@@ -7245,7 +7245,7 @@
   "admin_usage_activity_forms": "Formulaires",
   "admin_usage_months_heading": "Personnes par mois",
   "admin_usage_range_label": "Période affichée",
-  "admin_usage_range_option": "{days} derniers jours",
+  "admin_usage_range_option": "{days} j",
   "admin_usage_headline_previous_day": "Hier : {count}",
   "admin_usage_headline_previous_week": "Semaine dernière : {count}",
   "admin_usage_headline_previous_month": "Mois dernier : {count}",
