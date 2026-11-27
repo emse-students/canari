@@ -92,7 +92,7 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('rings the numbers a hint reads and outlines its group ONCE, with the mines it holds', async () => {
+  it('rings the numbers a hint reads and outlines its group ONCE', async () => {
     open('one_two_one', 0);
     await tick();
     // The 1 and the 2 the step reads are ringed; the 1 on the right is not read.
@@ -100,10 +100,15 @@ describe('MinesweeperMiniGrid', () => {
     expect(cell(7).getAttribute('data-hint')).toBe('read');
     expect(cell(7).getAttribute('aria-label')).toBe('Chiffre lu : 2');
     expect(cell(8).getAttribute('data-hint')).toBeNull();
-    // The pair of cells is ONE yellow outline, not two rings; its badge says one mine. The mine it forces is red.
+    // The pair of cells is ONE yellow outline, not two rings; the mine it forces is red.
     expect(marks()).toHaveLength(2);
     expect(marks('group')).toHaveLength(1);
     expect(marks('mine')).toHaveLength(1);
+  });
+
+  it('badges a group with the mines it holds when the numbers fix it', async () => {
+    open('one_one', 1);
+    await tick();
     expect(document.querySelector('[data-mark-count]')?.getAttribute('data-mark-count')).toBe('1');
   });
 
@@ -166,20 +171,39 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('draws an OPEN grid as a window: unimportant cells dotted and not playable, the counter reads "?"', () => {
+  it('draws an OPEN grid as a window: the fog is dotted and not playable, the counter reads "?"', () => {
     const { onLost } = open('one_two');
     expect(counter()).toBe('?');
     expect(
       document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
     ).toBe('Nombre de mines inconnu');
-    // The top row touches no number: it is the picture's continuation.
-    for (const i of [0, 1, 2, 3]) expect(cell(i).getAttribute('data-hint')).toBe('far');
-    cell(0).click();
+    // The end of the hidden row is the picture's continuation, and hides a mine.
+    expect(cell(4).getAttribute('data-hint')).toBe('far');
+    cell(4).click();
     flushSync();
     expect(onLost).not.toHaveBeenCalled();
-    expect(cell(0).getAttribute('data-hint')).toBe('far');
+    expect(cell(4).getAttribute('data-hint')).toBe('far');
     // The cells next to a number are the pattern, and stay playable.
-    expect(cell(5).getAttribute('data-hint')).toBeNull();
+    expect(cell(2).getAttribute('data-hint')).toBeNull();
+  });
+
+  it('draws an open cell whose number is hidden as "?", and ignores a tap on it', () => {
+    open('one_two');
+    expect(cell(0).getAttribute('data-hint')).toBe('unknown');
+    expect(cell(0).textContent?.trim()).toBe('?');
+    expect(cell(0).getAttribute('aria-label')).toBe('Chiffre caché : seul le motif compte');
+    cell(0).click();
+    flushSync();
+    expect(cell(0).textContent?.trim()).toBe('?');
+  });
+
+  it('shows "?" on a cell the player opens in an open picture: its number would count the fog', () => {
+    open('one_one');
+    const target = 1 * 5 + 3; // (3,1), the cell the 1-1 makes safe
+    cell(target).click();
+    flushSync();
+    expect(cell(target).getAttribute('data-hint')).toBe('unknown');
+    expect(cell(target).textContent?.trim()).toBe('?');
   });
 
   it('keeps a closed lesson closed: its counter is a number and every cell is playable', () => {
@@ -192,7 +216,7 @@ describe('MinesweeperMiniGrid', () => {
     open('reduction_intro', 0);
     await tick();
     const pills = [...document.querySelectorAll<HTMLElement>('[data-reduced]')];
-    expect(pills.map((p) => p.dataset.reduced)).toEqual(['1', '1']);
+    expect(pills.map((p) => p.dataset.reduced)).toEqual(['1']);
     expect(pills[0].textContent?.trim()).toBe('→ 1');
   });
 

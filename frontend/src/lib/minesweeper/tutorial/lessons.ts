@@ -77,12 +77,6 @@ export interface Lesson {
    */
   open?: boolean;
   /**
-   * A CATALOGUE window holds more than the pattern asks (the reference's pictures are crops of larger boards):
-   * the goal is what the PATTERN concludes, the test holds it to be forced, and the numbers around the pattern
-   * may force more than the goal asks. A tutorial lesson is exact: its goal IS everything forced.
-   */
-  partial?: boolean;
-  /**
    * Marks shown from the start, before any hint: a lesson that teaches a GESTURE (open a cell) shows
    * where. Such a lesson has no deduction to verify, only a safe target.
    */
@@ -136,7 +130,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'flag',
     title: () => m.minesweeper_tutorial_lesson_flag_title(),
     body: () => m.minesweeper_tutorial_lesson_flag_body(),
-    rows: ['000', '011', '01#'],
+    rows: ['000', '01?', '0?#'],
     goal: { reveal: [], flag: [[2, 2]] },
     hints: [
       {
@@ -145,10 +139,7 @@ export const LESSONS: readonly Lesson[] = [
         text: () => m.minesweeper_tutorial_lesson_flag_hint_1(),
       },
       {
-        numbers: [
-          [1, 2],
-          [2, 1],
-        ],
+        numbers: [[1, 1]],
         marks: [mine([2, 2, 1, 1])],
         text: () => m.minesweeper_tutorial_lesson_flag_hint_2(),
       },
@@ -158,7 +149,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'autoflag',
     title: () => m.minesweeper_tutorial_lesson_autoflag_title(),
     body: () => m.minesweeper_tutorial_lesson_autoflag_body(),
-    rows: ['011', '02#', '02#'],
+    rows: ['0??', '02#', '0?#'],
     goal: {
       reveal: [],
       flag: [
@@ -183,7 +174,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'chord',
     title: () => m.minesweeper_tutorial_lesson_chord_title(),
     body: () => m.minesweeper_tutorial_lesson_chord_body(),
-    rows: ['F1.', '121', '.1F'],
+    rows: ['F?.', '?2?', '.?F'],
     goal: {
       reveal: [
         [2, 0],

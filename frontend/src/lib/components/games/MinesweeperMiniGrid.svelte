@@ -10,7 +10,7 @@
     type MinesweeperBoard,
   } from '$lib/minesweeper/game';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
-  import { boardFromLayout } from '$lib/minesweeper/tutorial/layout';
+  import { boardFromLayout, pictureOf } from '$lib/minesweeper/tutorial/layout';
   import { lessonDone, type Lesson, type MarkKind } from '$lib/minesweeper/tutorial/lessons';
   import { m } from '$lib/paraglide/messages';
 
@@ -49,25 +49,24 @@
   let remaining = $state(untrack(() => remainingMines(board)));
 
   /**
-   * THE CELLS THE PICTURE ONLY SUGGESTS, in an open grid: hidden, and no revealed number touches them. Read
-   * once from the picture (opening a cell later does not make one of them part of the pattern).
+   * WHAT THE PICTURE HIDES, read once from it (opening a cell later does not change it): `fog` the cells the
+   * picture only suggests (drawn `~`/`X`, or in an open grid a hidden cell no shown number touches), `unknown`
+   * the open cells whose number is hidden (`?`). Neither can be played: they are there so that the pattern is
+   * the only reasoning the picture allows (owner, 2026-11-27).
    */
-  const far = untrack(() =>
-    board.cells.map((cell, i) => {
-      if (!lesson.open || cell.state === 'revealed') return false;
-      const x = i % board.width;
-      const y = Math.floor(i / board.width);
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          const inside = nx >= 0 && nx < board.width && ny >= 0 && ny < board.height;
-          if ((dx || dy) && inside && board.cells[ny * board.width + nx].state === 'revealed')
-            return false;
-        }
-      }
-      return true;
-    })
+  const { fog: far, unknown } = untrack(() => pictureOf(lesson.rows, lesson.open === true));
+
+  /**
+   * A CELL THE PLAYER OPENS in an open picture shows "?" too (owner, 2026-11-27: *"les nombres en dessous sont
+   * souvent bizarres"*): its number counts the fog beyond the pattern, which the picture does not show anywhere
+   * else, so it would be a number about nothing. The pattern is what tells the cell is safe; that is all it says.
+   */
+  const hiddenAtStart = untrack(() => board.cells.map((cell) => cell.state !== 'revealed'));
+  const opened = $derived(
+    views.views.map(
+      (cell, i) =>
+        lesson.open === true && hiddenAtStart[i] && cell.state === 'revealed' && !cell.mine
+    )
   );
 
   /** The numbers the shown explanation reads, ringed (`read`). */
@@ -132,7 +131,7 @@
   }
 
   function act(index: number, flag: boolean) {
-    if (finished || far[index]) return;
+    if (finished || far[index] || unknown[index] || opened[index]) return;
     const x = index % board.width;
     const y = Math.floor(index / board.width);
     // A number is chorded by a tap whatever the mode: flagging a revealed cell is meaningless.
@@ -186,7 +185,7 @@
           {cell}
           index={i}
           pending={false}
-          highlight={reading[i] ?? (far[i] ? 'far' : null)}
+          highlight={reading[i] ?? (unknown[i] || opened[i] ? 'unknown' : far[i] ? 'far' : null)}
         />
       {/each}
     </div>
