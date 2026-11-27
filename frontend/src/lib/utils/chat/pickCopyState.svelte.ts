@@ -15,7 +15,7 @@
  */
 
 /** The event the native copy dispatches on `window`. */
-export const PICK_COPY_EVENT = 'canari-pick-copy';
+const PICK_COPY_EVENT = 'canari-pick-copy';
 
 /** One decoded native event; `null` from {@link parsePickCopyEvent} for anything else. */
 export type PickCopyEvent =
