@@ -60,7 +60,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   const schema = `trend_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let pool: Pool;
-  const pushes: { to: string; content: PushContent }[] = [];
+  const pushes: { to: string; content: PushContent; data: Record<string, string> }[] = [];
 
   const q = (sql: string, params: unknown[] = []) => admin.query(sql, params);
   const manager = { query: async (sql: string, params?: unknown[]) => (await q(sql, params)).rows };
@@ -87,8 +87,8 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       } as never,
       { manager: m } as never,
       {
-        notifyContent: (to: string, content: PushContent) => {
-          pushes.push({ to, content });
+        notifyContent: (to: string, content: PushContent, data: Record<string, string>) => {
+          pushes.push({ to, content, data });
           return Promise.resolve();
         },
       } as never,
@@ -280,6 +280,11 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     expect(pushes.map((p) => p.to).sort()).toEqual(['grant', 's1', 's2']);
     expect(pushes[0].content.key).toBe('social_campus_trend');
     expect(pushes[0].content.actorName).toBe('');
+    // The device reads the post in the push's DATA: what decides a displayed post's trend is withheld
+    // (`notification-seen-trend.cases.json`) and what opens the post rather than the feed.
+    expect(pushes.map((p) => p.data)).toEqual(
+      Array.from({ length: 3 }, () => ({ type: 'social', postId: P(1) }))
+    );
   });
 
   it('a comment writer counts once, a reactor who also comments once', async () => {

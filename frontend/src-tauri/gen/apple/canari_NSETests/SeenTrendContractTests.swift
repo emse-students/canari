@@ -26,6 +26,11 @@ final class SeenTrendContractTests: XCTestCase {
         book: book, me: c["me"] as? String, contentKey: c["contentKey"] as? String,
         postId: c["postId"] as? String)
       XCTAssertEqual(got, c["expected"] as? Bool, c["name"] as? String ?? "")
+      // Every end is NAMED, and the name is the contract's: the log says which one was reached.
+      let verdict = NotificationService.seenTrendVerdict(
+        book: book, me: c["me"] as? String, contentKey: c["contentKey"] as? String,
+        postId: c["postId"] as? String)
+      XCTAssertEqual(verdict.rawValue, c["reason"] as? String, c["name"] as? String ?? "")
     }
   }
 }
