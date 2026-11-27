@@ -1,6 +1,8 @@
 ## Reading owed - the scroll-to-bottom arrow shows the unread count after a catch-up into a scrolled-up thread
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Built 2026-11-25 (`fix/scroll-arrow-unread-count`). Cause measured by reading the code, not a clock: an
 open conversation in front marks everything it holds as read (the read-mark effect of `MainChatPage`

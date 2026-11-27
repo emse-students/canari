@@ -1,6 +1,6 @@
 ## P2 - rows before ratchet: a device-key change re-seals the state without the holds (review of #3851, 2026-11-19)
 
-target: 1.9.0
+target: 1.8.5
 
 Outside the ledger the decrypt half built
 ([chat](../frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)):

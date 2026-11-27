@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Bomb, Flag, Pickaxe } from '@lucide/svelte';
+  import { Bomb } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import MinesweeperCell from '$lib/components/settings/MinesweeperCell.svelte';
   import {
@@ -10,7 +10,8 @@
     type MinesweeperBoard,
   } from '$lib/minesweeper/game';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
-  import { boardFromLayout } from '$lib/minesweeper/tutorial/layout';
+  import { loadMinesweeperSettings } from '$lib/minesweeper/settings';
+  import { boardFromLayout, pictureOf } from '$lib/minesweeper/tutorial/layout';
   import { lessonDone, type Lesson, type MarkKind } from '$lib/minesweeper/tutorial/lessons';
   import { m } from '$lib/paraglide/messages';
 
@@ -30,9 +31,15 @@
     onSolved: () => void;
     /** Called once, when a mine was opened: the lesson cannot continue, the parent offers to start over. */
     onLost: () => void;
+    /** The player's gestures (`controls.ts`): true, a short press flags and a long press digs. */
+    flagPrimary: boolean;
+    /** Names the gestures for a finger (short / long press) or a mouse (left / right click). */
+    touch: boolean;
+    /** Swaps the two gestures, for here and for the game. */
+    onInvert: () => void;
   }
 
-  let { lesson, hintStep, onSolved, onLost }: Props = $props();
+  let { lesson, hintStep, onSolved, onLost, flagPrimary, touch, onInvert }: Props = $props();
 
   let board = $state.raw<MinesweeperBoard>(untrack(() => boardFromLayout(lesson.rows)));
   let views = $state.raw(
@@ -41,33 +48,35 @@
       EMPTY_CELL_VIEWS
     ).next
   );
-  /** What a tap does: dig (and chord on a number), or flag. A right-click always flags. */
-  let flagMode = $state(false);
+  /** How long a finger stays down before the press is a LONG one: the game's own setting. */
+  const longPressMs = loadMinesweeperSettings().longPressMs;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The click that ends a long press must not run the short press too. */
+  let longPressed = false;
   let finished = false;
 
   /** The mines counter, as the game's HUD draws it: the mines minus the flags, which is not a proof. */
   let remaining = $state(untrack(() => remainingMines(board)));
 
   /**
-   * THE CELLS THE PICTURE ONLY SUGGESTS, in an open grid: hidden, and no revealed number touches them. Read
-   * once from the picture (opening a cell later does not make one of them part of the pattern).
+   * WHAT THE PICTURE HIDES, read once from it (opening a cell later does not change it): `fog` the cells the
+   * picture only suggests (drawn `~`/`X`, or in an open grid a hidden cell no shown number touches), `unknown`
+   * the open cells whose number is hidden (`?`). Neither can be played: they are there so that the pattern is
+   * the only reasoning the picture allows (owner, 2026-11-27).
    */
-  const far = untrack(() =>
-    board.cells.map((cell, i) => {
-      if (!lesson.open || cell.state === 'revealed') return false;
-      const x = i % board.width;
-      const y = Math.floor(i / board.width);
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          const inside = nx >= 0 && nx < board.width && ny >= 0 && ny < board.height;
-          if ((dx || dy) && inside && board.cells[ny * board.width + nx].state === 'revealed')
-            return false;
-        }
-      }
-      return true;
-    })
+  const { fog: far, unknown } = untrack(() => pictureOf(lesson.rows, lesson.open === true));
+
+  /**
+   * A CELL THE PLAYER OPENS in an open picture shows "?" too (owner, 2026-11-27: *"les nombres en dessous sont
+   * souvent bizarres"*): its number counts the fog beyond the pattern, which the picture does not show anywhere
+   * else, so it would be a number about nothing. The pattern is what tells the cell is safe; that is all it says.
+   */
+  const hiddenAtStart = untrack(() => board.cells.map((cell) => cell.state !== 'revealed'));
+  const opened = $derived(
+    views.views.map(
+      (cell, i) =>
+        lesson.open === true && hiddenAtStart[i] && cell.state === 'revealed' && !cell.mine
+    )
   );
 
   /** The numbers the shown explanation reads, ringed (`read`). */
@@ -131,14 +140,28 @@
     }
   }
 
-  function act(index: number, flag: boolean) {
-    if (finished || far[index]) return;
+  /**
+   * THE GAME'S GESTURES (owner, 2026-11-27): a short press (a left click) digs, or flags when the player chose
+   * the flag first; a long press (a right click) does the other. A short press on a number chords it whatever
+   * the choice, as in the game.
+   */
+  function act(index: number, long: boolean) {
+    if (finished || far[index] || unknown[index] || opened[index]) return;
     const x = index % board.width;
     const y = Math.floor(index / board.width);
-    // A number is chorded by a tap whatever the mode: flagging a revealed cell is meaningless.
-    if (flag && board.cells[index].state !== 'revealed') toggleFlag(board, x, y);
+    const flag = long !== flagPrimary;
+    if (board.cells[index].state === 'revealed') {
+      // A short press on a number always chords it, as in the game; a long press only when it digs.
+      if (long && !flagPrimary) return;
+      revealCell(board, x, y);
+    } else if (flag) toggleFlag(board, x, y);
     else revealCell(board, x, y);
     commit();
+  }
+
+  function clearLongPress() {
+    if (longPressTimer) clearTimeout(longPressTimer);
+    longPressTimer = null;
   }
 
   function indexOf(event: Event): number | null {
@@ -147,15 +170,46 @@
   }
 
   function handleClick(event: MouseEvent) {
+    clearLongPress();
+    if (longPressed) {
+      longPressed = false;
+      return;
+    }
     const i = indexOf(event);
-    if (i !== null) act(i, flagMode);
+    if (i !== null) act(i, false);
   }
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault();
+    // A finger's long press already ran; the contextmenu it raises must not run it twice.
+    if (longPressed) return;
     const i = indexOf(event);
     if (i !== null) act(i, true);
   }
+
+  /** A finger held on a cell for the game's long-press time is a long press. */
+  function handlePointerDown(event: PointerEvent) {
+    if (event.pointerType !== 'touch') return;
+    const i = indexOf(event);
+    if (i === null) return;
+    longPressed = false;
+    clearLongPress();
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      longPressed = true;
+      act(i, true);
+    }, longPressMs);
+  }
+
+  const dig = m.minesweeper_controls_action_dig();
+  const flagWord = m.minesweeper_controls_action_flag();
+  /** What each gesture does, said once under the grid. */
+  const gestures = $derived.by(() => {
+    const [short, long] = flagPrimary ? [flagWord, dig] : [dig, flagWord];
+    return touch
+      ? m.minesweeper_controls_touch({ short, long })
+      : m.minesweeper_controls_mouse({ short, long });
+  });
 </script>
 
 <div class="flex flex-col items-center gap-3">
@@ -180,13 +234,17 @@
       aria-label={m.minesweeper_tutorial_grid_label()}
       onclick={handleClick}
       oncontextmenu={handleContextMenu}
+      onpointerdown={handlePointerDown}
+      onpointerup={clearLongPress}
+      onpointercancel={clearLongPress}
+      onpointerleave={clearLongPress}
     >
       {#each views.views as cell, i (i)}
         <MinesweeperCell
           {cell}
           index={i}
           pending={false}
-          highlight={reading[i] ?? (far[i] ? 'far' : null)}
+          highlight={reading[i] ?? (unknown[i] || opened[i] ? 'unknown' : far[i] ? 'far' : null)}
         />
       {/each}
     </div>
@@ -224,24 +282,19 @@
     </div>
   </div>
 
-  <div class="flex items-center gap-1" role="group" aria-label={m.minesweeper_mode_hint()}>
+  <!-- The gestures, said once and kept quiet (owner, 2026-11-27: the mode buttons were too prominent). -->
+  <p
+    class="text-text-muted flex flex-wrap items-center justify-center gap-x-2 text-xs"
+    data-testid="tutorial-gestures"
+  >
+    <span>{gestures}</span>
     <Button
-      size="compact"
-      variant={flagMode ? 'ghost' : 'secondary'}
-      aria-pressed={!flagMode}
-      onclick={() => (flagMode = false)}
+      variant="bare"
+      class="text-accent-text font-semibold hover:underline"
+      onclick={onInvert}
+      data-testid="tutorial-invert"
     >
-      <Pickaxe size={16} strokeWidth={2.25} />
-      {m.minesweeper_mode_dig()}
+      {m.minesweeper_controls_invert()}
     </Button>
-    <Button
-      size="compact"
-      variant={flagMode ? 'secondary' : 'ghost'}
-      aria-pressed={flagMode}
-      onclick={() => (flagMode = true)}
-    >
-      <Flag size={16} strokeWidth={2.25} />
-      {m.minesweeper_mode_flag()}
-    </Button>
-  </div>
+  </p>
 </div>

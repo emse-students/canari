@@ -280,9 +280,13 @@ pub(crate) fn remove_conversation_nicknames_of(dir: &Path, owner: &str) -> Resul
 /// The nickname a notification gives `member` in a conversation, read from the file's parsed root -
 /// the contract's lookup (`libs/contracts/notification-nickname.cases.json`), the same as the Kotlin,
 /// Swift and ObjC readers. `salon` says `conversation` is a salon id (its `channel_` prefix allowed),
-/// read through `channels`; otherwise it is an MLS group id, itself the scope. Rust composes no
-/// banner, so this exists to hold the writer to the readers' rule in its own tests.
-#[cfg_attr(not(test), allow(dead_code))]
+/// read through `channels`; otherwise it is an MLS group id, itself the scope. It holds the writer to
+/// the readers' rule in its own tests, and names each member of an unnamed group's push title
+/// (`mobile/unnamed_group_label.rs`, a mobile build's only caller).
+#[cfg_attr(
+    not(any(test, target_os = "android", target_os = "ios")),
+    allow(dead_code)
+)]
 pub(crate) fn lookup_conversation_nickname(
     root: &serde_json::Value,
     me: Option<&str>,

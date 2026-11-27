@@ -1,6 +1,6 @@
 ## P3 - The edges of the lost-invitation re-plan and its add lock (reviews of #2426, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 What the re-plan of a kept invitation leaves open ([mls-protocol](../protocols/mls-protocol.md#an-invitation-whose-kept-commit-did-not-land-is-re-planned-or-the-member-is-told-2026-10-25)). None is built.
 

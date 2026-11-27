@@ -1,6 +1,6 @@
 ## P2 - A device's one-time KeyPackage pool is topped up only when it connects (measured 2026-10-25, after the stable)
 
-target: 1.9.0
+target: 1.8.6
 
 The server serves a joiner's one-time KeyPackage from a per-device pool and falls back to the
 static last-resort row when the pool is empty (`[KP] one-time pool EMPTY ... serving the static

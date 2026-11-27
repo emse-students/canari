@@ -1,6 +1,6 @@
 ## P3 - the bubble-action and observation helpers live in one runner (`mut.mjs`)
 
-target: 1.10.0
+target: 1.9.2
 
 Waits for a wholesale rig change, because moving helpers into `chat.mjs` invalidates MSG, TYPE, READ and
 MUT under rule 33 ([detail](../cross-client-harness-findings.md#the-bubble-action-and-observation-helpers-live-in-one-runner)).

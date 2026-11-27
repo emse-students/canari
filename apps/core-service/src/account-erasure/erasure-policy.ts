@@ -95,6 +95,56 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   // deleting it would leave that account behind. Where the erased account was the admin who merged,
   // the row keeps the merge without the admin's id. The table has an entity (`AlumniMerge`), so a
   // stack built by `synchronize` has it too.
+  //
+  // ITS SIBLING-SITE JOBS FIRST (D54, migration 030), and nothing cascades to them: the jobs a site
+  // already settled go with the merge's history; a job still OWED becomes an `erase` of the
+  // duplicate's account on that site, the target's subject blanked - a transfer onto an erased person
+  // is no longer owed, and the duplicate's account there must not outlive the merge. The merge row's
+  // deletion below then only nulls the job's `mergeId` (ON DELETE SET NULL).
+  //
+  // THE TARGET'S MERGE ROWS ARE LOCKED FIRST. `AlumniMergeService.complete` closes a merge and writes
+  // its jobs in one transaction; without this lock a close committing between two statements below
+  // would leave transfer jobs naming an erased person. With it, a close in flight commits before the
+  // statements below run (each reads its own snapshot, so they see its jobs), and a close that comes
+  // after waits for this transaction and reads the blanked target from its own UPDATE.
+  {
+    label: 'alumni_merges_lock',
+    sql: `SELECT id FROM alumni_merges
+           WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1)
+           FOR UPDATE`,
+  },
+  {
+    label: 'alumni_merge_site_jobs_done',
+    sql: `DELETE FROM alumni_merge_site_jobs WHERE "completedAt" IS NOT NULL
+            AND "mergeId" IN (SELECT id FROM alumni_merges
+              WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
+  {
+    label: 'alumni_merge_site_jobs_owed',
+    sql: `UPDATE alumni_merge_site_jobs
+            SET kind = 'erase', "targetSubject" = NULL, "blockedAt" = NULL, "unreadySince" = NULL,
+                attempts = 0, "lastError" = NULL,
+                "nextAttemptAt" = GREATEST("nextAttemptAt", now())
+          WHERE "completedAt" IS NULL AND "mergeId" IN (SELECT id FROM alumni_merges
+              WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
+  // The Alumni duplicates' queue flags (migration 031), BEFORE the merge rows below are deleted or
+  // blanked: the flag of the erased account as a DUPLICATE (found by its MiConnect uuid, read from the
+  // `users` row), and the flag of any duplicate that a LIVE merge names this account the TARGET of (a
+  // cancelled merge ties nothing: that duplicate waits again, and is not this account's). A flag
+  // holds only a MiConnect uuid, and goes with either account (register M1) - EXCEPT a DISMISSED one
+  // ("Pas un doublon"): it holds the uuid and the dismissal time and nothing else, and deleting it
+  // would put the account back in the admins' queue and push it again (the lead's reading, 2026-11-27).
+  {
+    label: 'alumni_duplicate_flags',
+    sql: `DELETE FROM alumni_duplicate_flags
+            WHERE "dismissedAt" IS NULL
+              AND ("duplicateUuid"::text = (SELECT "miconnectUuid" FROM users WHERE id = $1)
+                OR "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM alumni_merges
+                    WHERE ("targetUserId" = $1
+                       OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))
+                      AND "cancelledAt" IS NULL))`,
+  },
   {
     label: 'alumni_merges',
     sql: `DELETE FROM alumni_merges WHERE "completedAt" IS NOT NULL
@@ -102,7 +152,8 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   },
   {
     label: 'alumni_merges_open',
-    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2 WHERE "completedAt" IS NULL
+    // The admin's reason may name the target (a married name, an e-mail exchange): blanked with it.
+    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2, "targetSubject" = NULL, reason = NULL WHERE "completedAt" IS NULL
             AND ("targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
     replacement: DELETED_ACCOUNT,
   },

@@ -1,6 +1,6 @@
 ## P2 - The unpriced base tier: does it rank lowest, or must it be priced before a sibling links to it?
 
-target: 1.10.0
+target: 1.9.1
 
 Filed 2026-10-29 by the #2546 review and the owner's review of `1.5.1-alpha.7`; the cleanups and the
 typed form items filed with it shipped on 2026-11-25 (one money formatter, `ProductPrice` read as a

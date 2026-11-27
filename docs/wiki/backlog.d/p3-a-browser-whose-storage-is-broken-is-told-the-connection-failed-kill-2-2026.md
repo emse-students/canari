@@ -1,6 +1,6 @@
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 When the browser serves no storage at all - `indexedDB` and `navigator.storage.estimate()` both
 throw `Internal error`, `localStorage` an empty in-memory store - the page boots to the PIN gate

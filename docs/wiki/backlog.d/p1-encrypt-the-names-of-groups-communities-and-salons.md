@@ -1,6 +1,6 @@
 ## P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)
 
-target: 1.9.0
+target: 1.8.5
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
@@ -54,6 +54,15 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
   1. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
      native naming, and the invite preview API's `groupName`. It ships behind the minimum version
      decided below (`1.7.2`, the stable carrying step 2). About 1 week.
+     **The native unnamed-group discriminator breaks with it** (review of #4188, 2026-11-27): a
+     dead app's push titles a group by its members' first names when the push names no group AND
+     declares one (`groupName` empty and `isGroup` true). Once the server knows NO group's name,
+     every group push is "empty", so a NAMED group would be titled by its members. The test must
+     then become a fact the DEVICE holds - whether this group has a name it sealed (e.g. the name
+     copy the native side reads, keyed by group) - at the three call sites that make it:
+     `presentFrame` (`titleName`, `CanariFirebaseMessagingService.kt`), `handleMlsMessage`
+     (`titleName`, `canari_NSE/NotificationService.swift`) and `CanariHandleMlsMessage` (`titleName`,
+     `Sources/canari/canari_push.mm`).
   2. A HELD migration nulls `dm_groups.name`, with a before and after count. About 1 day plus the
      owner's line.
   3. The sealed community state: name, photo, salons, role labels and nicknames under a key-group key.

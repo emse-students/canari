@@ -1,6 +1,6 @@
 ## The shop screens - decided by the user on 2026-10-26: built, what is left (audited 2026-11-19)
 
-target: 1.9.0
+target: 1.9.1
 
 **Built** since the first real Cercle top-up (2026-10-26): one membership card with its tiers inside it
 (`MembershipCard.svelte`, #2546); the rise priced by the admin's preferential price, with the server

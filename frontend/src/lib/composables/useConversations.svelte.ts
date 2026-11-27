@@ -30,11 +30,15 @@ import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
   chat_unopenable_start_again_failed,
+  common_delete_button,
+  conversation_self_delete_confirm,
   group_rename_failed,
   group_rename_failed_clock,
   group_rename_pending,
 } from '$lib/paraglide/messages';
 import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
+import { showConfirm } from '$lib/stores/confirm.svelte';
+import type { PendingGroupExit } from '$lib/db/types';
 import { showToast } from '$lib/stores/toast.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
@@ -365,6 +369,15 @@ export function useConversations() {
   }
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
+    // EVERY DECLARATION IS SAID, because it is the only thing that can make a load unjoinable: one
+    // open that fetched the same page several times (S17, 2026-11-20) left no line naming who
+    // declared the salon stale in between, so the overlap could not be named from the log.
+    Log.d(
+      'CHANNEL',
+      `history of ${channelConversationId ? channelConversationId.slice(0, 16) : 'every salon'} declared stale (${
+        salonLoadsInFlight.size
+      } load(s) in flight)`
+    );
     if (channelConversationId) {
       staleBySalon.set(channelConversationId, (staleBySalon.get(channelConversationId) ?? 0) + 1);
       channelHistoryLoadedAt.delete(channelConversationId);
@@ -844,6 +857,7 @@ export function useConversations() {
       ...(m.isEdited ? { isEdited: true } : {}),
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
+      ...(m.everyoneVouched ? { everyoneVouched: true } : {}),
     }));
     // THE PARENT ROW FIRST: the salon listing builds a salon's conversation in MEMORY only
     // (`useChannelWorkspaces`), so the row of a salon this device meets for the first time is not on
@@ -912,6 +926,18 @@ export function useConversations() {
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
+    // A LOAD THAT STARTS IS A DECISION, and the reason it did not join is the answer to "why did one
+    // open fetch the page twice": `force`, the press, and what the load in flight was (sent before
+    // the last stale declaration, or none at all).
+    ctx.log(
+      `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} starts (generation ${generation}, ${
+        force ? 'forced' : atTap ? 'at the tap' : 'not forced'
+      }, ${
+        running
+          ? `the one in flight is not joined: stale declaration ${staleDeclarationsOf(channelConversationId)} is newer than its request`
+          : 'none in flight'
+      })`
+    );
     let finishLoad: () => void = () => {};
     const inFlight = {
       sentAt: null as number | null,
@@ -1071,6 +1097,7 @@ export function useConversations() {
             serverTimestamp: decoded.message.serverTimestamp,
             isOwn: decoded.message.isOwn,
             isSystem: decoded.message.isSystem,
+            ...(decoded.message.everyoneVouched ? { everyoneVouched: true } : {}),
           });
         }
         return { loaded, clientIdOf, edits, pollMetas };
@@ -2391,7 +2418,7 @@ export function useConversations() {
     convo: Conversation,
     serverAction: (mlsService: IMlsService) => Promise<void>,
     label: string,
-    exitKind: 'delete' | 'leave',
+    exitKind: PendingGroupExit['kind'],
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
@@ -2431,10 +2458,11 @@ export function useConversations() {
     // itself, and every ordinary flush withdraw the group's rows - so a kill before this drain leaves
     // nothing that the relaunch's replay of the exit could race into a 403. The leave's own `memberLeft` notice is not in the outbox: it is a direct send whose
     // acceptance `leaveGroupAndBroadcast` awaits.
-    await drainOutboxForExit(convo.id, exitKind).catch((e: unknown) =>
-      ctx.log(
-        `[${label}] outbox of ${convo.id.slice(0, 8)}… NOT settled before the server step - any entry left will be refused once the membership ends: ${String(e)}`
-      )
+    await drainOutboxForExit(convo.id, exitKind === 'leave' ? 'leave' : 'delete').catch(
+      (e: unknown) =>
+        ctx.log(
+          `[${label}] outbox of ${convo.id.slice(0, 8)}… NOT settled before the server step - any entry left will be refused once the membership ends: ${String(e)}`
+        )
     );
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
@@ -2530,18 +2558,29 @@ export function useConversations() {
    * Opens "Mes notes", creating it the first time (`createSelfConversation`). The row is drawn in
    * the list whether or not this device holds it yet, so this is the one gesture behind it.
    * Forwards the outcome: `self-conversation-arriving` is said to the reader, not swallowed.
+   *
+   * `silent` creates or finds it without selecting it - the notepad's move posts into it from the
+   * background (`notepadMigration.ts`), and a conversation opening by itself would take the screen.
    */
-  async function openSelfConversation(ctx: ConversationContext): Promise<ConversationOutcome> {
-    ctx.log('[SELF] open requested');
+  async function openSelfConversation(
+    ctx: ConversationContext,
+    opts: { silent?: boolean } = {}
+  ): Promise<ConversationOutcome> {
+    const silent = opts.silent === true;
+    ctx.log(`[SELF] ${silent ? 'held or created for a background post' : 'open requested'}`);
     // A FOLLOWER TAB HANDS THE CREATION TO THE LEADER, which alone may commit (`tabCommitDelegation`).
     // A row this tab already draws is simply opened: opening commits nothing.
     const held = findSelfConversation(conversations);
     if (held) {
-      selectConversationWithCtx(held[0], ctx);
+      if (!silent) selectConversationWithCtx(held[0], ctx);
       return { ok: true, key: held[0] };
     }
     if (getTabLeadership() === 'follower') {
-      return createThroughLeader(() => delegateCommitToLeader({ kind: 'create-self' }), ctx, false);
+      return createThroughLeader(
+        () => delegateCommitToLeader({ kind: 'create-self' }),
+        ctx,
+        silent
+      );
     }
     return createSelf({
       mlsService: ctx.ensureMls(),
@@ -2550,7 +2589,9 @@ export function useConversations() {
       deviceKeyB64: ctx.deviceKeyB64,
       historyBaseUrl: ctx.historyBaseUrl,
       conversations,
-      selectConversation: (name) => selectConversationWithCtx(name, ctx),
+      selectConversation: silent
+        ? (name) => ctx.log(`[SELF] ${name.slice(0, 8)}... ready, left unselected (background)`)
+        : (name) => selectConversationWithCtx(name, ctx),
       saveConversation: (name) => saveConversation(name, ctx),
       log: ctx.log,
     });
@@ -3133,6 +3174,47 @@ export function useConversations() {
   }
 
   /**
+   * Deletes "Mes notes" on every device of the account (owner, 2026-11-22: a self row has no
+   * settings, so this is its one delete): the same exit as a group's - retired first, owed durably,
+   * the server's answer classified - with the kind the server requires stated (`?kind=self`), in the
+   * call and in the owed row (`delete-self`) its replay reads. ASKED FIRST: nothing on the server can
+   * bring the notes back (charter principle 2), so the dialog is the only chance to notice.
+   */
+  async function handleDeleteSelfConversation(ctx: ConversationContext) {
+    if (!selectedContact) return;
+    const key = selectedContact;
+    const convo = conversations.get(key);
+    if (!convo || convo.conversationType !== 'self') {
+      ctx.log(`[DELETE_SELF] ${key.slice(0, 8)}... is not "Mes notes" - nothing deleted`);
+      return;
+    }
+    const confirmed = await showConfirm(conversation_self_delete_confirm(), {
+      danger: true,
+      confirmLabel: common_delete_button(),
+    });
+    if (!confirmed) {
+      ctx.log(`[DELETE_SELF] ${convo.id.slice(0, 8)}... declined at its confirmation`);
+      return;
+    }
+    await exitGroupAndCleanup(
+      key,
+      convo,
+      (mls) =>
+        deleteGroupAndBroadcast({
+          mlsService: mls,
+          groupId: convo.id,
+          userId: ctx.userId,
+          deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
+          kind: 'self',
+        }),
+      'DELETE_SELF',
+      'delete-self',
+      ctx
+    );
+  }
+
+  /**
    * Deletes the conversation locally only (IndexedDB + reactive map), with no server call and
    * no MLS broadcast.
    *
@@ -3506,6 +3588,8 @@ export function useConversations() {
     handleSetGroupImage,
     /** Deletes the currently selected group and clears the UI. */
     handleDeleteGroup,
+    /** Deletes "Mes notes" on every device of the account, after a confirmation. */
+    handleDeleteSelfConversation,
     /** Removes only the local conversation entry (no server call). Used when the group was deleted remotely. */
     handleDeleteGroupLocally,
     handleStartAgainWithSamePeople,

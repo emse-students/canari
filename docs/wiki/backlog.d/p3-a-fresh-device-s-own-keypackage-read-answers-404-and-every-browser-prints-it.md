@@ -1,6 +1,6 @@
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 `awaitOwnKeyPackagePublished` (`BaseMlsService.ts`) reads `fetchDeviceKeyPackage(self)` before an
 external join, and on a device that has not published yet the delivery service answers 404 with its

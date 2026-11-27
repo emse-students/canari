@@ -183,6 +183,8 @@ jobs:
           HANDOFF_SIGNING_KEY: ${{ secrets.HANDOFF_SIGNING_KEY }}
           # The READ-ONLY MiConnect account a handoff mint asks whether the user may enter (F3-bound).
           MICONNECT_READER_TOKEN: ${{ secrets.MICONNECT_READER_TOKEN }}
+          # The shared secret MiConnect's push of a completed Alumni merge carries (D54, 85-alumni-merge-push.yaml).
+          MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET: ${{ secrets.MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET }}
           GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}

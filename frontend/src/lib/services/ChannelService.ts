@@ -371,6 +371,11 @@ export interface ChannelMessageRow {
    * the client decodes it like any other, and a reaction frame is routed to the reaction store.
    */
   silent?: boolean;
+  /**
+   * The server vouched for this row's `@tous` (the sender held the moderation grant when it was
+   * sent). Optional because the field is newer than the route; absent is not vouched.
+   */
+  mentionsEveryone?: boolean;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';

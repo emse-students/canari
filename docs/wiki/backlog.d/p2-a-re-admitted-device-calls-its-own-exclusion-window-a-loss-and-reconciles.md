@@ -1,6 +1,6 @@
 ## P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (2026-08-26, widened 2026-08-30)
 
-target: 1.9.0
+target: 1.8.5
 
 Not built (queued by the user on 2026-10-10: designed in the wiki first, then built under an adversarial review): an ENTITLEMENT FLOOR per group at every entitlement START (re-admission AND a fresh device after
 a revocation wipe), keyed on the stream position or a surfaced frame epoch. Confirm with GRP-8 AND

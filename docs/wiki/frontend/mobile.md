@@ -1541,8 +1541,8 @@ notifications](https://developer.apple.com/documentation/usernotifications/imple
    when there is one -, the image = the face file the attachment used, else the initials disc as PNG
    bytes); `conversationIdentifier` = `c:<groupId>`, the share suggestions' id, so a conversation the
    share sheet offers from these donations reaches the Share Extension in the shape it reads; for a
-   group, `speakableGroupName` = the title the banner uses (an unnamed group's "Conversation de
-   groupe") and ONE recipient standing for "the others" (below); `content` nil. A proven mention of
+   group, `speakableGroupName` = the title the banner uses (an unnamed group's members' first names,
+   else "Conversation de groupe") and ONE recipient standing for "the others" (below); `content` nil. A proven mention of
    the member sets `INSendMessageIntentDonationMetadata.mentionsCurrentUser`.
 3. `INInteraction(intent:)`, direction `.incoming`, group identifier
    `fr.emse.canari.message-notifications`, `donate`. **Only in the donation's completion** is the
@@ -1633,6 +1633,42 @@ donate the leaving account's sender again. So:
   Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one. **The expiry
   blanks too**: a run that drew a message records whose account it names (`namesContentOf`), and
   `serviceExtensionTimeWillExpire` blanks it when `signedInUserId` no longer names that account.
+- **The extension erases its own donations: the app cannot (2026-11-27).** On `1.8.2` (iPhone 12)
+  the sign-out's group delete and `deleteAll` both answered success from the APP process, the app's
+  five share suggestions left the sheet, and two senders the extension had donated stayed:
+  `INInteraction.delete` reaches what the CALLING bundle donated, and the extension is another
+  bundle ([the entry](../backlog.d/p2-the-share-sheet-still-offers-the-previous-account-s-sender-after-a-sign-out.md)).
+  So the extension keeps a ledger in the App Group store:
+  - `message_donations_owner` names the account whose senders its group holds, written BEFORE
+    every donation (`recordDonationsOwner`). A run donates nothing (no communication style, a
+    `debug` line) while an erase is in flight in the process, while the pre-ledger erase below is
+    not done, while the ledger still names another account, or when the ledger cannot be written
+    (that one says ERROR).
+  - **Every run, before it dispatches anything** (`settleMessageDonations`, from `didReceive`),
+    decides on ids and one file's existence (`donationLedgerStep`): the owner is no longer the
+    account `push_context.json` names (a sign-out stripped it, or another account signed in) ->
+    erase; no owner and no `message_donations_ledger_era` marker (an install from `1.8.2` or older,
+    whose donations name nobody) -> erase once, then write the marker. The erase deletes exactly
+    the extension's own group (never `deleteAll`: the allowlist); on success it removes the ledger
+    only if it still names the account erased, or writes the marker.
+  - **No run waits on another.** The in-flight flag only stops donations; a run that meets it
+    proceeds at once. The flag is reset by the erase's completion on success and failure alike, and
+    the erasing run's own continuation then runs on a global queue. A completion that never comes
+    costs that one run, which the system's expiry delivers.
+  - **A permanent erase failure** (the delete keeps failing) is one ERROR per push, from the settle:
+    `the donations of an account no longer signed in were not erased ... kept owed`. The ledger and
+    the marker stay as they were, so every run tries again, and no run donates meanwhile: the
+    banners stay plain (no face, no communication style) until a delete succeeds. That is the end
+    state, by design - privacy before the style (principle 1).
+  - **An overtaken donation it cannot withdraw** (`INInteraction.delete(with: [id])` failed after a
+    sign-out) names its account in the ledger again (`reassertDonationsOwner`), so the next run
+    erases the group for it.
+  - The share extension does NOT read the ledger: a leftover sender preselects nothing in the page,
+    which preselects only a conversation the signed-in account holds
+    ([sharing](sharing.md#share-suggestions-ios---lot-s5)). **What the ledger cannot do:** run
+    without a push. The senders stay in the sheet until the extension's next run: a push the server
+    sends before its deregistration lands, or the next account's first one, which erases before it
+    donates. Verified by compiling only in CI; the reading is in the entry.
 - **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
   and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
   same erase.
@@ -3198,7 +3234,11 @@ them. The name never rides the push and is never fetched on the push path (user 
   `removed`; Rust drops it from the stored names, so a banner says "someone" (the web says "deleted
   account"). The phone only learns it when its app next asks for that id; a name stored before
   that stays until then.
-- **The file**: `{"userId": <owner>, "names": {<id>: <name>}}`, merged per owner, capped at 2000
+- **The file**: `{"userId": <owner>, "names": {<id>: <name>}, "firstNames": {<id>: <first name>}}`,
+  `firstNames` only beside a kept name, and dropped when a write changes that name without carrying
+  a first name (2026-11-27: what a dead app's push titles an UNNAMED group
+  by, [chat](modules/chat.md#an-unnamed-group-no-name-stored-the-members-first-names-drawn); the
+  mention readers ignore it), merged per owner, capped at 2000
   names (this write's names kept first, then the stored ones in key order - NOT "the most recent":
   inside one oversized batch, key order decides which stay), written by temp file + rename. On iOS the command also
   writes the App Group copy the extension reads, at the call rather than at the next lifecycle
@@ -3571,7 +3611,10 @@ trigger (`notificationIsGroup`, carried through `notify_native_message` as a nul
 `java.lang.Boolean`), and `true` for every salon push. Absent (an older server, a row it could not
 read, a row with no type, a reaction), the name rule decides as before. Without it, an unnamed
 three-person group took the one-to-one shape on API 30+: no face per speaker, and the top speaker's name
-hidden under a header naming them as if they were the peer. An UNNAMED group is titled **"Conversation
+hidden under a header naming them as if they were the peer. An UNNAMED group is titled by its other
+members' first names on a decrypted push since 2026-11-27, composed on the phone by one Rust call
+both platforms make ([chat](modules/chat.md#an-unnamed-group-no-name-stored-the-members-first-names-drawn));
+when that has no label (an unreadable message, a member the phone never named) it is titled **"Conversation
 de groupe" / "Group conversation"** (`notif_unnamed_group`, `notif.group.unnamed`) on both platforms,
 never with its first speaker - which is what a DM looks like. The failed-reply re-post
 (`repostReplyPending`) now keeps the conversation shortcut (`existing.shortcutId`), so it no longer

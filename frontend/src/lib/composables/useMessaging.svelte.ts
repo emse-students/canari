@@ -2287,6 +2287,7 @@ export function useMessaging() {
       serverTimestamp: options.serverTimestamp,
       ...(options.salonEcho ? { awaitingServerId: true } : {}),
       ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
+      ...(options.everyoneVouched === true ? { everyoneVouched: true } : {}),
     };
     // The author's signature and the unverified marker live in the STORED row only (sealed), so
     // every write of this message below carries them.
@@ -3175,6 +3176,7 @@ export function useMessaging() {
           isSystem,
           ingestSequence: pm.ingestSequence,
           ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+          ...(pm.everyoneVouched === true ? { everyoneVouched: true } : {}),
         },
         waiting.get(id) ?? []
       );

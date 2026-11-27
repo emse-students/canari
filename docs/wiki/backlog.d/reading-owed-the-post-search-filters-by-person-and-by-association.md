@@ -1,6 +1,8 @@
 ## Reading owed - the post search filters by person and by association (owner, 2026-11-19)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Built 2026-11-26 (`feat/post-search-filters`): `GET /api/posts/search` takes `authorId` and `associationId`
 beside the words, the page draws two filter buttons under the search field, each becoming a removable chip

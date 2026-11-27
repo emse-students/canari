@@ -1,6 +1,6 @@
 ## P2 - a catch-up still pays one store round trip per reaction and per read mark
 
-target: 1.9.0
+target: 1.8.6
 
 Measured on the owner's Android `1.7.3` catch-up (148 frames, ~10 s): 34 reactions at ~75 ms
 (`applyReactionFrame` stores each before its handler returns) and the peer's read marks at ~65 ms

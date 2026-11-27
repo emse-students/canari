@@ -1,6 +1,6 @@
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 `assertCallerActsOnGroup` (`utils/group-membership.ts`) and the private member checks of
 `invitations.controller.ts` and `members.controller.ts` (`assertCallerIsGroupMember`,

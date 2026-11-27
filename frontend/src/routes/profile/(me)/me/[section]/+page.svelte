@@ -9,7 +9,6 @@
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import ProfileFollowersSection from '$lib/components/profile/ProfileFollowersSection.svelte';
   import ProfileInfoSection from '$lib/components/profile/ProfileInfoSection.svelte';
-  import ProfileNotepadSection from '$lib/components/profile/ProfileNotepadSection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileSubscriptionsSection from '$lib/components/profile/ProfileSubscriptionsSection.svelte';
@@ -74,8 +73,6 @@
           onChanged={() => model.reloadRoleHistory()}
         />
       </ProfileCard>
-    {:else if section === 'notepad'}
-      <ProfileNotepadSection />
     {:else if section === 'sponsorship'}
       <ProfileCard
         icon={Users}

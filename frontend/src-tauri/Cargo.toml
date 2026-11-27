@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.8.2-alpha.9"
+version = "1.8.3-alpha.1"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -63,6 +63,10 @@ aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 log = "0.4"
+# The collation key of an unnamed group's label (NFD, combining marks removed), so a push drawn while
+# the app is dead orders the names as the app does - `mobile/unnamed_group_label.rs`. Already in the
+# lock through `stringprep` (sqlx); named here because it is now used directly.
+unicode-normalization = "0.1"
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "net", "time", "macros"] }
 
 [patch.crates-io]

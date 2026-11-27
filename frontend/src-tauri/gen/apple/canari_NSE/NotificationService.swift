@@ -143,7 +143,11 @@ class NotificationService: UNNotificationServiceExtension {
     let userInfo = request.content.userInfo
     let type = Self.string(userInfo["type"]) ?? "message"
     NseLog.log.notice("[CanariNSE] didReceive type=\(type, privacy: .public)")
-    dispatch(type: type, userInfo: userInfo, content: content)
+    // Every run first erases what this extension donated for an account no longer signed in -
+    // the one process that can (`settleMessageDonations`).
+    Self.settleMessageDonations {
+      self.dispatch(type: type, userInfo: userInfo, content: content)
+    }
   }
 
   /// Everything a push's payload can ask of this extension, whether it arrived in the push itself or
@@ -396,7 +400,8 @@ class NotificationService: UNNotificationServiceExtension {
     // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
     // shape: fixed sentences, nothing variable (the content-free rule).
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
-      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report",
+      "social_admin_alumni_duplicate":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),
@@ -1343,13 +1348,69 @@ class NotificationService: UNNotificationServiceExtension {
     if let msg = decrypted {
       noteAnnouncement(conversation: groupId, senderId: senderId, at: msg.sentAt)
     }
+    // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
+    // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up; nothing
+    // about it rode the push. The cache row above keeps the push's empty name. Android twin:
+    // `titleName` in `presentFrame`.
+    let titleName =
+      groupName.isEmpty && isGroup == true
+      ? (Self.unnamedGroupTitle(groupId: groupId, decrypted: decrypted, ctx: ctx) ?? groupName)
+      : groupName
     applyMessageContent(
-      content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
+      content: content, senderName: shownName, groupName: titleName, declaredGroup: isGroup,
       body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
       level: Self.levelDecision(
         level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
         groupId: groupId))
+  }
+
+  /// The title of a push for an UNNAMED group - its other members' first names, the app's label - or
+  /// nil, when the banner keeps "Conversation de groupe".
+  ///
+  /// Composed by Rust (`canari_native_unnamed_group_title`, the one native copy of the app's rule)
+  /// from the current tree the decrypt of `decrypted` caught up to and the App Group's name copies; nothing about it rode the
+  /// push. A message this extension could not open has no tree to read. Every reason there is none is
+  /// said here: Rust's own log reaches no logger in the extension. Android twin:
+  /// `CanariFirebaseMessagingService.unnamedGroupTitle`.
+  private static func unnamedGroupTitle(
+    groupId: String, decrypted: DecryptResult?, ctx: PushContext
+  ) -> String? {
+    guard let decrypted = decrypted else {
+      NseLog.log.debug("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) unreadable message - no tree to name, the generic title")
+      return nil
+    }
+    guard let members = decrypted.treeMembersJson else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR the decrypt answer named no tree members (\(decrypted.treeMembersError ?? "absent", privacy: .public)) - the generic title")  // log-safe: Rust's MlsError text for an unreadable tree, no message content or name
+      return nil
+    }
+    guard let dir = appGroupDir() else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR no App Group container - the generic title")
+      return nil
+    }
+    guard let raw = canari_native_unnamed_group_title(dir.path, ctx.userId, groupId, members, ctx.locale)
+    else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR the title call returned nothing - the generic title")
+      return nil
+    }
+    let json = String(cString: raw)
+    canari_free_string(raw)
+    let answer = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+    if let label = answer["label"] as? String, !label.isEmpty {
+      NseLog.log.debug("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) titled by its members' first names (chars=\(label.count, privacy: .public))")
+      return label
+    }
+    let reason = answer["reason"] as? String ?? "unreadable-answer"
+    let unknown = answer["unknown"] as? Int ?? 0
+    switch reason {
+    // A group of one, a member the phone has never named (added while the app was away), or a phone
+    // that never resolved a name: ordinary states.
+    case "alone", "name-unknown", "no-name-file", "other-account":
+      NseLog.log.notice("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) no label (\(reason, privacy: .public) unknown=\(unknown, privacy: .public)) - the generic title")
+    default:
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR no label (\(reason, privacy: .public)) - the generic title")
+    }
+    return nil
   }
 
   /// Notes the message this run draws - `conversation`, its sender, its instant - for the claim
@@ -1657,6 +1718,12 @@ class NotificationService: UNNotificationServiceExtension {
     /// Every user id the WHOLE plaintext mentions (`@[<64 hex>]`), lower-cased, read before `text`
     /// is clamped - a mention past the preview is still a mention.
     let mentionedUserIds: Set<String>
+    /// The people in the group's current tree after the push catch-up, as Rust read them after its
+    /// commit catch-up (`treeMembers`, re-serialised as a JSON array of user ids): what an UNNAMED
+    /// group's banner is titled by (`unnamedGroupTitle`). nil when the answer carried none, with
+    /// Rust's reason in `treeMembersError` when it could not read the tree.
+    let treeMembersJson: String?
+    let treeMembersError: String?
     /// True for an image/GIF message that carries everything needed to fetch + decrypt a thumbnail.
     var isImageMedia: Bool {
       mediaKind == "image" && !(mediaId ?? "").isEmpty && !(mediaKey ?? "").isEmpty
@@ -2036,8 +2103,9 @@ class NotificationService: UNNotificationServiceExtension {
   // MARK: - Communication notification (owner, 2026-11-21) ---------------------
 
   /// The donation group of every interaction this extension donates. Written by nothing else; the
-  /// app deletes the group at sign-out (`ShareSuggestions.clearMessageNotifications`, behind
-  /// `clear_conversation_shortcuts`). `iosCommunicationNotifications.test.ts` holds the spellings.
+  /// app asks its delete at sign-out (`ShareSuggestions.clearMessageNotifications`, behind
+  /// `clear_conversation_shortcuts`), and this extension erases it itself once its account left
+  /// (`settleMessageDonations`). `iosCommunicationNotifications.test.ts` holds the spellings.
   static let messageNotificationsGroup = "fr.emse.canari.message-notifications"
 
   /// The id a conversation is donated under: the share suggestions' `c:<conversation id>`
@@ -2187,6 +2255,17 @@ class NotificationService: UNNotificationServiceExtension {
     let donationId = UUID().uuidString
     interaction.identifier = donationId
     let donor = signedInUserId ?? ""
+    // The ledger names the donor BEFORE the donation exists, so no donation is ever one the next
+    // account's first run would not know to erase (`settleMessageDonations`).
+    let record = Self.recordDonationsOwner(donor)
+    guard record == .recorded else {
+      // Not a failure of this step: an erase in flight or owed, or an unwritable ledger, each said
+      // once where it is known. The plain notification is delivered.
+      NseLog.log.debug(
+        "[CanariNSE] communication style not applied - the donation ledger answered \(String(describing: record), privacy: .public)")  // log-safe: a fixed case name of DonationRecord, no id
+      finish()
+      return
+    }
     trace?.mark("donate")
     NseLog.log.debug(
       "[CanariNSE] communication style: donating isGroup=\(isGroup, privacy: .public) source=\(source, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
@@ -2197,11 +2276,10 @@ class NotificationService: UNNotificationServiceExtension {
           "[CanariNSE] WARN communication style not applied - the donation was refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
         self.finish()
       } else if Self.signedInUserId() != donor {
-        // THE SIGN-OUT OVERTOOK THE DONATION. The app writes the erase it owes and strips the
-        // context BEFORE it deletes the donation group (`push_registration.rs`,
-        // `eraseAccountShortcuts`), so a donation that completed before the strip is taken by that
-        // delete, and one completing after it is seen here - every order is covered, none by a
-        // clock. It withdraws itself, and the banner of the account that left is blanked: the iOS
+        // THE SIGN-OUT OVERTOOK THE DONATION. A donation that completed before the strip is named
+        // by the ledger and erased by the next run (`settleMessageDonations`; the app's own delete
+        // cannot reach another bundle's donations), and one completing after it is seen here -
+        // every order is covered, none by a clock. It withdraws itself, and the banner of the account that left is blanked: the iOS
         // form of a push dropped after a sign-out (no filtering entitlement - see `LevelDecision`).
         // The run is answered only once the withdrawal answered: answered before, the extension
         // may be reaped with the delete still in flight (review of #3938).
@@ -2211,8 +2289,11 @@ class NotificationService: UNNotificationServiceExtension {
         INInteraction.delete(with: [donationId]) { error in
           if let error = error {
             let kind = String(describing: type(of: error))
+            // The ledger names its account again, so the next run - which finds that account no
+            // longer signed in - erases the group for it. The app's erase cannot: another bundle.
+            let named = Self.reassertDonationsOwner(donor)
             NseLog.log.error(
-              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the app's erase owed on disk takes it")
+              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the ledger names its account again: \(named, privacy: .public), so the next run erases it")
           } else {
             NseLog.log.debug("[CanariNSE] the overtaken donation is withdrawn")
           }
@@ -2292,6 +2373,194 @@ class NotificationService: UNNotificationServiceExtension {
       let kind = String(describing: type(of: error))
       NseLog.log.warning(
         "[CanariNSE] WARN communication style not applied - updating(from:) refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+    }
+  }
+
+  // MARK: - Whose senders the donation group holds (2026-11-27) ------------------
+
+  /// The App Group file naming the account whose senders this extension's donation group holds -
+  /// one user id, written before every donation (`recordDonationsOwner`), removed once that group is
+  /// erased for it.
+  ///
+  /// WHY THE EXTENSION ERASES ITS OWN. On `1.8.2` (iPhone 12) the app's sign-out deleted this group
+  /// and called `deleteAll` from the APP process, both answered success, and two senders the
+  /// extension had donated stayed in the share sheet: `INInteraction.delete` reaches what the CALLING
+  /// bundle donated, and this extension is another bundle. Nothing the app runs can take them, so
+  /// the one process that can does, on its next run once `push_context.json` no longer names this
+  /// owner - a sign-out strips it, the next sign-in replaces it. Durable state, no clock.
+  static let messageDonationsOwnerFile = "message_donations_owner"
+
+  /// The marker that this install's donations are named by the ledger: written once the group is
+  /// erased by the ledger era's first run. A build before the ledger donated without naming anyone,
+  /// so an install that has neither this marker nor a ledger may hold another account's senders the
+  /// ledger can never name - that first run erases the group once (`DonationLedgerStep.eraseUnnamed`).
+  /// Its EXISTENCE is the fact, read without its content, so it answers before the first unlock too.
+  static let donationLedgerEraMarkerFile = "message_donations_ledger_era"
+
+  /// Orders the ledger among this process's concurrent runs. Under it, `donationErasing` says an
+  /// erase is in flight: a run that finds it set proceeds WITHOUT donating (`recordDonationsOwner`),
+  /// so no donation lands between a decision to erase and that erase, and no run ever waits on
+  /// another run's completion.
+  private static let donationLedgerLock = NSLock()
+  /// True while an erase is in flight in this process. Under `donationLedgerLock`; reset by the
+  /// erase's completion on its success and its failure alike, before either is looked at.
+  private static var donationErasing = false
+
+  /// What a run does with the donation group, given the ledger and the account signed in.
+  enum DonationLedgerStep: Equatable {
+    /// The owner is the account signed in, or nothing is recorded in the ledger era.
+    case keep
+    /// The owner is no longer signed in (signed out, or another account since).
+    case eraseOwner(String)
+    /// No ledger and no era marker: an install from before the ledger, whose donations name nobody.
+    case eraseUnnamed
+  }
+
+  /// The decision, on ids and one file's existence alone: never on a message, never on a clock.
+  static func donationLedgerStep(owner: String?, signedInUserId: String?, eraMarked: Bool)
+    -> DonationLedgerStep
+  {
+    guard let owner = owner, !owner.isEmpty else { return eraMarked ? .keep : .eraseUnnamed }
+    return owner == signedInUserId ? .keep : .eraseOwner(owner)
+  }
+
+  /// The account the ledger names, or nil when none is recorded (the file absent or empty).
+  static func readDonationsOwner(_ dir: URL) -> String? {
+    let file = dir.appendingPathComponent(messageDonationsOwnerFile)
+    guard let data = try? Data(contentsOf: file),
+      let owner = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !owner.isEmpty
+    else { return nil }
+    return owner
+  }
+
+  /// Writes `owner` into the ledger; false when it could not, said at ERROR - the one line for it.
+  private static func writeDonationsOwner(_ dir: URL, _ owner: String) -> Bool {
+    do {
+      try Data(owner.utf8).write(
+        to: dir.appendingPathComponent(messageDonationsOwnerFile),
+        options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      NseLog.log.debug("[CanariNSE] donation ledger: owner recorded")
+      return true
+    } catch {
+      NseLog.log.error(
+        "[CanariNSE] ERROR donation ledger: the owner could not be written (\(errorReason(error), privacy: .public)) - no communication style until it can")
+      return false
+    }
+  }
+
+  /// What the ledger answered a run about to donate.
+  enum DonationRecord: Equatable {
+    case recorded
+    /// An erase is in flight in this process: this run donates nothing.
+    case eraseInFlight
+    /// The ledger still names another account (its erase failed, said once by the settle):
+    /// overwriting it would forget donations nothing erased yet.
+    case anotherAccountNotErased
+    /// No era marker yet: the donations made before the ledger are not erased (said once by the
+    /// settle), and a donation recorded now would make the next run keep them.
+    case unnamedNotErased
+    /// The ledger could not be written (said at ERROR by `writeDonationsOwner`).
+    case unwritable
+  }
+
+  /// Names `donor` as the group's owner, before a donation. Anything but `.recorded` means the
+  /// caller donates nothing: a donation the ledger does not name could outlive the account.
+  static func recordDonationsOwner(_ donor: String) -> DonationRecord {
+    guard !donor.isEmpty, let dir = appGroupDir() else { return .unwritable }
+    donationLedgerLock.lock()
+    defer { donationLedgerLock.unlock() }
+    if donationErasing { return .eraseInFlight }
+    if !FileManager.default.fileExists(atPath: dir.appendingPathComponent(donationLedgerEraMarkerFile).path) {
+      return .unnamedNotErased
+    }
+    let owner = readDonationsOwner(dir)
+    if owner == donor { return .recorded }
+    if owner != nil { return .anotherAccountNotErased }
+    return writeDonationsOwner(dir, donor) ? .recorded : .unwritable
+  }
+
+  /// Names `donor` again after its overtaken donation could not be withdrawn, so the next settle
+  /// (the account is no longer signed in) erases the group for it. Overwrites whatever the ledger
+  /// names: erasing another account's suggestions too costs a suggestion, keeping this one a name.
+  static func reassertDonationsOwner(_ donor: String) -> Bool {
+    guard !donor.isEmpty, let dir = appGroupDir() else { return false }
+    donationLedgerLock.lock()
+    defer { donationLedgerLock.unlock() }
+    if readDonationsOwner(dir) == donor { return true }
+    return writeDonationsOwner(dir, donor)
+  }
+
+  /// Erases this extension's donation group when the ledger names an account that is no longer
+  /// signed in, or once for an install from before the ledger, then runs `then` - on every run,
+  /// before anything is drawn or donated. The common case (nothing to erase) runs `then` at once on
+  /// the caller's thread; so does a run that finds another run's erase in flight (it will not
+  /// donate: `recordDonationsOwner`). An erase deletes exactly this extension's group (the
+  /// allowlist: the only group it donates into); on success it clears the ledger if it still names
+  /// the account erased, or writes the era marker; on failure it keeps both as they were, so the
+  /// next run erases again, and says so ONCE. The erasing run's own continuation runs from the
+  /// completion, on a global queue. No clock, and no run waits on another's: a completion that never
+  /// comes costs its own run only, which the system's expiry delivers.
+  static func settleMessageDonations(then: @escaping () -> Void) {
+    guard let dir = appGroupDir() else {
+      then()
+      return
+    }
+    let marker = dir.appendingPathComponent(donationLedgerEraMarkerFile)
+    donationLedgerLock.lock()
+    if donationErasing {
+      donationLedgerLock.unlock()
+      NseLog.log.debug("[CanariNSE] donation ledger: an erase is in flight - this run donates nothing")
+      then()
+      return
+    }
+    let step = donationLedgerStep(
+      owner: readDonationsOwner(dir), signedInUserId: signedInUserId(),
+      eraMarked: FileManager.default.fileExists(atPath: marker.path))
+    if step == .keep {
+      donationLedgerLock.unlock()
+      then()
+      return
+    }
+    donationErasing = true
+    donationLedgerLock.unlock()
+    INInteraction.delete(with: messageNotificationsGroup) { error in
+      Self.donationLedgerLock.lock()
+      Self.donationErasing = false
+      if let error = error {
+        let kind = String(describing: type(of: error))
+        NseLog.log.error(
+          "[CanariNSE] ERROR the donations of an account no longer signed in were not erased (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); kept owed, the next run erases again and none donates meanwhile")
+      } else {
+        switch step {
+        case .eraseOwner(let erased):
+          if Self.readDonationsOwner(dir) == erased {
+            do {
+              try FileManager.default.removeItem(
+                at: dir.appendingPathComponent(Self.messageDonationsOwnerFile))
+            } catch {
+              NseLog.log.error(
+                "[CanariNSE] ERROR donation ledger: erased, but the owner could not be removed (\(errorReason(error), privacy: .public)); the next run erases again")
+            }
+          }
+          NseLog.log.notice("[CanariNSE] the donations of an account no longer signed in are erased")
+        case .eraseUnnamed:
+          // A marker with no content and no protection class: its existence is the fact.
+          if FileManager.default.createFile(
+            atPath: marker.path, contents: Data(),
+            attributes: [.protectionKey: FileProtectionType.none])
+          {
+            NseLog.log.notice("[CanariNSE] the donations made before the ledger are erased, once")
+          } else {
+            NseLog.log.error(
+              "[CanariNSE] ERROR the donations made before the ledger are erased, but the era marker could not be written; the next run erases again")
+          }
+        case .keep:
+          break
+        }
+      }
+      Self.donationLedgerLock.unlock()
+      DispatchQueue.global(qos: .userInitiated).async(execute: then)
     }
   }
 
@@ -3466,7 +3735,11 @@ class NotificationService: UNNotificationServiceExtension {
       sentAt: sentAt, replyTo: nonEmpty("replyTo"), mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
       mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"),
       type: type, callId: nonEmpty("callId"), callEnded: (dict["callEnded"] as? Bool) ?? false,
-      hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned)
+      hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned,
+      treeMembersJson: (dict["treeMembers"] as? [String]).flatMap {
+        (try? JSONSerialization.data(withJSONObject: $0)).flatMap { String(data: $0, encoding: .utf8) }
+      },
+      treeMembersError: nonEmpty("treeMembersError"))
   }
 
   /// What `mentionedUserIds(in:)` holds for a call to every member - never a user id (64 hex).

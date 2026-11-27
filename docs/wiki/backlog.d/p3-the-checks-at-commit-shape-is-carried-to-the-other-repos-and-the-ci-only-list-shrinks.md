@@ -1,6 +1,6 @@
 ## P3 - The checks-at-commit shape is carried to the four other repos, and the CI-only list shrinks (2026-11-15)
 
-target: 1.10.0
+target: 1.9.1
 
 The owner decided on 2026-11-15 that what a pull request checks is checked at commit and at push
 ([cicd](../cicd.md#checks-at-commit-at-push-and-in-ci-only)). Canari has it; three things are left:

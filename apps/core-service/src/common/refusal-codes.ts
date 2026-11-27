@@ -42,6 +42,16 @@ export const RefusalCode = {
    * throws it as `ReviewCohortBoundaryException`, a `refusalBody`-shaped body). Neutral, like a block.
    */
   REVIEW_COHORT_BOUNDARY: REVIEW_COHORT_BOUNDARY,
+  /**
+   * 410 - the personal notepad routes (`/users/me/notes*`) once the caller holds no notepad: it was
+   * moved into "Mes notes" (`users/notepad.ts`), or there never was one, and no new one is written.
+   */
+  NOTEPAD_MOVED: 'NOTEPAD_MOVED',
+  /**
+   * 409 - `POST /users/me/notes/moved` naming a notepad the server no longer holds as it is: an
+   * older build saved it since it was read. Nothing was deleted; the mover reads it again.
+   */
+  NOTEPAD_CHANGED: 'NOTEPAD_CHANGED',
 } as const;
 
 /** A stable refusal code of this service. */

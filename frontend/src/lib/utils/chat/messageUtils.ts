@@ -300,6 +300,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
       ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
       ...(m.mediaPurgedAt ? { mediaPurgedAt: m.mediaPurgedAt } : {}),
+      ...(m.everyoneVouched ? { everyoneVouched: true } : {}),
       ...(m.pageKey ? { pageKey: m.pageKey } : {}),
     } satisfies ChatMessage;
   });

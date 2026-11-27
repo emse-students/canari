@@ -103,9 +103,8 @@ describe('notificationTypesRenderableBy', () => {
 
   it('serves the trend to 1.6.10, a pre-release of it included', () => {
     expect(notificationTypesRenderableBy('1.6.10-alpha.1')).toContain('campus_trend');
-    // The build carrying the highest floor (the co-organisation accepted on a pending event, 1.8.2)
-    // renders every type.
-    expect(notificationTypesRenderableBy('1.8.2')).toHaveLength(
+    // The build carrying the highest floor (the Alumni duplicate notice, 1.8.3) renders every type.
+    expect(notificationTypesRenderableBy('1.8.3')).toHaveLength(
       Object.keys(NOTIFICATION_TYPE_MIN_CLIENT).length
     );
   });
@@ -132,6 +131,14 @@ describe('notificationTypesRenderableBy', () => {
     expect(notificationTypesRenderableBy('1.7.0')).not.toContain('admin_report');
     expect(notificationTypesRenderableBy('1.7.1-alpha.1')).toEqual(
       expect.arrayContaining(['admin_profile_correction', 'admin_report'])
+    );
+  });
+
+  it('serves the Alumni duplicate notice from 1.8.3 only: it is a host and a row older builds lack', () => {
+    expect(notificationTypesRenderableBy('1.8.2')).not.toContain('admin_alumni_duplicate');
+    expect(notificationTypesRenderableBy('1.8.3-alpha.1')).toContain('admin_alumni_duplicate');
+    expect(PUSH_KEY_MIN_CLIENT.social_admin_alumni_duplicate).toBe(
+      NOTIFICATION_TYPE_MIN_CLIENT.admin_alumni_duplicate
     );
   });
 

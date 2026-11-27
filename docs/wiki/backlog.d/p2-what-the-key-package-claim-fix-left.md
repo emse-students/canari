@@ -1,6 +1,6 @@
 ## P2 - what the key-package claim fix left: the sweep claims before reading the tree, and the empty-pool WARN fires once per serve
 
-target: 1.10.0
+target: 1.9.1
 
 The storm of 2026-11-06 and the fixes for it are in
 [key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06):

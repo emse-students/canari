@@ -13,7 +13,19 @@ export const ALUMNI_MERGE_CODES = {
   holdingsUnavailable: 'ALUMNI_MERGE_HOLDINGS_UNAVAILABLE',
   inProgress: 'ALUMNI_MERGE_IN_PROGRESS',
   alreadyMerged: 'ALUMNI_MERGE_ALREADY_MERGED',
+  reasonRequired: 'ALUMNI_MERGE_REASON_REQUIRED',
+  targetBusy: 'ALUMNI_MERGE_TARGET_BUSY',
+  notMerged: 'ALUMNI_MERGE_NOT_MERGED',
+  dismissed: 'ALUMNI_MERGE_DISMISSED',
 } as const;
+
+/**
+ * The bounds of a merge's written reason, in CODE POINTS after trimming (D55) - never UTF-16 units, so
+ * an emoji counts once. Asserted equal to `libs/contracts/alumni-merge-reason.json`, which the admin
+ * page asserts too, so the two counts cannot drift apart.
+ */
+export const ALUMNI_MERGE_REASON_MIN = 20;
+export const ALUMNI_MERGE_REASON_MAX = 1000;
 
 /** No such duplicate at MiConnect with no merge of it open, or (a cancel) no open merge of it. */
 export class AlumniMergeNotFoundError extends HttpException {
@@ -79,6 +91,23 @@ export class AlumniMergeInProgressError extends HttpException {
 }
 
 /**
+ * The duplicate was answered "Pas un doublon" (`alumni_duplicate_flags.dismissedAt`): that answer is
+ * terminal, so a "Rattacher" that arrives after it - a stale page, a second admin - is refused rather
+ * than landing on an account the admins closed. Nothing was marked.
+ */
+export class AlumniMergeDismissedError extends HttpException {
+  constructor() {
+    super(
+      {
+        code: ALUMNI_MERGE_CODES.dismissed,
+        message: 'An admin answered "not a duplicate" for this account.',
+      },
+      HttpStatus.CONFLICT
+    );
+  }
+}
+
+/**
  * A cancel came too late: the duplicate already signed in through Alumni, and MiConnect merged it
  * into the marked account (30-sources.yaml). The trace is completed; there is nothing to cancel.
  */
@@ -86,6 +115,52 @@ export class AlumniMergeAlreadyMergedError extends HttpException {
   constructor() {
     super(
       { code: ALUMNI_MERGE_CODES.alreadyMerged, message: 'MiConnect already merged this account.' },
+      HttpStatus.CONFLICT
+    );
+  }
+}
+
+/**
+ * A MANUAL merge (the target is not the unique name-and-promo match, D55) came without a written
+ * reason of {@link ALUMNI_MERGE_REASON_MIN}-{@link ALUMNI_MERGE_REASON_MAX} code points, or a reason
+ * given is out of those bounds. The admin decides identity, and says why.
+ */
+export class AlumniMergeReasonRequiredError extends HttpException {
+  constructor(readonly reason: 'missing' | 'too_short' | 'too_long') {
+    super(
+      {
+        code: ALUMNI_MERGE_CODES.reasonRequired,
+        message: `A manual merge needs a written reason of ${ALUMNI_MERGE_REASON_MIN} to ${ALUMNI_MERGE_REASON_MAX} characters (${reason}).`,
+      },
+      HttpStatus.BAD_REQUEST
+    );
+  }
+}
+
+/**
+ * Another open merge already names this target (D55, both modes): two duplicates never race into
+ * one account. The other one is completed or cancelled first.
+ */
+export class AlumniMergeTargetBusyError extends HttpException {
+  constructor() {
+    super(
+      {
+        code: ALUMNI_MERGE_CODES.targetBusy,
+        message: 'Another open merge already names this account.',
+      },
+      HttpStatus.CONFLICT
+    );
+  }
+}
+
+/**
+ * MiConnect's push named a merge MiConnect has not made (D54): the duplicate still exists, or the
+ * target does not hold its Alumni link. Nothing was written; the push is only a hint.
+ */
+export class AlumniMergeNotMergedError extends HttpException {
+  constructor(readonly reason: string) {
+    super(
+      { code: ALUMNI_MERGE_CODES.notMerged, message: `MiConnect has not merged it: ${reason}.` },
       HttpStatus.CONFLICT
     );
   }

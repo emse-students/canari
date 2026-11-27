@@ -1,6 +1,6 @@
 ## P2 - a call that never paired, and a ring for a call already hung up (2026-10-20)
 
-target: 1.9.0
+target: 1.8.4
 
 CALL-PAIR-STALL and CALL-LATE-RING, met on the bench while measuring WP-C-BG-I, both after the
 Mi 9T's chat socket had gone zombie ([device readings](../device-readings-2026-10.md#found-on-the-way-not-filed-against-wp-c-bg-i)).

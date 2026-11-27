@@ -1,6 +1,8 @@
 ## P3 - on the iPhone the native "+" jumps and the web composer hides while the keyboard rises (the Mi 9T half passed)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 

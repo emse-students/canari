@@ -81,6 +81,15 @@ char *canari_native_seal_cache_line(const char *cache_key_b64, const char *line)
 /// for. Caller frees with canari_free_string.
 char *canari_native_claim_device_notices(const char *data_dir, const char *keys_json);
 
+/// The title of a push for an UNNAMED group: its other members' first names, the app's rule
+/// (mobile/unnamed_group_label.rs). data_dir is the App Group directory holding display_names.json
+/// and conversation_nicknames.json, members_json the decrypt answer's `treeMembers` array, locale
+/// push_context.json's `locale`. Returns `{"label": ...}` or `{"label": null, "reason": ...}`;
+/// caller frees with canari_free_string.
+char *canari_native_unnamed_group_title(const char *data_dir, const char *user_id,
+                                        const char *group_id, const char *members_json,
+                                        const char *locale);
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
 /// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)
 /// from the MLS-decrypted MediaMsg; cipher_ptr/cipher_len point at the downloaded ciphertext||tag.

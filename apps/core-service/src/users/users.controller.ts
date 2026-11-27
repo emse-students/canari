@@ -25,10 +25,12 @@ import { AvatarService, AVATAR_SUBJECT_ID } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
 import { AlumniMergeService } from './alumni-merge.service';
+import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import {
   CreateUserDto,
   UpdateUserDto,
   UpdateNotesDto,
+  MoveNotesDto,
   DirectoryQueryDto,
   BlockUserDto,
   SetAdminDto,
@@ -162,7 +164,8 @@ export class UsersController {
     private readonly corrections: ProfileCorrectionService,
     private readonly accountErasure: AccountErasureService,
     private readonly sessions: AuthSessionsService,
-    private readonly alumniMerge: AlumniMergeService
+    private readonly alumniMerge: AlumniMergeService,
+    private readonly alumniQueue: AlumniDuplicateQueue
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -511,7 +514,8 @@ export class UsersController {
 
   /**
    * Returns the caller's notepad ciphertext, and the legacy plaintext when the
-   * note predates encryption. The server never sees the decrypted content.
+   * note predates encryption. The server never sees the decrypted content. 410 `NOTEPAD_MOVED` once
+   * none is held: the notepad has moved into "Mes notes" (`users/notepad.ts`).
    */
   @UseGuards(NginxAuthGuard)
   @Get('me/notes')
@@ -524,7 +528,8 @@ export class UsersController {
    *
    * A missing `ciphertext` is refused rather than treated as an empty notepad:
    * during a deploy a still-cached client sends the old `{ notes }` body, and
-   * coercing that to `''` would wipe the note it was trying to save.
+   * coercing that to `''` would wipe the note it was trying to save. Only over a notepad still held
+   * (an older build editing one not moved yet); otherwise 410 `NOTEPAD_MOVED`.
    */
   @UseGuards(NginxAuthGuard)
   @Put('me/notes')
@@ -534,6 +539,19 @@ export class UsersController {
     }
     await this.usersService.setNotes(userId, dto.ciphertext);
     return { ok: true };
+  }
+
+  /**
+   * Deletes the caller's notepad once a client has posted it into "Mes notes" - only the notepad
+   * whose digest the body names (`UsersService.moveNotes`): 410 `NOTEPAD_MOVED` when none is held,
+   * 409 `NOTEPAD_CHANGED` when another one is.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('me/notes/moved')
+  @HttpCode(200)
+  async moveMyNotes(@Headers('x-user-id') userId: string, @Body() dto: MoveNotesDto) {
+    await this.usersService.moveNotes(userId, dto.digest);
+    return { status: 'moved' };
   }
 
   /**
@@ -642,14 +660,53 @@ export class UsersController {
   }
 
   /**
-   * The Alumni duplicates (D47): every account an Alumni sign-in created (`alumni-<af_id>`) whose
-   * name and promo match an existing account, read from MiConnect. Global admin only; production
+   * The Alumni duplicates (D47): every account an Alumni sign-in created (`alumni-<af_id>`) and no open merge
+   * holds, with the accounts it matches by name and promo (none: it is attached by hand, D55), read
+   * from MiConnect. Global admin only; production
    * only, like the profile edit (dev shares production MiConnect): the refusals are its codes.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Get('admin/alumni-duplicates')
-  listAlumniDuplicates() {
-    return this.alumniMerge.listDuplicates();
+  async listAlumniDuplicates() {
+    // The reading's start is the DATABASE's clock, the one that writes `flaggedAt`. If it cannot be
+    // read the page is answered and the queue waits for the next reading (said at error).
+    let readStartedAt: Date;
+    try {
+      readStartedAt = await this.alumniQueue.databaseNow();
+    } catch (err) {
+      this.logger.error(
+        `[ALUMNI_QUEUE] the reading's start was NOT read, the queue is not reconciled: ${String(err)}`
+      );
+      return (await this.alumniMerge.listDuplicates()).duplicates;
+    }
+    // What the queue holds as pending is the page's FLAGGABLE subset (`AlumniMergeService.listDuplicates`:
+    // an account with a candidate to attach to, not dismissed, not in an open merge) - an account the
+    // page lists with no candidate is on the page only: the queue converges on the subset (a flaggable
+    // duplicate is flagged and told once, a flag no longer flaggable is resolved if the reading began
+    // after it was flagged, `AlumniDuplicateQueue`). A failed reading is not "no longer listed": it
+    // throws before any reconcile. Never throws after it.
+    const { duplicates, flaggable } = await this.alumniMerge.listDuplicates();
+    await this.alumniQueue.reconcile(flaggable, readStartedAt);
+    return duplicates;
+  }
+
+  /**
+   * "Pas un doublon": the admins' TERMINAL answer for an Alumni-created account that is not a
+   * duplicate - closed for every admin for good, never flagged again by a later reading or sign-in.
+   * Global admin only; the write is durable (`alumni_duplicate_flags.dismissedAt`).
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/alumni-duplicates/:duplicateUuid/dismiss')
+  @HttpCode(204)
+  async dismissAlumniDuplicate(
+    @Param('duplicateUuid') duplicateUuid: string,
+    @Headers('x-user-id') actorId: string
+  ): Promise<void> {
+    if (!UUID_RE.test(duplicateUuid)) throw new BadRequestException('duplicateUuid must be a uuid');
+    this.logger.log(
+      `[ALUMNI_QUEUE] "not a duplicate" by ${actorId?.slice(0, 8)} for ${duplicateUuid.slice(0, 8)}`
+    );
+    await this.alumniMerge.dismiss(duplicateUuid);
   }
 
   /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */
@@ -669,6 +726,24 @@ export class UsersController {
     return this.alumniMerge.listOpenMerges();
   }
 
+  /** The latest closed Alumni merges, each with what its sibling sites did (D54). */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-merges/closed')
+  listClosedAlumniMerges() {
+    return this.alumniMerge.listClosedMerges();
+  }
+
+  /**
+   * "Rattacher à un autre compte" (D55): the MiConnect accounts matching `q` that may be this
+   * duplicate's target - eligible ones only, each with what tells homonyms apart.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-duplicates/:duplicateUuid/targets')
+  alumniMergeTargets(@Param('duplicateUuid') duplicateUuid: string, @Query('q') q: unknown) {
+    if (!UUID_RE.test(duplicateUuid)) throw new BadRequestException('duplicateUuid must be a uuid');
+    return this.alumniMerge.eligibleTargets(duplicateUuid, typeof q === 'string' ? q : '');
+  }
+
   /** "Annuler" an open merge: the mark is removed at MiConnect, the trace closed as cancelled. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post('admin/alumni-duplicates/:duplicateUuid/cancel')
@@ -681,10 +756,11 @@ export class UsersController {
   }
 
   /**
-   * "Rattacher" (D48): MARKS the duplicate MiConnect account for a merge into `{ targetUuid }`, which
-   * MiConnect carries out at its next Alumni sign-in, traced (`alumni_merges`). Its Canari account is
-   * erased only after that merge, when the open merges are next read. Calling it again resumes an
-   * interrupted one.
+   * "Rattacher" (D48, D55): MARKS the duplicate MiConnect account for a merge into
+   * `{ targetUuid, reason }`, which MiConnect carries out at its next Alumni sign-in, traced
+   * (`alumni_merges`). The mode is the server's: `manual` when the target is not the unique
+   * name-and-promo match, and then `reason` is required. Its Canari account is erased only after that
+   * merge, when MiConnect pushes it. Calling it again resumes an interrupted one.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post('admin/alumni-duplicates/:duplicateUuid/merge')
@@ -692,13 +768,16 @@ export class UsersController {
   mergeAlumniDuplicate(
     @Param('duplicateUuid') duplicateUuid: string,
     @Headers('x-user-id') actorId: string,
-    @Body() body: { targetUuid?: unknown }
+    @Body() body: { targetUuid?: unknown; reason?: unknown }
   ) {
     const targetUuid = body?.targetUuid;
     if (typeof targetUuid !== 'string' || !UUID_RE.test(targetUuid)) {
       throw new BadRequestException('targetUuid must be a uuid');
     }
-    return this.alumniMerge.merge(duplicateUuid, targetUuid, actorId);
+    if (body?.reason !== undefined && typeof body.reason !== 'string') {
+      throw new BadRequestException('reason must be a string');
+    }
+    return this.alumniMerge.merge(duplicateUuid, targetUuid, actorId, body?.reason);
   }
 
   /**

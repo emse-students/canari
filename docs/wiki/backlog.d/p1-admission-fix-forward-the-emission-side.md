@@ -1,6 +1,6 @@
 ## P1 - the admission fix-forward, slice 3: a user holding no leaf asks a member instead of entering a group conversation alone
 
-target: 1.9.0
+target: 1.8.4
 
 Slice 3 of [the admission fix-forward](../protocols/admission-fix-forward.md#the-slices-in-order),
 planned 2026-11-25. **Waits on slice 2's floor** ([the fix-forward](p1-the-admission-rule-fix-forward.md),

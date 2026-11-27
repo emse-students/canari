@@ -16,10 +16,11 @@
      * Lit by the bulb of an unranked game: `hint` a number to read, `wrong` a misplaced flag
      * (`hint.ts`); by the tutorial, `read` the number its explanation is reading (a dark ring, so the
      * yellow of a group of cells is never confused with it), `far` a cell the picture only suggests (an open
-     * grid's unimportant cells: dotted, faded, not playable). Null otherwise; a primitive, so only the
-     * cells whose value changed re-render.
+     * grid's unimportant cells: dotted, faded, not playable), `unknown` an open cell whose number the picture
+     * hides (drawn "?", so no other reasoning than the pattern's is possible). Null otherwise; a primitive, so
+     * only the cells whose value changed re-render.
      */
-    highlight?: 'hint' | 'wrong' | 'read' | 'far' | null;
+    highlight?: 'hint' | 'wrong' | 'read' | 'far' | 'unknown' | null;
   }
 
   let { cell, index, pending, marked = false, highlight = null }: Props = $props();
@@ -83,10 +84,16 @@
           ? m.minesweeper_tutorial_read_cell({ n: String(cell.adjacent) })
           : highlight === 'far'
             ? m.minesweeper_tutorial_far_cell()
-            : undefined
+            : highlight === 'unknown'
+              ? m.minesweeper_tutorial_unknown_cell()
+              : undefined
   );
   const numberColor = $derived(
-    cell.state === 'revealed' && !cell.mine && cell.adjacent > 0 ? NUMBER_COLORS[cell.adjacent] : ''
+    highlight === 'unknown'
+      ? 'text-text-muted'
+      : cell.state === 'revealed' && !cell.mine && cell.adjacent > 0
+        ? NUMBER_COLORS[cell.adjacent]
+        : ''
   );
 </script>
 
@@ -97,7 +104,9 @@
   data-hint={highlight ?? undefined}
   aria-label={hintLabel}
 >
-  {#if cell.state === 'flagged'}
+  {#if highlight === 'unknown'}
+    ?
+  {:else if cell.state === 'flagged'}
     <Flag size={14} class="dark:text-accent-icon text-accent-text" />
   {:else if cell.state === 'revealed' && cell.mine}
     <Bomb size={14} class="text-white" />

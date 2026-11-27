@@ -2,7 +2,7 @@
 
 target: 1.8.3
 
-_2026-11-26: moved to 1.8.3 when 1.8.2 shipped. Step 3's rig reading was TAKEN the same day on a built state
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped. Step 3's rig reading was TAKEN on 2026-11-26 on a built state
 ([slice 2's reading](../protocols/admission-fix-forward.md#slice-2s-reading-on-a-built-state-2026-11-26));
 what is left is the floor and the two production readings, each behind its wait._
 

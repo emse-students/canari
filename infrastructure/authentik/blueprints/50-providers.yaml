@@ -9,38 +9,13 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "false"
 entries:
+  # RETIRED (owner, 2026-11-27): Archives MINO's provider, with its application (60-applications.yaml).
+  # Deleted rather than dropped from the file, which would leave it in authentik with a live client.
+  # Delete this entry once production has taken it.
   - model: authentik_providers_oauth2.oauth2provider
+    state: absent
     identifiers:
       name: "miconnect-archives"
-    attrs:
-      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
-      invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
-      property_mappings:
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-formation"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-email"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-avatar"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
-      grant_types:
-        - "authorization_code"
-        - "refresh_token"
-      client_id: "SJ8aeGmNC3tKgBzeTDufsuJYGH_Ayxxk"
-      access_token_validity: "minutes=5"
-      refresh_token_threshold: "hours=1"
-      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
-      redirect_uris:
-        - matching_mode: "strict"
-          url: "https://archives.canari-emse.fr/oidc/redirect"
-          redirect_uri_type: "authorization"
-        - matching_mode: "strict"
-          url: "https://archives.canari-emse.fr/s/memoires-des-mines/"
-          redirect_uri_type: "logout"
-      logout_uri: "https://archives.canari-emse.fr/s/memoires-des-mines/"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
       name: "miconnect-canari"
@@ -274,9 +249,12 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-mino-groups"]]
+      # NO REFRESH (2026-11-27): MinoWiki is gated by D43 since then, and authentik's refresh grant
+      # evaluates no application binding, so a refresh token would outlive the gate (authentik.md,
+      # "The refresh grant is closed on gated providers"). None could be minted before either: the
+      # provider carries no `offline_access` mapping.
       grant_types:
         - "authorization_code"
-        - "refresh_token"
       client_id: "nep2XHicSXTMBdeLgZ4EBMzHRs8oMuVephzMTmD2"
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"

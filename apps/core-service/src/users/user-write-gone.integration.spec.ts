@@ -37,6 +37,7 @@ import { ProfileEditService } from './profile-edit.service';
 import type { MiconnectEditorClient } from './miconnect-editor.client';
 import type { UserBlocksService } from './user-blocks.service';
 import { UserRowGoneError } from './user-write';
+import { NotepadChangedException, NotepadMovedException, notepadDigest } from './notepad';
 
 jest.mock('axios');
 
@@ -57,6 +58,8 @@ const PROFILE = {
   alumniLinked: null,
 };
 const EDIT = { ...PROFILE, firstName: 'Camille', lastName: 'Durand' };
+/** The notepad every seeded account holds, in its pre-encryption plaintext form. */
+const LEGACY_NOTE = 'written before encryption';
 
 /** The repository calls a service makes on the user rows: a read, or one of three writes. */
 const READS = ['findOne'] as const;
@@ -86,10 +89,20 @@ maybe('a user write against PostgreSQL', () => {
     return headers;
   };
 
-  /** A fresh account per case: an admin with a name, a profile and no notepad key. */
+  /**
+   * A fresh account per case: an admin with a name, a profile, a notepad written before encryption
+   * (a notepad route answers `NOTEPAD_MOVED` to an account holding none) and no notepad key.
+   */
   const seed = async (): Promise<string> => {
     const id = `it-user-${++seq}`;
-    await users.insert({ id, displayName: 'Old Name', admin: true, ...PROFILE, promo: 2024 });
+    await users.insert({
+      id,
+      displayName: 'Old Name',
+      admin: true,
+      ...PROFILE,
+      promo: 2024,
+      notes: LEGACY_NOTE,
+    });
     return id;
   };
   const rowOf = (id: string) => users.findOne({ where: { id } });
@@ -182,6 +195,7 @@ maybe('a user write against PostgreSQL', () => {
       unused,
       erasure as never,
       sessions,
+      unused,
       unused
     );
     process.env.JWT_SECRET = JWT_SECRET;
@@ -255,6 +269,30 @@ maybe('a user write against PostgreSQL', () => {
     expect(inner).toMatch(/^[0-9a-f]{64}$/);
     expect(outer).toBe(inner);
     expect((await rowOf(id))?.notesKey).toBe(inner);
+  });
+
+  it('a move deletes the notepad it names, its plaintext and its key, in one statement', async () => {
+    const id = await seed();
+    await service.getOrCreateNotesKey(id);
+    await service.moveNotes(id, notepadDigest(LEGACY_NOTE));
+    expect(await rowOf(id)).toMatchObject({ notes: null, notesCiphertext: null, notesKey: null });
+    // The routes have retired for this account: nothing read, nothing written, no key minted.
+    await expect(service.getNotes(id)).rejects.toBeInstanceOf(NotepadMovedException);
+    await expect(service.setNotes(id, 'CIPHERTEXT')).rejects.toBeInstanceOf(NotepadMovedException);
+    await expect(service.getOrCreateNotesKey(id)).rejects.toBeInstanceOf(NotepadMovedException);
+    expect((await rowOf(id))?.notesCiphertext).toBeNull();
+  });
+
+  it("a save landing between a move's read and its delete keeps the notepad", async () => {
+    const id = await seed();
+    const ran = interleave(() => service.setNotes(id, 'SAVED SINCE'));
+    const outcome = await service.moveNotes(id, notepadDigest(LEGACY_NOTE)).then(
+      () => 'moved',
+      (e: unknown) => e
+    );
+    expect(ran()).toBe(true);
+    expect(outcome).toBeInstanceOf(NotepadChangedException);
+    expect(await rowOf(id)).toMatchObject({ notesCiphertext: 'SAVED SINCE', notes: null });
   });
 
   it("removing the flag ends the person's sessions: a token minted before authenticates nothing", async () => {

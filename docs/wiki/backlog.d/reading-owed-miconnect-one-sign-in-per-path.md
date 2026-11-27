@@ -1,6 +1,8 @@
 ## P2 - Reading owed - MiConnect asks each sign-in once, on every path, with a real Alumni account
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 **Built 2026-11-25** (the owner's request: no second sign-in, the most fluid path): the routing
 page's "I have a School account" links the identity Alumnforce just asserted after the CAS (names

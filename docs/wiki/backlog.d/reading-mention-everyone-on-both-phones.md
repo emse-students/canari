@@ -1,6 +1,8 @@
 ## Reading owed - "@tous" reaches every member at "Mentions" and nobody at "Aucune", on both phones (2026-11-26)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 **Built and tested, never run on a device** ([chat-delivery](../services/chat-delivery.md#tous---a-call-to-every-member-and-who-may-make-it-decided-2026-11-26); owner decision of 2026-11-25; charter principle 3). The decision is asserted on all three platforms against `libs/contracts/mention-decision.cases.json` (vitest and the Android JVM tests run; **the iOS extension's change is verified by reading only - its contract test is still not wired to a target**), and the server's vouching by its jest tests. What is owed is the reading below on BOTH bench phones, on a build carrying this change.
 

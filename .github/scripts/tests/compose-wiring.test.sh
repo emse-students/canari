@@ -446,12 +446,16 @@ DEV_ABSENT_BY_DESIGN="adminer"
 #                       the authentik service account that edits a profile. Dev and production
 #                       share ONE MiConnect, so a dev edit would change a real person: dev holds
 #                       no token and refuses the edit with a typed error.
+#   MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET
+#                       the shared secret of MiConnect's push of a completed Alumni merge (D54).
+#                       The one MiConnect pushes to production only, and dev, holding no editor
+#                       token, never marks a merge to be pushed.
 #   MIGALLERY_API_*     MiGallery is production-only; dev's core-service is given
 #                       the empty string, so both readers see a falsy value and
 #                       behave identically.
 DEV_ABSENT_KEYS="
   core-service:SKY_API_KEY core-service:SKY_API_URL core-service:EXTERNAL_API_KEY
-  core-service:MICONNECT_EDITOR_TOKEN
+  core-service:MICONNECT_EDITOR_TOKEN core-service:MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET
   call-service:TURN_URL call-service:TURN_USERNAME call-service:TURN_CREDENTIAL
   call-service:CLOUDFLARE_CALLS_API_TOKEN call-service:CLOUDFLARE_TURN_KEY_ID
   call-service:CLOUDFLARE_TURN_TTL_SECONDS

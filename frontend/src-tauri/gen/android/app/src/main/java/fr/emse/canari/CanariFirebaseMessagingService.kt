@@ -4715,6 +4715,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeClaimDeviceNotices(dataDir: String, keysJson: String): String
 
+    /**
+     * The title of a push for an UNNAMED group: its other members' first names, the app's rule, in
+     * the one native copy both platforms call (`mobile/unnamed_group_label.rs`). [membersJson] is the
+     * decrypt answer's `treeMembers` array; the names are read from `display_names.json` and
+     * `conversation_nicknames.json` under [dataDir]. Answers `{"label": ...}` or
+     * `{"label": null, "reason": ...}` - see [unnamedGroupTitle].
+     */
+    external fun nativeUnnamedGroupTitle(
+        dataDir: String,
+        userId: String,
+        groupId: String,
+        membersJson: String,
+        locale: String
+    ): String
+
     // Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
     // the seed mirror in `dataDir`, sealed under `cacheKeyB64`. Rust reads the session itself and
     // applies every rule the app applies to a row - the floor, and under a v2 session the author,
@@ -4961,6 +4976,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Every user id the WHOLE plaintext mentions, read before `text` is cut to its preview, so a
         // mention past character 200 still counts (`NotificationLevelGate`).
         val mentionedUserIds: Set<String> = emptySet(),
+        // The people in the group's current tree after the push catch-up, as Rust read them after its
+        // commit catch-up (`treeMembers`, a JSON array of user ids) - what an UNNAMED group's banner
+        // is titled by ([unnamedGroupTitle]). Null when the answer carried none, with the reason Rust
+        // gave in [treeMembersError] when it could not read the tree.
+        val treeMembersJson: String? = null,
+        val treeMembersError: String? = null,
     )
 
     override fun onNewToken(token: String) {
@@ -5601,6 +5622,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
         }
 
+        // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
+        // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up;
+        // nothing about it rode the push. The cache row above keeps the push's empty name: the app
+        // resolves its own label.
+        val titleName = if (groupName.isEmpty() && isGroup == true) {
+            unnamedGroupTitle(groupId, decrypted) ?: groupName
+        } else {
+            groupName
+        }
+
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(shownName)
         // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
@@ -5624,7 +5655,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 recordShowOutcome(PushShowOutcome.Outcome.REFUSED_COVERED, groupId, channel)
             } else {
                 val stamp = showMessageNotification(
-                    shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                    shownName, titleName, body, largeIcon, groupId, media?.first, media?.second,
                     channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
                     senderId = senderId,
                     // A replay names the generic lines it stands for, by the instants their posts
@@ -7093,6 +7124,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             callEnded = json.optBoolean("callEnded", false),
             hasVideo  = json.optBoolean("hasVideo", false),
             mentionedUserIds = NotificationLevelGate.mentionedUserIds(text),
+            treeMembersJson = json.optJSONArray("treeMembers")?.toString(),
+            treeMembersError = json.optString("treeMembersError").takeIf { it.isNotEmpty() },
         ))
     }
 
@@ -7804,6 +7837,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_admin_report" -> Pair(
                 res.getString(R.string.notif_social_admin_report_title),
                 res.getString(R.string.notif_social_admin_report_body)
+            )
+            "social_admin_alumni_duplicate" -> Pair(
+                res.getString(R.string.notif_social_admin_alumni_duplicate_title),
+                res.getString(R.string.notif_social_admin_alumni_duplicate_body)
             )
             // The bookings' notices (WP-N): who acted names the title - a person, or the
             // association of the space - and the body is the place, the organiser's word for a
@@ -8871,6 +8908,56 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)
+
+    /**
+     * The title of a push for an UNNAMED group - its other members' first names, the app's label -
+     * or null, when the banner keeps "Conversation de groupe" ([ConversationShape.groupTitle]).
+     *
+     * Composed by Rust (`nativeUnnamedGroupTitle`, the one native copy of the app's rule) from the
+     * current tree the decrypt of [decrypted] caught up to and the phone's own name copies; nothing about it rode the push.
+     * A message this device could not open has no tree to read, so its banner keeps the generic
+     * title. Every reason there is none is said here, at the level it deserves: Rust's own log
+     * reaches no logger in this process.
+     */
+    private fun unnamedGroupTitle(groupId: String, decrypted: DecryptedMessage?): String? {
+        if (decrypted == null) {
+            Log.d(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} unreadable message - no tree to name, the generic title")
+            return null
+        }
+        val members = decrypted.treeMembersJson
+        if (members == null) {
+            Log.e(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} ERROR the decrypt answer named no tree members (${decrypted.treeMembersError ?: "absent"}) - the generic title") // log-safe: Rust's MlsError text for an unreadable tree, no message content or name
+            return null
+        }
+        val ctx = MlsContextLoader.loadPushContext(this)
+        if (ctx == null) {
+            Log.w(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} no push context - the generic title")
+            return null
+        }
+        val answer = try {
+            JSONObject(nativeUnnamedGroupTitle(
+                MlsContextLoader.tauriDataDir(this).absolutePath, ctx.userId, groupId, members, ctx.locale,
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} ERROR the title answer is unreadable: ${e.javaClass.simpleName} - the generic title")
+            return null
+        }
+        val label = answer.optString("label").takeIf { !answer.isNull("label") && it.isNotEmpty() }
+        if (label != null) {
+            Log.d(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} titled by its members' first names (chars=${label.length})")
+            return label
+        }
+        val reason = answer.optString("reason")
+        when (reason) {
+            // A group of one, and a member the phone has never named (added while the app was away),
+            // or a phone that never resolved a name: ordinary states.
+            "alone", "name-unknown", "no-name-file", "other-account" ->
+                Log.i(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} no label ($reason unknown=${answer.optInt("unknown")}) - the generic title")
+            else ->
+                Log.e(TAG, "[GROUP_LABEL] group=${ConversationRef.of(groupId)} ERROR no label ($reason) - the generic title")
+        }
+        return null
+    }
 
     /**
      * Fallback text used when MLS decryption fails (group not yet initialized). A direct message

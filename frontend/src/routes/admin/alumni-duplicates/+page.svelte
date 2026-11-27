@@ -1,33 +1,42 @@
 <script lang="ts">
   /**
-   * The Alumni duplicates (D47): accounts an Alumni sign-in created whose name and promo match an
+   * The Alumni duplicates (D47): accounts an Alumni sign-in created that an existing account may be (a search by their name finds one, D55: the lead reading of 2026-11-27) - "Pas un doublon" closes one for good. Whose name and promo match an
    * existing account. "Rattacher" (D48) MARKS the duplicate - MiConnect moves its Alumni link onto
    * the existing account and deletes it at its next Alumni sign-in, and its Canari account is erased
    * after that merge - so the confirmation first NAMES what the duplicate holds in Canari, counted by
    * the services that hold it. THE ADMIN VERIFIES (D51): the duplicate shows what the Alumni base
    * holds (its e-mail, its `af_id`, the name it signed up with), the existing account its name, promo and
    * last MiConnect sign-in - a homonym is not the same person, and the Alumni e-mail is how to ask. The open merges (marked, or interrupted) are listed below, each cancellable, an
-   * interrupted one resumable. Global admin only.
+   * interrupted one resumable, with its mode and, for a manual one, its reason. "Rattacher à un autre
+   * compte" (D55) attaches a duplicate to an account the admin searches for, with a written reason -
+   * the only way for an Alumni account that matches nobody, listed apart. The completed merges show
+   * what each sibling site did of them (D52-D54). Global admin only.
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { RefreshCw, Link2, RotateCcw, X } from '@lucide/svelte';
+  import { RefreshCw, Link2, RotateCcw, X, UserSearch, UserX } from '@lucide/svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import AlumniManualMerge from '$lib/components/admin/AlumniManualMerge.svelte';
   import { Log } from '$lib/utils/Log';
   import { isGlobalAdmin } from '$lib/stores/user';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import { intlLocale } from '$lib/utils/intlLocale';
   import {
     alumniMergeErrorMessage,
+    alumniSiteLine,
     cancelAlumniMerge,
+    dismissAlumniDuplicate,
+    fetchAlumniClosedMerges,
     fetchAlumniDuplicates,
     fetchAlumniHoldings,
     fetchAlumniOpenMerges,
     mergeAlumniDuplicate,
     type AlumniAccount,
+    type AlumniClosedMerge,
     type AlumniDuplicate,
     type AlumniHoldings,
     type AlumniOpenMerge,
@@ -38,6 +47,11 @@
 
   let rows = $state<AlumniDuplicate[]>([]);
   let merges = $state<AlumniOpenMerge[]>([]);
+  let closed = $state<AlumniClosedMerge[]>([]);
+  /** The duplicate whose manual merge form is open, at most one. */
+  let manualFor = $state<string | null>(null);
+  const flagged = $derived(rows.filter((r) => r.targets.length > 0));
+  const unpaired = $derived(rows.filter((r) => r.targets.length === 0));
   let loading = $state(true);
   let error = $state('');
   let notice = $state('');
@@ -45,6 +59,8 @@
     duplicate: AlumniAccount;
     target: AlumniAccount;
     held: AlumniHoldings;
+    /** Set for a manual merge (D55): the admin's written reason. */
+    reason?: string;
   } | null>(null);
   let busy = $state(false);
 
@@ -52,7 +68,11 @@
     loading = true;
     error = '';
     try {
-      [rows, merges] = await Promise.all([fetchAlumniDuplicates(), fetchAlumniOpenMerges()]);
+      [rows, merges, closed] = await Promise.all([
+        fetchAlumniDuplicates(),
+        fetchAlumniOpenMerges(),
+        fetchAlumniClosedMerges(),
+      ]);
     } catch (err) {
       Log.d('admin.alumni-duplicates.load failed', err);
       error = alumniMergeErrorMessage(err);
@@ -62,12 +82,12 @@
   }
 
   /** The count of what the duplicate holds is read FIRST: no confirmation without it. */
-  async function askMerge(duplicate: AlumniAccount, target: AlumniAccount) {
+  async function askMerge(duplicate: AlumniAccount, target: AlumniAccount, reason?: string) {
     error = '';
     notice = '';
     busy = true;
     try {
-      confirming = { duplicate, target, held: await fetchAlumniHoldings(duplicate.uuid) };
+      confirming = { duplicate, target, reason, held: await fetchAlumniHoldings(duplicate.uuid) };
     } catch (err) {
       Log.d('admin.alumni-duplicates.holdings failed', err);
       error = alumniMergeErrorMessage(err);
@@ -81,8 +101,13 @@
     busy = true;
     error = '';
     try {
-      await mergeAlumniDuplicate(confirming.duplicate.uuid, confirming.target.uuid);
+      await mergeAlumniDuplicate(
+        confirming.duplicate.uuid,
+        confirming.target.uuid,
+        confirming.reason
+      );
       confirming = null;
+      manualFor = null;
       notice = m.alumni_duplicates_done();
       await load();
     } catch (err) {
@@ -127,6 +152,29 @@
     }
   }
 
+  /** "Pas un doublon": terminal for every admin, so it is asked before it is done. */
+  async function dismiss(duplicate: AlumniAccount) {
+    const ok = await showConfirm(m.alumni_duplicates_not_duplicate_confirm(), {
+      danger: true,
+      confirmLabel: m.alumni_duplicates_not_duplicate(),
+    });
+    Log.d('admin.alumni-duplicates.dismiss', { dup: duplicate.uuid.slice(0, 8), ok });
+    if (!ok) return;
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await dismissAlumniDuplicate(duplicate.uuid);
+      notice = m.alumni_duplicates_dismissed();
+      await load();
+    } catch (err) {
+      Log.d('admin.alumni-duplicates.dismiss failed', err);
+      error = alumniMergeErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
   const day = (iso: string) => new Date(iso).toLocaleDateString(intlLocale());
 
   const heldLines = (h: AlumniHoldings): string[] => [
@@ -145,6 +193,39 @@
     await load();
   });
 </script>
+
+{#snippet notDuplicate(duplicate: AlumniAccount)}
+  <Button
+    size="compact"
+    variant="secondary"
+    disabled={busy}
+    title={m.alumni_duplicates_not_duplicate_hint()}
+    onclick={() => void dismiss(duplicate)}
+  >
+    <UserX size={14} />
+    {m.alumni_duplicates_not_duplicate()}
+  </Button>
+{/snippet}
+
+{#snippet manual(duplicate: AlumniAccount)}
+  {#if manualFor === duplicate.uuid}
+    <AlumniManualMerge
+      {duplicate}
+      disabled={busy}
+      onSubmit={(target, reason) => void askMerge(duplicate, target, reason)}
+    />
+  {:else}
+    <Button
+      size="compact"
+      variant="secondary"
+      disabled={busy}
+      onclick={() => (manualFor = duplicate.uuid)}
+    >
+      <UserSearch size={14} />
+      {m.admin_alumni_manual_open()}
+    </Button>
+  {/if}
+{/snippet}
 
 {#snippet account(a: AlumniAccount, label: string)}
   <div class="min-w-0">
@@ -211,7 +292,7 @@
     <div class="text-text-muted text-sm">{m.alumni_duplicates_empty()}</div>
   {:else}
     <ul class="space-y-3">
-      {#each rows as row (row.duplicate.uuid)}
+      {#each flagged as row (row.duplicate.uuid)}
         <li
           class="bg-cn-surface space-y-3 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/10"
         >
@@ -229,9 +310,30 @@
               </Button>
             </div>
           {/each}
+          <div class="flex flex-wrap gap-2">
+            {@render manual(row.duplicate)}
+            {@render notDuplicate(row.duplicate)}
+          </div>
         </li>
       {/each}
     </ul>
+    {#if unpaired.length > 0}
+      <h2 class="text-text-main pt-2 text-sm font-semibold">{m.admin_alumni_unpaired_title()}</h2>
+      <p class="text-text-muted text-xs">{m.admin_alumni_unpaired_desc()}</p>
+      <ul class="space-y-3">
+        {#each unpaired as row (row.duplicate.uuid)}
+          <li
+            class="bg-cn-surface space-y-3 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/10"
+          >
+            {@render account(row.duplicate, m.alumni_duplicates_duplicate_label())}
+            <div class="flex flex-wrap gap-2">
+              {@render manual(row.duplicate)}
+              {@render notDuplicate(row.duplicate)}
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 
   {#if merges.length > 0}
@@ -250,6 +352,11 @@
             </p>
             <p class="text-text-muted truncate text-xs">
               {m.alumni_merges_into({ uuid: open.targetUuid })}
+            </p>
+            <p class="text-text-muted text-xs">
+              {open.mode === 'manual'
+                ? m.admin_alumni_mode_manual({ reason: open.reason ?? '' })
+                : m.admin_alumni_mode_auto()}
             </p>
           </div>
           <div class="flex gap-2">
@@ -273,6 +380,43 @@
       {/each}
     </ul>
   {/if}
+
+  {#if closed.length > 0}
+    <h2 class="text-text-main pt-2 text-sm font-semibold">{m.admin_alumni_closed_title()}</h2>
+    <ul class="space-y-3">
+      {#each closed as done (done.id)}
+        <li
+          class="bg-cn-surface space-y-1 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/10"
+        >
+          <p class="text-text-main truncate text-sm font-semibold">{done.duplicateUsername}</p>
+          <p class="text-text-muted truncate text-xs">
+            {done.completedBy === 'reconciler'
+              ? m.admin_alumni_closed_by_reconciler({ date: day(done.completedAt) })
+              : m.admin_alumni_closed_at({ date: day(done.completedAt) })}
+          </p>
+          <p class="text-text-muted truncate text-xs">
+            {m.alumni_merges_into({ uuid: done.targetUuid })}
+          </p>
+          <p class="text-text-muted text-xs">
+            {done.mode === 'manual'
+              ? m.admin_alumni_mode_manual({ reason: done.reason ?? '' })
+              : m.admin_alumni_mode_auto()}
+          </p>
+          {#if done.sites.length === 0}
+            <p class="text-amber-warn-text text-xs">{m.admin_alumni_sites_none()}</p>
+          {:else}
+            <ul class="text-xs">
+              {#each done.sites as site (site.site)}
+                <li class={site.state === 'blocked' ? 'text-red-err' : 'text-text-muted'}>
+                  {alumniSiteLine(site)}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
 </div>
 
 {#if confirming}
@@ -289,6 +433,12 @@
         </ul>
       {:else}
         <p class="text-text-main text-sm">{m.alumni_duplicates_held_nothing()}</p>
+      {/if}
+      {#if confirming.reason !== undefined}
+        <p class="text-text-main text-sm">
+          {m.admin_alumni_manual_confirm({ name: confirming.target.name })}
+        </p>
+        <p class="text-text-muted text-sm whitespace-pre-wrap">{confirming.reason}</p>
       {/if}
       <p class="text-text-muted text-sm">{m.alumni_duplicates_confirm_relink()}</p>
       <div class="flex justify-end gap-2">

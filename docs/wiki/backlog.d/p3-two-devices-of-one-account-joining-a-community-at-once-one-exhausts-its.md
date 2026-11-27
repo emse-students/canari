@@ -1,6 +1,6 @@
 ## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
 
-target: 1.9.0
+target: 1.9.2
 
 Seen on dev `1.5.0-alpha.1`. W4 and W8 are two devices of ONE account, which a user with two devices
 can produce by joining from both. They external-joined the community's key group in the same second.

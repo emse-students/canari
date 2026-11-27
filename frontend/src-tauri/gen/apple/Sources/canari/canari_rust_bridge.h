@@ -85,6 +85,15 @@ int32_t canari_native_graine_seed_held(
 /// writes nothing. Free with canari_free_string.
 char *canari_native_seal_cache_line(const char *cache_key_b64, const char *line);
 
+/// The title of a push for an UNNAMED group: its other members' first names, the app's rule
+/// (mobile/unnamed_group_label.rs). data_dir holds display_names.json and
+/// conversation_nicknames.json, members_json is the decrypt answer's `treeMembers` array, locale
+/// push_context.json's `locale`. Returns `{"label": ...}` or `{"label": null, "reason": ...}`;
+/// caller frees with canari_free_string.
+char *canari_native_unnamed_group_title(const char *data_dir, const char *user_id,
+                                        const char *group_id, const char *members_json,
+                                        const char *locale);
+
 unsigned char *canari_native_decrypt_media(
     const char *key_b64,
     const char *iv_b64,

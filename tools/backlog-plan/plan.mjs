@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
  * new one is INSERTED where its version falls (1.8.1 between 1.8.0 and 1.9.0), its opening logged in
  * roadmap.md.
  */
-export const TIERS = ['1.8.2', '1.8.3', '1.9.0', '1.10.0'];
+export const TIERS = ['1.8.3', '1.8.4', '1.8.5', '1.8.6', '1.8.7', '1.9.0', '1.9.1', '1.9.2', '1.10.0'];
 
 /** The title prefix that makes an entry a reading - owed a measurement and nothing else. */
 export const READING_PREFIX = 'Reading owed - ';

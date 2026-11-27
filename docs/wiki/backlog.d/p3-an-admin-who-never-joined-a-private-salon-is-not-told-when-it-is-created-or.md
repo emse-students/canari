@@ -1,6 +1,6 @@
 ## P3 - an admin who never joined a private salon is not told when it is created or deleted
 
-target: 1.9.0
+target: 1.8.7
 
 Not on the roster, so no `channel.deleted`; the sidebar keeps a stale row until the next load. **Do not widen the audience** (that is what leaked private-salon traffic to non-members); the shape that would work is a contentless `channel.gone` addressed to the community, worth doing only if the stale row is ever seen to matter.
 

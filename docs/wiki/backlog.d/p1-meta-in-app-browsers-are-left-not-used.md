@@ -1,6 +1,8 @@
 ## P1 - Every site refuses to run inside a Meta in-app browser and sends the visitor out
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Owner decision of 2026-11-25 ([decisions](../decisions/owner-decisions-of-2026-11-25.md)): Canari,
 MiConnect, MiGallery, Sky, Le Cercle and Portail-etu answer a page request from the browser built
@@ -16,5 +18,5 @@ and app-shell guard, MiConnect's generated `gate` service, rehearsed on a throwa
 
 1. The owner's one-off Cloudflare Cache Rule for dev ([the exact rule](../frontend/leaving-in-app-browsers.md#devs-cloudflare-cache---the-owners-one-off-rule)).
 2. The owner's readings on the `1.8.2` pre-release ([the list](../frontend/leaving-in-app-browsers.md#4-what-the-owner-reads-on-his-phone)).
-3. Sky, MiGallery, Portail-etu and Le Cercle, one pull request each ([the plan](../frontend/leaving-in-app-browsers.md#6-the-siblings---sky-migallery-portail-etu-le-cercle)).
+3. Release the four siblings (the pull requests are written: Sky #194 and Portail-etu #131 merged 2026-11-25, MiGallery #483 shipped in v2.25.0, Le Cercle merge request !42 open and green, byte-identical to this source) and take the owner's readings on each pre-release ([the plan](../frontend/leaving-in-app-browsers.md#6-the-siblings---sky-migallery-portail-etu-le-cercle)).
 4. MiConnect's `gate` on production, a hand step by the lead, ONLY once all four have shipped ([the step](../frontend/leaving-in-app-browsers.md#miconnect-in-production---the-hand-step)). Each stack's `gate absent` row of `infrastructure/deploy/image-drift-known.txt` (until 2026-12-31) leaves when that stack runs it; the date moves only with a reason written here.

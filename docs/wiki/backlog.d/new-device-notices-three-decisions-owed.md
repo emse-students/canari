@@ -1,6 +1,6 @@
 ## New-device notices: three decisions owed (built by #2278, 2026-10-22)
 
-target: 1.9.0
+target: 1.9.1
 
 **The three answered by the owner, 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)):
 1. **Yes**: a phone whose WebView is alive in the background also raises a LOCAL notification for a new

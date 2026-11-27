@@ -17,7 +17,6 @@ import {
   Building2,
   Cake,
   Info,
-  NotebookPen,
   RotateCcwClock,
   SlidersHorizontal,
   Tag,
@@ -44,7 +43,7 @@ export const PROFILE_SECTIONS = [
   'followers',
   'subscriptions',
   'career',
-  'notepad',
+  // The personal notepad is gone from here: it moved into "Mes notes" (`notepadMigration.ts`).
   'sponsorship',
   'info',
 ] as const;
@@ -64,7 +63,6 @@ const ENTRIES: Record<ProfileSection, ProfileEntry> = {
   followers: { label: () => m.profile_followers_heading(), icon: UserCheck },
   subscriptions: { label: () => m.profile_subs_heading(), icon: Tag },
   career: { label: () => m.profile_career_heading(), icon: RotateCcwClock },
-  notepad: { label: () => m.profile_notepad_heading(), icon: NotebookPen },
   sponsorship: { label: () => m.profile_public_sponsorship_heading(), icon: Users },
   info: { label: () => m.profile_info_heading(), icon: Info },
 };

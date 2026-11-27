@@ -1,6 +1,6 @@
 ## History withheld from a member device that let itself in (built 2026-10-27): what is still owed
 
-target: 1.9.0
+target: 1.9.2
 
 **Owner, 2026-11-19:** the lift of a seal is built ONLY once the seals are counted and honest users are
 shown to reach them (the weekly rate below); the user guide does not mention seals (*"trop technique"*) ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).

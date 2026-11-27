@@ -82,6 +82,16 @@ describe('message payload round trip', () => {
     });
   });
 
+  it('seals a vouched @tous with the row and reads it back, and refuses a non-boolean', () => {
+    expect(roundTrip({ ...BASE, everyoneVouched: true }).everyoneVouched).toBe(true);
+    expect(toMessagePayload(BASE)).not.toHaveProperty('everyoneVouched');
+    const hostile = fromMessagePayload(
+      { id: 'm', conversationId: 'c', timestamp: 1 },
+      { senderId: 's', content: 'x', everyoneVouched: 'yes' }
+    );
+    expect(hostile.everyoneVouched).toBeUndefined();
+  });
+
   it('stores no proof cleared with null, and refuses a malformed one on read', () => {
     // A deletion purges the original bytes at rest by patching `authorship: null`.
     const purged = toMessagePayload(
