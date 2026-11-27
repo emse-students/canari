@@ -164,7 +164,7 @@ for (const port of ports) {
 }
 if (!adminerService) fail('the adminer service was not found in the production compose');
 
-// THE IMAGE IS UPSTREAM'S, WITH `libpq` UPGRADED, BUILT BY THE RELEASE (owner, 2026-11-13): the scan reads
+// THE IMAGE IS UPSTREAM'S, WITH `libxml2` UPGRADED, BUILT BY THE RELEASE (owner, 2026-11-13): the scan reads
 // the built image, so production must run exactly that one. Temporary - docs/wiki/legacy-compatibility.md.
 const ownImage = /^\s*image:\s*\$\{REGISTRY:-ghcr\.io\}\/\$\{IMAGE_PREFIX:-emse-students\/canari\}\/adminer:\$\{TAG:-latest\}\s*$/m;
 if (!ownImage.test(adminerService)) {
@@ -187,8 +187,8 @@ if (from.length !== 1 || !/^FROM\s+adminer:[\w.-]+@sha256:[0-9a-f]{64}$/.test(fr
   fail(`Dockerfile.adminer must have ONE stage, FROM upstream adminer pinned by tag and digest (got ${from.join(' | ')})`);
 }
 const runs = adminerDockerfile.filter((l) => /^RUN\s/i.test(l));
-if (runs.length !== 1 || runs[0] !== "RUN apk upgrade --no-cache libpq libxml2 && apk info -e 'libpq>=18.7-r0' && apk info -e 'libxml2>=2.13.9-r3'") {
-  fail(`Dockerfile.adminer may only upgrade libpq and libxml2 (got ${runs.join(' | ')})`);
+if (runs.length !== 1 || runs[0] !== "RUN apk upgrade --no-cache libxml2 && apk info -e 'libxml2>=2.13.9-r5'") {
+  fail(`Dockerfile.adminer may only upgrade libxml2 (got ${runs.join(' | ')})`);
 }
 if (adminerDockerfile.at(-1) !== 'USER adminer') {
   fail('Dockerfile.adminer must end as the user the upstream image runs as, `USER adminer`');
@@ -196,7 +196,7 @@ if (adminerDockerfile.at(-1) !== 'USER adminer') {
 if (!/\[adminer\]="\.\/infrastructure\/local\/Dockerfile\.adminer"/.test(read('.github', 'workflows', 'build.yml'))) {
   fail('build.yml does not build Dockerfile.adminer, so no release pushes the image production runs');
 }
-// A cached `apk upgrade` layer could carry an old libpq while the scan builds fresh (review of #3442).
+// A cached `apk upgrade` layer could carry an old libxml2 while the scan builds fresh (review of #3442).
 // A plain OR of `matrix.name == '<name>'` terms, one of them adminer: `... && false` must not pass.
 const noCacheTerms = read('.github', 'workflows', 'build.yml')
   .match(/^\s*no-cache:\s*\$\{\{\s*(matrix\.name == '[\w-]+'(?:\s*\|\|\s*matrix\.name == '[\w-]+')*)\s*\}\}\s*$/m)?.[1]

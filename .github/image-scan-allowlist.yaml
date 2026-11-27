@@ -369,6 +369,37 @@ vulnerabilities:
       - "pkg:apk/alpine/libxml2@2.13.9-r2"
     statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.8-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads (nginx -T, 2026-11-10); postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses (the one xpath() is a dev reset script counting rows over our own query_to_xml), and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r3; newest postgres:18-alpine ff64c9e3 and nginx:1.31.8-alpine fed7e14b carry r2); remove when the pins are rebuilt."
 
+  # --- libxml2 2.13.9-r2, Alpine 3.24 (2026-11-27) ----------------------------------------------
+  # Six more HIGH advisories on the same package, fixed by Alpine in 2.13.9-r4/r5. The images this
+  # repository BUILDS ship r5 (Dockerfile.adminer and Dockerfile.frontend assert `libxml2>=2.13.9-r5`,
+  # #4189). Left: the upstream images compose runs as-is - both postgres:18-alpine pins and the
+  # nginx:1.31.9-alpine edge - whose newest digests still carry r2 (read 2026-11-27). Same exposure as
+  # CVE-2026-86144 above; scoped by purl, so the rescan retires them the day the pins move.
+  - id: CVE-2026-11979
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+  - id: CVE-2026-86138
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+  - id: CVE-2026-86139
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+  - id: CVE-2026-86140
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+  - id: CVE-2026-86142
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+  - id: CVE-2026-86143
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.9-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads; postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses, and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r5; the newest postgres:18-alpine and nginx:1.31.9-alpine digests carry r2); remove when the pins are rebuilt."
+
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.6 -------------------------------
   # An upstream image this repository cannot rebuild. Which one RUNS is the pin of
   # infrastructure/authentik/compose.yml since 2026-11-13: the release deploys it (deploy-stack.sh),
