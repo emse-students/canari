@@ -67,7 +67,14 @@ import {
   purgeOrphanGroup,
   historyRangeStartFor,
   sendHistoryRangeRequest,
+  grantHistoryToNewcomer,
 } from '$lib/utils/chat/groupActions';
+import {
+  canOfferHistoryTo,
+  floorDrawsGrantNotice,
+  HISTORY_GRANT_NOTICE_FIRST_VERSION,
+} from '$lib/utils/chat/historyGrant';
+import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
 import {
   clearPendingGroupExit,
   classifyExitFailure,
@@ -2951,6 +2958,62 @@ export function useConversations() {
     if (current) conversations.set(key, { ...current, ...patch });
   }
 
+  /**
+   * Whether the selected conversation's `memberAdded` notice offers "Envoyer l'historique des
+   * messages" for `userId` - the newcomer predicate (`canOfferHistoryTo`), read against the roster
+   * this composable holds for the selected group, and gated on the served client floor
+   * (`floorDrawsGrantNotice`: every admitted build must draw the grant's notice, principle 1).
+   */
+  function canSendHistoryTo(userId: string, selfId: string): boolean {
+    const key = selectedContact;
+    const minClientVersion = getAppVersionCheck()?.minClientVersion ?? null;
+    noteHistoryGrantFloor(minClientVersion);
+    return canOfferHistoryTo({
+      conversation: key ? conversations.get(key) : null,
+      target: userId,
+      self: selfId,
+      members: groupMembers,
+      minClientVersion,
+    });
+  }
+
+  /**
+   * The floor the grant gate last read, so its decision is said once per change - the predicate
+   * runs at every render of every `memberAdded` notice.
+   */
+  let historyGrantFloorSeen: string | null | undefined = undefined;
+
+  /** Logs, at debug and once per value, whether the served floor lets a grant be offered. */
+  function noteHistoryGrantFloor(minClientVersion: string | null) {
+    if (minClientVersion === historyGrantFloorSeen) return;
+    historyGrantFloorSeen = minClientVersion;
+    console.debug(
+      `[HISTORY_GRANT] client floor ${minClientVersion ?? 'unknown'} - "Envoyer l'historique" ${floorDrawsGrantNotice(minClientVersion) ? 'offered' : `not offered (below ${HISTORY_GRANT_NOTICE_FIRST_VERSION}, the first build that draws the notice)`}`
+    );
+  }
+
+  /**
+   * Grants `newcomer` the history THIS device holds in the selected group from `since` (owner,
+   * 2026-11-25, `historyGrant.ts`): the visible notice every member reads, this device's own row
+   * included. Throws when it could not be sent, so the dialog says so.
+   */
+  async function handleSendHistory(newcomer: string, since: number, ctx: ConversationContext) {
+    const key = selectedContact;
+    const convo = key ? conversations.get(key) : undefined;
+    if (!key || !convo || !canSendHistoryTo(newcomer, ctx.userId)) {
+      ctx.log(`[HISTORY_GRANT] no grant to ${newcomer.slice(0, 8)} from here - not offered`);
+      return;
+    }
+    await grantHistoryToNewcomer({
+      mlsService: ctx.ensureMls(),
+      groupId: convo.id,
+      userId: ctx.userId,
+      newcomer,
+      since,
+      own: { contactName: key, actor: ctx.userId, addMessageToChat: ctx.addMessageToChat },
+    });
+  }
+
   /** Renames the currently selected group on the server, broadcasts the change via MLS, and writes this device's own notice under the frame's id. No-op for DMs and channels. */
   async function handleRenameGroup(name: string, ctx: ConversationContext) {
     const key = selectedContact;
@@ -3437,6 +3500,8 @@ export function useConversations() {
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */
     handleRenameGroup,
+    canSendHistoryTo,
+    handleSendHistory,
     /** Sets the currently selected group's avatar and broadcasts the change. */
     handleSetGroupImage,
     /** Deletes the currently selected group and clears the UI. */

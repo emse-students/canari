@@ -1,6 +1,11 @@
 import type { Conversation, MessageReaction } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
-import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
+import {
+  canonicalIdentity,
+  canonicalUserId,
+  canonicalUserOf,
+  sameDeviceIdentity,
+} from '$lib/mls-client/leafIdentity';
 import {
   serializeEnvelope,
   applyEditToBody,
@@ -66,7 +71,14 @@ import {
   sendHistoryBundleForIds,
   nameAnswerSender,
   sendHistoryDigest,
+  sendHistoryGrantAsk,
 } from '$lib/utils/chat/groupActions';
+import {
+  HISTORY_GRANT_ASK_EVENT,
+  HISTORY_GRANT_EVENT,
+  issuedGrantFor,
+  parseHistoryGrant,
+} from '$lib/utils/chat/historyGrant';
 import {
   derivedUnreadCount,
   mergeReadWatermarks,
@@ -1020,6 +1032,105 @@ export async function handleSystemEvent(
     return true;
   }
 
+  // A MEMBER GRANTED A NEWCOMER THEIR HISTORY (owner, 2026-11-25, `historyGrant.ts`). The frame IS the
+  // notice every member reads, so it is drawn on every device; the newcomer's own devices also ask
+  // the granting device for that history, sealed to their ask.
+  if (event === HISTORY_GRANT_EVENT) {
+    if (convo.conversationType !== 'group') {
+      console.error(
+        `[HISTORY_GRANT] REFUSED a grant from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… - only a private group carries one (this is a ${convo.conversationType ?? 'conversation of no type'})`
+      );
+      return true;
+    }
+    const read = parseHistoryGrant(data, senderNorm, deliveryMeta?.senderDeviceId);
+    if ('refused' in read) {
+      console.error(
+        `[HISTORY_GRANT] REFUSED a grant from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… - ${read.refused}`
+      );
+      return true;
+    }
+    const text = await visibleNoticeContent(HISTORY_GRANT_EVENT, data, senderNorm);
+    if (text) await writeNotice(text, messageId);
+    const grant = read.grant;
+    if (canonicalUserId(grant.newcomer) !== canonicalUserId(userId)) {
+      log(
+        `[HISTORY_GRANT] ${senderNorm.slice(0, 8)} granted ${grant.newcomer.slice(0, 8)} their history in ${convoKey.slice(0, 8)}… - notice drawn`
+      );
+      return true;
+    }
+    // OURS: asked once the mailbox drained, like every ask - a digest computed mid-drain describes
+    // a store still being completed.
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    log(
+      `[HISTORY_GRANT] ${senderNorm.slice(0, 8)} granted us their history in ${convoKey.slice(0, 8)}… from ${grant.since > 0 ? new Date(grant.since).toISOString() : 'the beginning'} - asking ${grant.granter}`
+    );
+    answerAfterMailboxDrained(mlsService, convoKey, () =>
+      sendHistoryGrantAsk(convoKey, grant, me, {
+        storage,
+        deviceKeyB64: deviceKey(),
+        mlsService,
+        log,
+      })
+        .then(() => undefined)
+        .catch((e) =>
+          log(`[HISTORY_GRANT] Ask failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`)
+        )
+    );
+    return true;
+  }
+
+  // THE NEWCOMER'S ASK UNDER A GRANT: answered by the granting device alone, and only against a
+  // grant that very device recorded, to that very person (`issuedGrantFor`). Every other member
+  // ignores it - it is addressed (`to`), and the history it asks for is the granter's own.
+  if (event === HISTORY_GRANT_ASK_EVENT) {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (!sameDeviceIdentity(String(data?.to ?? ''), me)) return true;
+    const from = probeSender(data, senderNorm, log, 'HISTORY_GRANT');
+    if (!from) return true;
+    const grantId = typeof data?.grantId === 'string' ? data.grantId : '';
+    const grant = issuedGrantFor(userId, convoKey, grantId, senderNorm);
+    if (grant === null) {
+      console.error(
+        `[HISTORY_GRANT] REFUSED a grant ask from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… - this device issued no grant ${grantId.slice(0, 8) || '(none named)'} to them here`
+      );
+      return true;
+    }
+    const digest = parseHistoryDigest(data?.digest);
+    const asked = parseHistorySince(data?.since);
+    if (!digest || asked === null) {
+      log(`[HISTORY_GRANT] Malformed grant ask from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
+    const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_GRANT');
+    if (requestId === null) return true;
+    const answerKey = historyAskKey(data, senderNorm, convoKey, log, 'HISTORY_GRANT');
+    if (answerKey === null) return true;
+    // Never earlier than the grant: an ask reaching further back than what was granted is answered
+    // from the grant's date.
+    const since = Math.max(asked, grant.since);
+    log(
+      `[HISTORY_GRANT] ${senderNorm.slice(0, 8)} asks for the history we granted in ${convoKey.slice(0, 8)}… - answering from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
+    );
+    answerAfterMailboxDrained(mlsService, convoKey, () =>
+      answerHistoryDigest({
+        groupId: convoKey,
+        requesterIdentity: from,
+        selfIdentity: me,
+        digest,
+        since,
+        requestId,
+        answerKey,
+        grantSince: grant.since,
+        deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
+      }).catch((e) =>
+        log(
+          `[HISTORY_GRANT] Answer failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+        )
+      )
+    );
+    return true;
+  }
+
   // Scrollback: a reader reached the top of what their device holds and is asking for the page
   // before it. Same rendezvous, same election, different boundary - and bounded by `limit`, so the
   // answer is one page whatever the conversation's size.
@@ -1621,6 +1732,9 @@ export async function handleSystemEvent(
     // The answer to OUR register ask (`registerOwed.ts`): the other one - the state this device was
     // owed since its admission, asked for because the push may never have reached it.
     let registerAnswer = false;
+    // The start date of the history grant this answer was taken under (`historyGrant.ts`), set only
+    // for a sealed, addressed answer to our grant ask from its granter.
+    let grantSince: number | undefined;
     // Where the conversation STATE an answer restates is read from: the frame itself, or - for a
     // sealed answer - what opened under our ask, never the clear routing beside it.
     let bundleState: any = data;
@@ -1718,6 +1832,9 @@ export async function handleSystemEvent(
         return true;
       }
       const ask = taken.ask;
+      // AN ANSWER UNDER OUR GRANT ASK: `takeAddressedAsk` took it from the granting device alone, so
+      // our pre-arrival drop is lifted from the grant's date for THIS answer and no other.
+      if (ask.kind === 'digest' && ask.grant !== undefined) grantSince = ask.grant.since;
       if (sealed !== undefined && !taken.keyed) {
         // Nothing honest seals an answer to an ask that carried no key - the join push today.
         console.error(
@@ -2008,7 +2125,8 @@ export async function handleSystemEvent(
           convoKey,
           userId,
           msgs.filter((m) => !existingIds.has(m.id)),
-          { mlsService, log }
+          { mlsService, log },
+          grantSince
         );
         // 1) WHAT THE BUNDLE MAY DO, decided by the ONE rule every bundle goes through, live or
         //    replayed from the archive (`bundleVetting.ts`): each message on its author's signature

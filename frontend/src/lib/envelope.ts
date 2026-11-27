@@ -51,7 +51,8 @@ export type NoticeEvent =
   | 'unvouchedDeviceEntry'
   | 'groupRenamed'
   | 'groupPhotoChanged'
-  | 'groupPhotoRemoved';
+  | 'groupPhotoRemoved'
+  | 'historyGranted';
 
 /** The structured fact behind a notice row: an event, the people it names and its one argument. */
 export interface NoticeSpec {
@@ -62,6 +63,8 @@ export interface NoticeSpec {
   targets?: string[];
   /** The new group name, for `groupRenamed`. */
   name?: string;
+  /** The start date of a history grant (server-clock ms, `0` = everything), for `historyGranted`. */
+  since?: number;
 }
 
 const NOTICE_EVENTS: readonly string[] = [
@@ -73,6 +76,7 @@ const NOTICE_EVENTS: readonly string[] = [
   'groupRenamed',
   'groupPhotoChanged',
   'groupPhotoRemoved',
+  'historyGranted',
 ];
 
 /** Reads a stored notice back, or `undefined` for anything that is not one. */
@@ -85,7 +89,10 @@ function readNotice(raw: unknown): NoticeSpec | undefined {
     ? n.targets.filter((t): t is string => typeof t === 'string' && t !== '')
     : undefined;
   // An addition or a removal names who it acted upon; without them the stored `text` is all there is.
-  if ((n.event === 'memberAdded' || n.event === 'memberRemoved') && !targets?.length) {
+  if (
+    (n.event === 'memberAdded' || n.event === 'memberRemoved' || n.event === 'historyGranted') &&
+    !targets?.length
+  ) {
     return undefined;
   }
   return {
@@ -93,6 +100,9 @@ function readNotice(raw: unknown): NoticeSpec | undefined {
     actor: n.actor,
     ...(targets ? { targets } : {}),
     ...(typeof n.name === 'string' ? { name: n.name } : {}),
+    ...(typeof n.since === 'number' && Number.isFinite(n.since) && n.since >= 0
+      ? { since: n.since }
+      : {}),
   };
 }
 

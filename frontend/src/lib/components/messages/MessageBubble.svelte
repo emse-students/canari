@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { CornerDownRight, Building2, Phone } from '@lucide/svelte';
+  import { CornerDownRight, Building2, History, Phone } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -139,6 +139,13 @@
      * call to place again, in this conversation. Absent where no call can be placed from here.
      */
     onCallBack?: () => void;
+    /**
+     * Whether a `memberAdded` notice offers "Envoyer l'historique des messages" for this added user
+     * (`canOfferHistoryTo`, the newcomer predicate). Absent where no grant can be made from here.
+     */
+    offerHistoryTo?: (userId: string) => boolean;
+    /** Opens the history grant for `userId` (`HistoryGrantDialog`). */
+    onSendHistory?: (userId: string) => void;
     /** Called when the user triggers the reply action. */
     onReply?: (messageId: string) => void;
     /** Called when the user triggers the forward action. */
@@ -223,6 +230,8 @@
     senderHeaderShown = false,
     onJoinChannel,
     onCallBack,
+    offerHistoryTo,
+    onSendHistory,
     onReply,
     onForward,
     onNavigateToMessage,
@@ -379,6 +388,15 @@
       });
     }
   });
+  /**
+   * The added users this `memberAdded` notice offers "Envoyer l'historique des messages" for - the
+   * newcomer predicate is the caller's (`offerHistoryTo`, `canOfferHistoryTo`), never a device's.
+   */
+  let historyGrantTargets = $derived(
+    notice?.event === 'memberAdded' && offerHistoryTo && onSendHistory
+      ? (notice.targets ?? []).filter((t) => offerHistoryTo(t))
+      : []
+  );
   let textContent = $derived(
     notice && envelope.kind === 'system'
       ? noticeDisplayText(notice, envelope.text, (id) => noticeNames[id] ?? peekUserDisplayName(id))
@@ -1120,6 +1138,33 @@
           <Phone size={12} strokeWidth={2.5} />
           {m.chat_system_call_back()}
         </Button>
+      {/if}
+      {#if historyGrantTargets.length > 0}
+        <div class="mt-1 flex flex-wrap justify-center gap-1">
+          {#each historyGrantTargets as target (target)}
+            <Button
+              variant="soft"
+              size="compact"
+              data-testid="history-grant-button"
+              onclick={() => onSendHistory?.(target)}
+            >
+              <History size={12} strokeWidth={2.5} />
+              {historyGrantTargets.length > 1
+                ? m.chat_history_grant_button_for({
+                    name: noticeNames[target] ?? peekUserDisplayName(target) ?? '',
+                  })
+                : m.chat_history_grant_button()}
+            </Button>
+          {/each}
+        </div>
+      {/if}
+      {#if notice?.event === 'historyGranted'}
+        <details class="mt-1">
+          <summary class="cursor-pointer underline-offset-2 hover:underline">
+            {m.chat_history_grant_learn_more()}
+          </summary>
+          <p class="mx-auto mt-1 max-w-sm">{m.chat_history_grant_explainer()}</p>
+        </details>
       {/if}
     </div>
   {/if}

@@ -920,6 +920,85 @@ itself and asks only about a new person):
 | Pins and read marks (the bundle's `state`) | METADATA only, accepted: the pin register (ids, pinned or not, a date) and the read watermarks travel even when every message is withheld; no content, and a pin naming a message the newcomer never received points at nothing |
 | A reply, a reaction or an edit sent AFTER the arrival about an earlier message | a reply carries its quoted `preview`, ACCEPTED as on WhatsApp (review of #2800, 2026-10-31); a reaction carries an id only; an edit of a message the receiver does not hold is refused (`mutationIsAuthorised`, no owner) |
 | Media by id | the blob is ciphertext; its key (CEK) travels only inside the message that carries it |
+| A member's history grant (owner, 2026-11-25) | the ONE exception, never silent: a member's press, a notice every member reads, the granter's own messages from a date it chose, sealed to the newcomer's ask; gaps still withheld ([below](#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)) |
+
+### A member may send their history to a newcomer (owner, 2026-11-25)
+
+**The decision** ([owner, 2026-11-25, item 5](../decisions/owner-decisions-of-2026-11-25.md)): under
+the notice that added someone to a private group, any member may press "Envoyer l'historique des
+messages" and send the newcomer what THEIR device holds, from a date they choose (24 h, 7 days, 30
+days, everything, or a calendar date). Every member sees "A a envoyé à X l'historique des messages
+échangés depuis : <date>" with an "En savoir plus". It is an explicit exception to the section
+above, whose default stands: nothing is sent unless a member presses. **Charter principle 1, *your
+messages are yours*** ([principes](../../principes.md)): the press hands over the OTHER members'
+messages too, so it is never silent - the grant IS the notice every member reads - and the server
+still sees ciphertext only. Private groups only: communities keep `shared`/`joined`, a 1:1 has no
+add path, "Mes notes" has nobody to add.
+
+**Built 2026-11-26 on the existing exchange, not beside it** (`historyGrant.ts`). The join push
+cannot carry it (it answers no ask, so it is not sealed and carries no message since 2026-11-17),
+and three layers drop a newcomer's past on purpose - the answerer's filter on the reader's
+`withheld` windows, the receiver's own drop, the server's stream. So:
+
+1. **The grant** - a VISIBLE system frame `historyGranted` (`sendVisibleNotice`: the acting device
+   writes its own row under the same id), naming the newcomer, the granting DEVICE (`user:device`)
+   and `since` (server-clock ms, `0` = everything). Every member draws it (`noticeText`, Paraglide
+   `chat_system_history_granted[_all]`), live and from the archive. Refused - no notice - when the
+   granter's user is not the MLS-verified sender or, the delivery naming the sending device, not
+   that device; a grant to oneself, a malformed one and one outside a private group are refused too.
+   The granter records the grant durably BEFORE it leaves (`ACCOUNT_KEY.historyGrantsIssued`, a
+   64-entry FIFO), so a reload between the press and the ask still answers it.
+2. **The newcomer's sealed ask** - each device of the newcomer that reads, LIVE, a grant naming its
+   user sends `history_grant_ask` once its mailbox drained: its digest, a fresh `requestId` and
+   `answerKey` (rule 1 of the seal), `to` = the granting device, the `grantId`, and `since` = the
+   later of the grant's date and its own history window. The ask is kept WITH the grant
+   (`HistoryAsk.grant`). A replayed grant asks nothing: it was live once.
+3. **The granter's answer** - only the device the ask names answers, and only against a grant IT
+   recorded, in that conversation, to the asker's user (`issuedGrantFor`; anything else is refused
+   at error). The answer is the ordinary diff (`answerHistoryDigest`), sealed and addressed, filtered
+   on the newcomer's OWN `withheld` windows with the span before their first arrival cut to start at
+   the grant's date (`liftArrivalSpan`). **Every gap stays withheld** - a Remove holds against a
+   re-add exactly as before - and the lift applies only to a reader the server names (`?for=`); a
+   reader older than us keeps the unlifted superset.
+4. **The receiver's lift** - `takeAddressedAsk` takes an answer to a grant ask from the granting
+   device ALONE (`not-the-granter` otherwise), and only then does the bundle handler pass the grant's
+   date to `dropOwnExcludedMessages`. Every other answer - the elected responder's, a scrollback
+   page, the join push - keeps the full pre-arrival drop. The merge dedupes by id and places by the
+   server time, as for any bundle.
+
+**The open design points, settled with the reversible option (lead, 2026-11-26):**
+
+- **Two members both send:** each press is its own grant and its own notice; the newcomer asks each
+  granter, and the second answer adds only what the first did not (the diff runs against the store
+  the first one filled). Nothing coordinates them.
+- **A size bound for "everything":** none beyond what every answer has - the asker's history window
+  (`historyRangeStartFor`) and the chunking of `sendBundleChunks` (200 messages a frame, the windows
+  read again per chunk). "Everything" is everything the granter holds within the newcomer's window.
+- **What the newcomer sees while it arrives:** the notice, then the messages landing in place as each
+  chunk is merged - no separate progress state.
+- **"En savoir plus"** is a disclosure under the notice (`chat_history_grant_explainer`), not a link
+  to a page: it says what was sent, by whom, and that the server saw nothing.
+- **The button** is drawn under a `memberAdded` notice only, for an added user who is still on the
+  roster and is not the viewer, in a ready private group, and only while the served client floor
+  draws the notice (`canOfferHistoryTo`; "Mixed versions" below). A member's further
+  device is added by itself and draws no `memberAdded`, so a new device of an existing member is
+  never offered it - it restores its own history.
+
+**Mixed versions - the grant waits for a floor (lead, 2026-11-27, reversible).** An older client
+ignores both frames (an unknown system event is acked silently): an older newcomer receives nothing,
+which is the decided default. But an older MEMBER draws no notice either, and the notice every member
+reads is the very condition the exception rests on - **charter principle 1, *your messages are
+yours*** ([principes](../../principes.md)): a hand-over of the other members' messages that some of
+them cannot see is a silent one. So the button is offered only while the server's `minClientVersion`
+(the `/api/version` answer the client already reads, `getAppVersionCheck`) is at or above
+`HISTORY_GRANT_NOTICE_FIRST_VERSION` (`1.8.3`, the first build that draws `historyGranted`):
+`floorDrawsGrantNotice`, inside `canOfferHistoryTo`, so the press path is gated by the same predicate;
+an unknown floor offers nothing, and the decision is logged at debug once per value. The receiving
+and answering paths are not gated - a grant can only exist once the floor allows it. Until the floor
+is raised to `1.8.3` (once both stores serve it) the button does not show. **What a grant ask does
+not survive:** a reload of the
+newcomer's page between its ask and the answer (the ask and its secret live in memory; the answer
+is then refused `no-open-ask`) - the member presses again.
 
 ### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
 
