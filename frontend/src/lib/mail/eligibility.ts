@@ -1,16 +1,26 @@
 /**
- * WHO MAY USE THE MAIL TAB (owner, 2026-11-27; docs/wiki/mail-client.md D1): an account whose
- * MiConnect address is on one of these domains, EXACTLY (no subdomain). The relay admits a socket
- * on the same list (apps/chat-gateway/src/mail_relay.rs, `MAIL_DOMAINS`); both equal
- * `libs/contracts/mail-domains.json`, which each side's test reads, so the tab and the relay cannot
- * disagree about who is eligible.
+ * WHO MAY USE THE MAIL TAB (owner, 2026-11-27; docs/wiki/mail-client-transport.md#eligibility): an
+ * account MiConnect hands a SCHOOL address for (claim `school_mail`, CAS accounts only), on one of
+ * these domains EXACTLY (no subdomain). core-service stores the CLASS at sign-in and the relay admits
+ * a socket on it (apps/chat-gateway/src/mail_relay.rs, `MAIL_CLASSES`); every side equals
+ * `libs/contracts/mail-domains.json`, which each side's test reads, so the tab, core-service and the
+ * relay cannot disagree about who is eligible.
  */
-export const MAIL_DOMAINS: readonly string[] = ['etu.emse.fr', 'emse.fr'];
+export const MAIL_CLASS_BY_DOMAIN: Readonly<Record<string, MailClass>> = {
+  'etu.emse.fr': 'student',
+  'emse.fr': 'staff',
+};
+
+/** The class of a school address: what the relay admits on, and all the server keeps of it. */
+export type MailClass = 'student' | 'staff';
 
 /**
- * Whether `domain` is one of {@link MAIL_DOMAINS}, case-insensitively. PURE and silent: the caller
- * that shows or hides the tab logs its decision.
+ * The class of `address` (`local@domain`, case-insensitive), or `null` when it is no school address.
+ * PURE and silent: the caller logs its decision, and never the address.
  */
-export function isMailEligibleDomain(domain: string | null | undefined): boolean {
-  return !!domain && MAIL_DOMAINS.includes(domain.trim().toLowerCase());
+export function mailClassOf(address: string | null | undefined): MailClass | null {
+  const normalized = (address ?? '').trim().toLowerCase();
+  const at = normalized.lastIndexOf('@');
+  if (at <= 0) return null;
+  return MAIL_CLASS_BY_DOMAIN[normalized.slice(at + 1)] ?? null;
 }

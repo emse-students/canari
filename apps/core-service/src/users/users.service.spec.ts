@@ -338,6 +338,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     cursus: [{ formation: 'ISMIN', promo: 2025 }],
     posts: ['ALUMNI' as const],
     alumniLinked: null,
+    mailClass: null,
   };
 
   function makeService(existing: Partial<User> | null, affected = 1) {
@@ -364,6 +365,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
         cursus: [],
         posts: [],
         alumniLinked: null,
+        mailClass: null,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
       warn.mockClear();
@@ -404,12 +406,22 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       cursus: [],
       posts: ['EMSE'],
       alumniLinked: false,
+      mailClass: null,
     });
     // The changed claims as one column update; the row read is never saved back.
     expect(save).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ id: 's1' }, expect.not.objectContaining({ admin: true }));
     expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(
-      ['alumniLinked', 'campus', 'cursus', 'formation', 'miconnectUuid', 'posts', 'promo'].sort()
+      [
+        'alumniLinked',
+        'campus',
+        'cursus',
+        'formation',
+        'mailClass',
+        'miconnectUuid',
+        'posts',
+        'promo',
+      ].sort()
     );
     expect(user).toMatchObject({
       campus: 'saint-etienne',
@@ -418,6 +430,23 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       promo: null,
       formation: null,
     });
+  });
+
+  it('refreshes the mail class at each sign-in, the class and never an address', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service, update } = makeService(stored);
+    await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', { ...profile, mailClass: 'student' });
+    expect(update).toHaveBeenCalledWith(
+      { id: 's1' },
+      expect.objectContaining({ mailClass: 'student' })
+    );
+    // And a claim that vanished takes the class away: not offered, never a stale "student".
+    const back = makeService({ ...stored, mailClass: 'student' });
+    await back.service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
+    expect(back.update).toHaveBeenCalledWith(
+      { id: 's1' },
+      expect.objectContaining({ mailClass: null })
+    );
   });
 
   it('does not write when nothing changed', async () => {

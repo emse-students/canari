@@ -155,6 +155,16 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
 fi
 echo "the profile editor reads users and writes through its one flow, and nothing else"
 
+# THE SCHOOL ADDRESS, EVALUATED. The mapping is code that decides who Canari's mail client is offered
+# to; it is run on accounts made for the test - CAS, Alumni, Alumni then CAS - and its bindings read
+# (infrastructure/authentik/test-school-mail-claim.py).
+echo "school_mail claim: evaluating the mapping on CAS and Alumni accounts"
+if ! run_ak_shell "$worker" <"$here/test-school-mail-claim.py" 2>&1 | tee >(cat >&2) | grep -x 'SCHOOL-MAIL-OK' >/dev/null; then
+  echo "::error::the school_mail claim does not go to exactly the accounts it is meant for - read the assertion above"
+  exit 1
+fi
+echo "the school address goes to CAS-created accounts on a school domain, on Canari's providers only"
+
 # THE EDITOR'S REACH, REPORTED as production's daily job reports it (editor-reach.sh): after the token
 # test above wrote through the flow and was refused everything else, the account holds exactly the
 # blueprint's grant and every write it authored is an expected one.
@@ -616,7 +626,10 @@ PY
   echo "reseau binding $plant by hand: the drift dry run reports it"
   bash "$here/apply-blueprints.sh" apply "$worker" >/dev/null 2>&1
 done
-if [ "$(bash "$here/apply-blueprints.sh" dry-run "$worker" 2>&1 | grep -E '^\[miconnect-blueprints\] [0-9]+ change\(s\)$')" != "[miconnect-blueprints] 0 change(s)" ]; then
+after="$(bash "$here/apply-blueprints.sh" dry-run "$worker" 2>&1 || true)"
+if [ "$(grep -E '^\[miconnect-blueprints\] [0-9]+ change\(s\)$' <<<"$after")" != "[miconnect-blueprints] 0 change(s)" ]; then
+  # The changes the dry run still sees: the evidence that tells a binding left out from another drift.
+  grep -E '^\[miconnect-blueprints\] (CREATED|CHANGED|DELETED|[0-9]+ change)' <<<"$after" || true
   echo "::error::the apply did not put the reseau binding back"
   exit 1
 fi

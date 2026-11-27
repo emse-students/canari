@@ -1,56 +1,28 @@
-import {
-  ConflictException,
-  Controller,
-  Get,
-  Headers,
-  Logger,
-  NotFoundException,
-  Param,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Controller, Get, Headers, Logger, NotFoundException, Param } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { User } from '../users/entities/user.entity';
-import { MiconnectReadError, MiconnectReaderClient } from '../auth/handoff/miconnect-reader.client';
+import { MAIL_CLASSES, type MailClass } from '../users/mail-class';
 import { RouteParams } from '../common/route-params';
 
-/** The typed `code` of the 404 for an account with no MiConnect link (or no row at all). */
+/** The typed `code` of the 404 for an id with no account row. */
 export const MAIL_ACCOUNT_UNKNOWN = 'MAIL_ACCOUNT_UNKNOWN';
-/** The typed `code` of the 503 when MiConnect could not be read (not configured, unreachable). */
-export const MAIL_DOMAIN_UNAVAILABLE = 'MAIL_DOMAIN_UNAVAILABLE';
-/** The typed `code` of the 409 when the MiConnect account linked to a row is another person's. */
-export const MAIL_IDENTITY_MISMATCH = 'MAIL_IDENTITY_MISMATCH';
 
 /**
- * The domain of an address, lowercased: what follows its LAST `@`, `null` when there is none.
- * Exported for its test; the one place an address is read is {@link InternalMailController}.
- */
-export function mailDomainOf(address: string | null): string | null {
-  if (!address) return null;
-  const at = address.lastIndexOf('@');
-  const domain =
-    at >= 0
-      ? address
-          .slice(at + 1)
-          .trim()
-          .toLowerCase()
-      : '';
-  return domain && !domain.includes(' ') ? domain : null;
-}
-
-/**
- * THE MAIL RELAY'S ELIGIBILITY SOURCE (docs/wiki/mail-client.md D1, D5;
- * docs/wiki/mail-client-transport.md#eligibility). chat-gateway admits a relay socket only for an
- * account whose MiConnect address is on a school domain, and Canari stores no address: the OIDC
- * sign-in carries none (the email claim is synthetic by design, 10-mappings.yaml). So the question
- * is asked of MiConnect when a relay socket opens, through the READ-ONLY reader account the
- * sign-in handoff already uses (`view_user`), and only the DOMAIN leaves this service.
+ * THE MAIL RELAY'S ELIGIBILITY SOURCE (docs/wiki/mail-client-transport.md#eligibility).
+ * chat-gateway admits a relay socket only for an account whose stored mail class is `student` or
+ * `staff`. The class is learnt AT SIGN-IN from MiConnect's `school_mail` claim (CAS accounts only,
+ * owner 2026-11-27) and kept in `users.mailClass`; this route reads that column and nothing else -
+ * no MiConnect call per connection, no address anywhere.
  *
- * Answers: 200 `{ domain }` (`null` for an inactive account or one with no address), 404
- * {@link MAIL_ACCOUNT_UNKNOWN}, 503 {@link MAIL_DOMAIN_UNAVAILABLE}, 409
- * {@link MAIL_IDENTITY_MISMATCH}. The gateway admits on a listed domain, refuses on a 200 or a 404,
- * and answers 503 on anything else - a question nobody could answer is never "not eligible".
+ * WHY A ROUTE AND NOT A CLAIM IN THE ACCESS TOKEN (sessions.md): the access token is minted at
+ * every refresh, which never sees MiConnect's claims, so a claim there would be this same column
+ * read anyway; and the token rides on every request to every service, while only the relay needs
+ * the class - charter principle 1 keeps it where it is used.
+ *
+ * Answers: 200 `{ mailClass }` (`null` - not offered), 404 {@link MAIL_ACCOUNT_UNKNOWN} when there
+ * is no row. A value in the column that is not a known class is answered `null` and accused.
  *
  * NOT reachable through nginx (`/api/internal` has no location), and gated on INTERNAL_SECRET.
  */
@@ -61,61 +33,33 @@ export class InternalMailController {
 
   constructor(
     @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
-    private readonly reader: MiconnectReaderClient
+    private readonly userRepo: Repository<User>
   ) {}
 
-  /** The domain of the MiConnect address of account `id`, for the mail relay's admission. */
-  @Get('users/:id/mail-domain')
-  async mailDomain(
+  /** The mail class of account `id`, for the mail relay's admission. */
+  @Get('users/:id/mail-class')
+  async mailClass(
     @Param('id') id: string,
     @Headers('x-internal-secret') secret?: string
-  ): Promise<{ domain: string | null }> {
+  ): Promise<{ mailClass: MailClass | null }> {
     assertInternalSecret(secret);
     const short = id.slice(0, 8);
-    this.logger.debug(`internal mail-domain asked id=${short}`);
-    const user = await this.userRepo.findOne({ where: { id } });
-    if (!user?.miconnectUuid) {
-      this.logger.debug(
-        `internal mail-domain id=${short}: ${user ? 'no MiConnect link' : 'no row'}`
-      );
-      throw new NotFoundException({ code: MAIL_ACCOUNT_UNKNOWN, message: 'No MiConnect account.' });
+    const user = await this.userRepo.findOne({
+      where: { id },
+      select: { id: true, mailClass: true },
+    });
+    if (!user) {
+      this.logger.debug(`internal mail-class id=${short}: no row`);
+      throw new NotFoundException({ code: MAIL_ACCOUNT_UNKNOWN, message: 'No such account.' });
     }
-    let account;
-    try {
-      account = await this.reader.findAccount(user.miconnectUuid);
-    } catch (err) {
-      if (err instanceof MiconnectReadError) {
-        this.logger.warn(
-          `internal mail-domain id=${short}: MiConnect ${err.failure} (${err.detail}) - 503`
-        );
-        throw new ServiceUnavailableException({
-          code: MAIL_DOMAIN_UNAVAILABLE,
-          failure: err.failure,
-          message: 'MiConnect could not be read.',
-        });
-      }
-      throw err;
-    }
-    if (!account) {
-      this.logger.debug(`internal mail-domain id=${short}: MiConnect knows no such account`);
-      throw new NotFoundException({ code: MAIL_ACCOUNT_UNKNOWN, message: 'No MiConnect account.' });
-    }
-    if (account.uid !== id) {
-      // The uuid link names another person's account: answering for it would hand one person's
-      // eligibility to another. A fault to read, never an answer.
+    const stored = user.mailClass ?? null;
+    const mailClass = stored !== null && MAIL_CLASSES.includes(stored) ? stored : null;
+    if (stored !== null && mailClass === null) {
       this.logger.error(
-        `internal mail-domain id=${short}: the linked MiConnect account's uid is ${account.uid.slice(0, 8)} - 409`
+        `internal mail-class id=${short}: stored class ${JSON.stringify(stored)} is not a known class - answered null`
       );
-      throw new ConflictException({
-        code: MAIL_IDENTITY_MISMATCH,
-        message: 'The linked MiConnect account is not this one.',
-      });
     }
-    const domain = account.isActive ? mailDomainOf(account.email) : null;
-    this.logger.debug(
-      `internal mail-domain id=${short}: active=${account.isActive} domain=${domain ?? 'none'}`
-    );
-    return { domain };
+    this.logger.debug(`internal mail-class id=${short}: ${mailClass ?? 'none'}`);
+    return { mailClass };
   }
 }

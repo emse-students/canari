@@ -27,6 +27,7 @@ import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.gua
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
+import { readSchoolMail } from '../users/mail-class';
 import { UsersService } from '../users/users.service';
 import { UserRowGoneError } from '../users/user-write';
 import { PlatformService } from '../platform/platform.service';
@@ -562,6 +563,14 @@ export class AuthController {
        * MiConnect").
        */
       id_token?: string;
+      /**
+       * The account's SCHOOL address (claim `school_mail`), handed to the client for ONE use - it
+       * prefills the mail client's sign-in on this device - and stored nowhere on the server, which
+       * keeps only its class (`users.mailClass`, charter principle 1). Absent when MiConnect sent
+       * none: an Alumni-created account, an address off the school domains, or a MiConnect whose
+       * blueprint does not emit the claim yet (docs/wiki/mail-client-transport.md#eligibility).
+       */
+      school_mail?: string;
     }
   > {
     const { code, redirect_uri, code_verifier } = body ?? {};
@@ -687,9 +696,17 @@ export class AuthController {
       );
     }
 
+    // The address leaves with this answer and is kept nowhere here; only its class was stored, by
+    // the upsert above. Logged by class, never by value.
+    const schoolMail = readSchoolMail(userinfo.school_mail);
+    this.logger.debug(
+      `[AUTH] sign-in user=${userinfo.sub.slice(0, 8)} mail class=${schoolMail?.mailClass ?? 'none'}`
+    );
+
     return {
       ...issued,
       ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
+      ...(schoolMail ? { school_mail: schoolMail.address } : {}),
     };
   }
 

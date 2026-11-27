@@ -37,6 +37,7 @@ const MAIL_TLS_ERROR_KINDS = [
   'certificate',
   'peer_alert',
   'protocol',
+  'incompatible',
   'closed',
   'internal',
 ] as const;
@@ -65,6 +66,24 @@ export function asMailTlsError(err: unknown): MailTlsError {
   return new MailTlsError('internal', detail);
 }
 
+/** Why the `mail-tls` WASM could not be loaded - typed at the throw. */
+export type MailTlsLoadErrorKind =
+  /** The binary's URL answered a status other than 200. */
+  | 'http_status'
+  /** The download, the module import or the instantiation failed. */
+  | 'unavailable';
+
+/** The `mail-tls` WASM could not be loaded; the next connection asks again. */
+export class MailTlsLoadError extends Error {
+  constructor(
+    readonly kind: MailTlsLoadErrorKind,
+    detail: string
+  ) {
+    super(`mail-tls WASM ${kind}: ${detail}`);
+    this.name = 'MailTlsLoadError';
+  }
+}
+
 /** The deadline of the WASM's download, as every first-party fetch has one. */
 const WASM_FETCH_DEADLINE_MS = 15_000;
 
@@ -88,7 +107,7 @@ export function loadMailTlsEngine(): Promise<TlsEngineFactory> {
       signal: AbortSignal.timeout(WASM_FETCH_DEADLINE_MS),
     });
     if (!response.ok) {
-      throw new Error(`mail-tls WASM answered ${response.status} at ${url}`);
+      throw new MailTlsLoadError('http_status', `HTTP ${response.status} at ${url}`);
     }
     await bindings.default({ module_or_path: response });
     Log.d('MAIL-TLS', 'mail-tls WASM ready');
@@ -96,8 +115,10 @@ export function loadMailTlsEngine(): Promise<TlsEngineFactory> {
   })().catch((err: unknown) => {
     // Not remembered: the next connection asks again rather than inheriting this failure.
     enginePromise = null;
-    Log.w('MAIL-TLS', 'the mail-tls WASM could not be loaded', err);
-    throw err;
+    const typed =
+      err instanceof MailTlsLoadError ? err : new MailTlsLoadError('unavailable', String(err));
+    Log.w('MAIL-TLS', `the mail-tls WASM could not be loaded (${typed.kind})`, err);
+    throw typed;
   });
   return enginePromise;
 }
@@ -110,12 +131,23 @@ export interface PlaintextStream {
   read(): Promise<Uint8Array | null>;
   /** Whether the stream ended (the far side closed, a failure, or {@link close}). */
   readonly ended: boolean;
+  /**
+   * How it ended, `null` while it runs. Only `tls_closed` - the server's close_notify - proves that
+   * everything the server sent arrived; any other end may have cut a response anywhere.
+   */
+  readonly end: StreamEnd | null;
   /** Ends the stream: a close_notify, then the transport. */
   close(): void;
 }
 
-/** Why a plaintext stream ended: the transport's end, or the TLS failure that ended it. */
-export type StreamEnd = TransportEnd | { kind: 'tls'; error: MailTlsError };
+/**
+ * Why a plaintext stream ended: the server's TLS close_notify (`tls_closed`, the one end that
+ * proves nothing was cut), the transport's own end, or the TLS failure that ended it.
+ */
+export type StreamEnd =
+  | { kind: 'tls_closed' }
+  | TransportEnd
+  | { kind: 'tls'; error: MailTlsError };
 
 /**
  * Opens a TLS connection over a transport from `open`, with a session from `newEngine`, and
@@ -245,7 +277,7 @@ export class TlsConnection implements PlaintextStream {
     void this.flush().catch((err: unknown) => Log.d('MAIL-TLS', 'flush after receive failed', err));
     if (this.engine.peerClosed()) {
       Log.d('MAIL-TLS', 'the server sent its close_notify');
-      this.finish({ kind: 'peer_closed' });
+      this.finish({ kind: 'tls_closed' });
       this.transport?.close();
     }
     this.wakeReaders();

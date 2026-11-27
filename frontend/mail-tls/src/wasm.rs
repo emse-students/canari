@@ -62,7 +62,7 @@ impl MailTlsClient {
 
     /// Whether the server sent its close_notify.
     #[wasm_bindgen(js_name = peerClosed)]
-    pub fn peer_closed(&mut self) -> bool {
+    pub fn peer_closed(&self) -> bool {
         self.inner.peer_closed()
     }
 

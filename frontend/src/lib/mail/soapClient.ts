@@ -15,14 +15,19 @@ export const MAIL_HOST = 'partage.emse.fr';
 /** Zimbra's SOAP endpoint, JSON flavour. */
 const SOAP_PATH = '/service/soap';
 
-/** A Zimbra fault, typed by its `Code` (`service.AUTH_REQUIRED`, `account.AUTH_FAILED`, ...). */
+/**
+ * A Zimbra fault, typed by its `Code` (`service.AUTH_REQUIRED`, `account.AUTH_FAILED`, ...).
+ *
+ * Its message carries the code and the status ONLY. The fault's `Reason.Text` is server prose that
+ * can quote what the call carried (an address, a folder name, a search), and an error message is
+ * what ends up in a log line, so the text is never kept.
+ */
 export class ZimbraFault extends Error {
   constructor(
     readonly code: string,
-    readonly status: number,
-    detail: string
+    readonly status: number
   ) {
-    super(`Zimbra fault ${code} (HTTP ${status}): ${detail}`);
+    super(`Zimbra fault ${code} (HTTP ${status})`);
     this.name = 'ZimbraFault';
   }
 }
@@ -50,7 +55,6 @@ export function soapEnvelope(body: Record<string, unknown>, authToken?: string):
 
 interface FaultShape {
   Code?: { Value?: string };
-  Reason?: { Text?: string };
   Detail?: { Error?: { Code?: string } };
 }
 
@@ -64,7 +68,9 @@ export function readSoapAnswer(status: number, body: Uint8Array): Record<string,
   try {
     parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
   } catch (err) {
-    throw new ZimbraUnreadableAnswer(status, `not JSON (${body.length} bytes): ${String(err)}`);
+    // The parser's text quotes the input around the fault: only its class and the length are kept.
+    const kind = err instanceof Error ? err.name : typeof err;
+    throw new ZimbraUnreadableAnswer(status, `not JSON (${body.length} bytes, ${kind})`);
   }
   const envelopeBody = (parsed as { Body?: Record<string, unknown> } | null)?.Body;
   if (!envelopeBody || typeof envelopeBody !== 'object') {
@@ -73,7 +79,7 @@ export function readSoapAnswer(status: number, body: Uint8Array): Record<string,
   const fault = envelopeBody.Fault as FaultShape | undefined;
   if (fault) {
     const code = fault.Detail?.Error?.Code ?? fault.Code?.Value ?? 'unknown';
-    throw new ZimbraFault(code, status, fault.Reason?.Text ?? '');
+    throw new ZimbraFault(code, status);
   }
   if (status !== 200) {
     throw new ZimbraUnreadableAnswer(status, 'a non-200 answer without a Fault');

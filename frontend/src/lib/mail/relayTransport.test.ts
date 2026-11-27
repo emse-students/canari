@@ -62,6 +62,7 @@ describe('mailRelayUrl', () => {
 describe('relayEnd', () => {
   it("reads the end from the relay's close code", () => {
     expect(relayEnd(RELAY_CLOSE.UPSTREAM_CLOSED, false)).toEqual({ kind: 'peer_closed' });
+    expect(relayEnd(RELAY_CLOSE.IDLE, false)).toEqual({ kind: 'peer_closed' });
     expect(relayEnd(RELAY_CLOSE.BYTE_CAP, false)).toEqual({ kind: 'byte_cap' });
     expect(relayEnd(RELAY_CLOSE.UPSTREAM_ERROR, false).kind).toBe('failed');
     expect(relayEnd(RELAY_CLOSE.PROTOCOL, false).kind).toBe('failed');

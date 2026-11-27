@@ -348,8 +348,9 @@ Unset (the state of both estates), the gateway uses 4096 and 240; a value under 
 **Two more read by chat-gateway, for the mail relay:** `MAIL_RELAY_ENABLED` (unset on both estates:
 the relay is OFF and `/api/mail/relay` answers 404; `1` switches it on) and `MAIL_RELAY_UPSTREAM`
 (the relay's one destination, `partage.emse.fr:443` by default in the compose files). ON, the gateway
-also needs `CORE_SERVICE_URL` (set by the compose files) and `INTERNAL_SECRET`, and core-service needs
-`MICONNECT_READER_TOKEN` to answer a mail domain - production holds one, dev does not yet. A switch
+also needs `CORE_SERVICE_URL` (set by the compose files) and `INTERNAL_SECRET`, which both estates
+already hold: core-service answers the account's mail CLASS from its own `users` row, learnt at
+sign-in from MiConnect's `school_mail` claim, so the relay needs NO new secret on either estate. A switch
 that is not readable, or an upstream that is not exactly one `host:port`, stops the gateway at boot
 ([mail-client-transport](../docs/wiki/mail-client-transport.md#the-relay)).
 

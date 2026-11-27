@@ -16,6 +16,7 @@ export const RELAY_CLOSE = {
   BYTE_CAP: 4001,
   UPSTREAM_ERROR: 4002,
   PROTOCOL: 4003,
+  IDLE: 4004,
 } as const;
 
 /**
@@ -36,6 +37,8 @@ export function relayEnd(code: number, ours: boolean): TransportEnd {
   if (ours) return { kind: 'closed_by_us' };
   switch (code) {
     case RELAY_CLOSE.UPSTREAM_CLOSED:
+    // The relay ends a connection nothing crossed for 100 s, before nginx's cut: ordinary.
+    case RELAY_CLOSE.IDLE:
       return { kind: 'peer_closed' };
     case RELAY_CLOSE.BYTE_CAP:
       return { kind: 'byte_cap' };

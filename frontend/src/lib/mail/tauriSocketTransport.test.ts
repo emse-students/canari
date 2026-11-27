@@ -14,10 +14,14 @@ class FakeBridge implements NativeSocketBridge {
   onEnd: Channel<NativeSocketEnd> | null = null;
   writes: { id: number; bytes: Uint8Array }[] = [];
   closes: number[] = [];
+  closeAlls = 0;
+  /** What happened, in order: `closeAll` and `open`. */
+  calls: string[] = [];
   refuseOpen: unknown = null;
   refuseWrite = false;
 
   async open(onData: Channel<ArrayBuffer>, onEnd: Channel<NativeSocketEnd>): Promise<number> {
+    this.calls.push('open');
     if (this.refuseOpen) throw this.refuseOpen;
     this.onData = onData;
     this.onEnd = onEnd;
@@ -29,6 +33,11 @@ class FakeBridge implements NativeSocketBridge {
   }
   async close(id: number): Promise<void> {
     this.closes.push(id);
+  }
+  async closeAll(): Promise<number> {
+    this.closeAlls++;
+    this.calls.push('closeAll');
+    return 2;
   }
   newChannel<T>(): Channel<T> {
     return { onmessage: () => {} } as unknown as Channel<T>;
@@ -60,6 +69,15 @@ describe('nativeEnd', () => {
 });
 
 describe('tauriSocketTransport', () => {
+  it("closes the previous document's sockets once, before this document's first open", async () => {
+    const bridge = new FakeBridge();
+    const open = tauriSocketTransport(bridge);
+    await open(handlers().handlers);
+    await open(handlers().handlers);
+    expect(bridge.closeAlls).toBe(1);
+    expect(bridge.calls).toEqual(['closeAll', 'open', 'open']);
+  });
+
   it('writes raw bytes to its socket id and hands received bytes over', async () => {
     const bridge = new FakeBridge();
     const h = handlers();

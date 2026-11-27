@@ -32,7 +32,10 @@ impl TestServer {
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(self.key.clone())),
             )
             .unwrap();
-        ServerConnection::new(Arc::new(config)).unwrap()
+        let mut conn = ServerConnection::new(Arc::new(config)).unwrap();
+        // The test server answers large bodies in one write.
+        conn.set_buffer_limit(None);
+        conn
     }
 
     /// A root store holding this server's certificate and nothing else.
@@ -174,12 +177,108 @@ fn every_kind_has_a_distinct_stable_code() {
         MailTlsErrorKind::Certificate,
         MailTlsErrorKind::PeerAlert,
         MailTlsErrorKind::Protocol,
+        MailTlsErrorKind::Incompatible,
         MailTlsErrorKind::Closed,
     ];
     let codes: std::collections::HashSet<&str> = kinds.iter().map(|k| k.code()).collect();
     assert_eq!(codes.len(), kinds.len());
-    // The TypeScript side names these four codes (frontend/src/lib/mail/tlsConnection.ts).
-    for code in ["certificate", "peer_alert", "protocol", "closed"] {
+    // The TypeScript side names these codes (frontend/src/lib/mail/tlsConnection.ts).
+    for code in [
+        "certificate",
+        "peer_alert",
+        "protocol",
+        "incompatible",
+        "closed",
+    ] {
         assert!(codes.contains(code), "{code}");
     }
+}
+
+/// A connected client and its server.
+fn connected() -> (MailTls, ServerConnection) {
+    let server_identity = TestServer::naming(&[SERVER_NAME]);
+    let mut server = server_identity.connection();
+    let mut client = MailTls::with_roots(server_identity.as_root()).unwrap();
+    pump(&mut client, &mut server).unwrap();
+    assert!(!client.is_handshaking());
+    (client, server)
+}
+
+/// `len` bytes of a recognisable pattern.
+fn body(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8).collect()
+}
+
+/// Everything the server owes the client, as one byte string.
+fn server_output(server: &mut ServerConnection) -> Vec<u8> {
+    let mut out = Vec::new();
+    while server.wants_write() {
+        server.write_tls(&mut out).unwrap();
+    }
+    out
+}
+
+#[test]
+fn a_200_kib_answer_fed_in_64_kib_chunks_is_read_whole() {
+    // rustls keeps at most 16 KiB of unread plaintext: a feed that did not drain it failed with
+    // "received plaintext buffer full" on any answer over ~36 KiB.
+    let (mut client, mut server) = connected();
+    let sent = body(200 * 1024);
+    server.writer().write_all(&sent).unwrap();
+    let wire = server_output(&mut server);
+    for chunk in wire.chunks(64 * 1024) {
+        client.feed_ciphertext(chunk).unwrap();
+    }
+    assert_eq!(client.read_plaintext(), sent);
+}
+
+#[test]
+fn a_200_kib_answer_fed_at_once_is_read_whole() {
+    let (mut client, mut server) = connected();
+    let sent = body(200 * 1024);
+    server.writer().write_all(&sent).unwrap();
+    let wire = server_output(&mut server);
+    client.feed_ciphertext(&wire).unwrap();
+    assert_eq!(client.read_plaintext(), sent);
+}
+
+#[test]
+fn a_1_mib_write_is_taken_and_arrives_whole() {
+    // rustls caps its send queue at 64 KiB by default; an attachment over it failed as `closed`.
+    let (mut client, mut server) = connected();
+    let sent = body(1024 * 1024);
+    client.write_plaintext(&sent).unwrap();
+    let wire = client.take_ciphertext();
+    let mut slice = wire.as_slice();
+    let mut received = Vec::new();
+    while !slice.is_empty() {
+        server.read_tls(&mut slice).unwrap();
+        server.process_new_packets().unwrap();
+        let mut part = Vec::new();
+        let _ = server.reader().read_to_end(&mut part);
+        received.extend_from_slice(&part);
+    }
+    assert_eq!(received, sent);
+}
+
+#[test]
+fn rustls_failures_are_classified_once_at_the_boundary() {
+    let missing: MailTlsError = rustls::Error::NoCertificatesPresented.into();
+    assert_eq!(missing.kind, MailTlsErrorKind::Certificate);
+    let incompatible: MailTlsError =
+        rustls::Error::PeerIncompatible(rustls::PeerIncompatible::NoCipherSuitesInCommon).into();
+    assert_eq!(incompatible.kind, MailTlsErrorKind::Incompatible);
+    let decrypt: MailTlsError = rustls::Error::DecryptError.into();
+    assert_eq!(decrypt.kind, MailTlsErrorKind::Protocol);
+}
+
+#[test]
+fn the_close_notify_is_seen_after_the_plaintext_before_it() {
+    let (mut client, mut server) = connected();
+    server.writer().write_all(b"last").unwrap();
+    server.send_close_notify();
+    let wire = server_output(&mut server);
+    client.feed_ciphertext(&wire).unwrap();
+    assert!(client.peer_closed());
+    assert_eq!(client.read_plaintext(), b"last");
 }

@@ -1,4 +1,7 @@
 {
-  "description": "The school mailbox's eligible accounts (owner, 2026-11-27; docs/wiki/mail-client.md D1): an account may use the Mail tab and the mail relay when the domain of its MiConnect address is EXACTLY one of these (lowercase, no subdomain). Read by the relay that admits a socket (apps/chat-gateway/src/mail_relay.rs, MAIL_DOMAINS) and by the client that shows the tab (frontend/src/lib/mail/eligibility.ts); each side's test asserts its constant equals this list, so the two cannot drift apart.",
-  "domains": ["etu.emse.fr", "emse.fr"]
+  "description": "The school mailbox's eligible accounts (owner, 2026-11-27; docs/wiki/mail-client-transport.md#eligibility). An account may use the mail client when MiConnect hands Canari its SCHOOL address (claim `school_mail`, CAS accounts only) and that address's domain is EXACTLY one of these keys (lowercase, no subdomain); the value is the class Canari stores in its place (`users.mailClass`), never the address. Held equal by a test on each side that names them: the MiConnect mapping (infrastructure/authentik/blueprints/10-mappings.yaml, `miconnect-claim-school-mail`), core-service (apps/core-service/src/users/mail-class.ts), the relay (apps/chat-gateway/src/mail_relay.rs, `MAIL_CLASSES`) and the client (frontend/src/lib/mail/eligibility.ts).",
+  "classes": {
+    "etu.emse.fr": "student",
+    "emse.fr": "staff"
+  }
 }
