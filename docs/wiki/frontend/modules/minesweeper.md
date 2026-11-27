@@ -255,7 +255,11 @@ counter lessons excepted); in an open picture **no read number is on the border*
 picture changes nothing it forces**; and **a safe cell to open with no mine around it has no fog beside it** (the
 engine would flood the fog open). The dependency chain is a searched board (a column of 2s between two hidden
 columns, closed by `?`): no two neighbouring numbers conclude anything, the information has to cross the column.
-The two last-turn entries are small closed boards whose counter is the pattern.
+The two last-turn entries are small closed boards whose counter is the pattern. **The pictures are kept to what speaks** (owner, same day): a `?` that touches no hidden cell shows its
+number (an empty open cell, mostly), a border line that says nothing is cropped (fog no number touches, open cells
+beside no hidden one), and **a cell the player opens in an open picture shows "?"**: its number would count the fog,
+which the picture shows nowhere else. Fog that holds a mine (`X`) stays where it keeps an opened safe cell from
+being a 0 - the engine would flood the fog open.
 
 **The corner patterns are OPEN and SEARCHED, and a test holds them to it** (owner, 2026-11-26, three times: *"la
 presence de bords permet de contourner ce raisonnement"*, then *"le 2-2-2 est encore devinable sans comprendre la
