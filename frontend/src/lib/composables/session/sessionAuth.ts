@@ -1881,6 +1881,10 @@ export async function loginImpl(
     // is armed BEFORE the socket can deliver a byte, and the restore's seeding releases it - the
     // held frames and the boot pull alike (`notifyConversationRowsSeeded`).
     mlsService.holdInboundUntilRowsSeeded();
+    // THE NOTIFICATION SETTINGS ARE THIS ACCOUNT'S BEFORE THE FIRST FRAME CAN BE DECIDED: its device
+    // copy of the last answer (or the default, said), and the offline mark that keeps a read from
+    // being started where there is no server. The read itself starts below, once the session is live.
+    notificationPreferences.bind(ctx.getUserId(), { offline: offlineSession });
     if (!offlineSession) markBoot('gateway-handshake-started');
     const startedHandshake = offlineSession
       ? null

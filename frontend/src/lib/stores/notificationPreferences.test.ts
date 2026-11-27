@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
@@ -225,40 +226,82 @@ describe('notificationPreferences', () => {
 });
 
 describe('notificationPreferences.answered - a decision waits for the first answer', () => {
-  it('resolves at once once loaded, and shares one in-flight read otherwise', async () => {
-    let answer!: (v: unknown) => void;
-    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (answer = r)));
+  const G = '0b9f3d7e-1111-4222-8333-444455556666';
+  const answer = (groupLevels: Record<string, string>) => ({
+    disabled: [],
+    unknownDisabled: [],
+    pushEnabled: [],
+    groupLevels,
+    groupCalls: {},
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('is answered at once once loaded, and shares one in-flight read otherwise', async () => {
+    let resolve!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (resolve = r)));
     const a = notificationPreferences.answered();
     const b = notificationPreferences.load();
-    answer({ disabled: [], groupLevels: { g: 'none' }, groupCalls: {} });
-    expect(await a).toBe(true);
+    resolve(answer({ [G]: 'none' }));
+    expect(await a).toEqual({ kind: 'answered' });
     expect(await b).toBe(true);
     expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
-    expect(notificationPreferences.groupLevel('g')).toBe('none');
-    expect(await notificationPreferences.answered()).toBe(true);
+    expect(notificationPreferences.groupLevel(G)).toBe('none');
+    expect(await notificationPreferences.answered()).toEqual({ kind: 'answered' });
     expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves false on a failed read, and the next ask reads again', async () => {
+  it('is unanswered on a failed read, and LATCHES: no new read until connectivity or an explicit load', async () => {
     api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('offline'));
-    expect(await notificationPreferences.answered()).toBe(false);
-    api.fetchNotificationPreferences.mockResolvedValueOnce({
-      disabled: [],
-      groupLevels: {},
-      groupCalls: {},
+    expect(await notificationPreferences.answered()).toEqual({
+      kind: 'unanswered',
+      source: 'default',
     });
-    expect(await notificationPreferences.answered()).toBe(true);
+    expect(await notificationPreferences.answered()).toEqual({
+      kind: 'unanswered',
+      source: 'default',
+    });
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    api.fetchNotificationPreferences.mockResolvedValueOnce(answer({}));
+    expect(await notificationPreferences.load()).toBe(true);
     expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
   });
 
-  it('drops a read that answers after a sign-out, so the next account never inherits it', async () => {
-    let answer!: (v: unknown) => void;
-    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (answer = r)));
-    const read = notificationPreferences.load();
+  it('is superseded when the account signs out while it waits, and the stale answer is dropped', async () => {
+    let resolve!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (resolve = r)));
+    const waiting = notificationPreferences.answered();
     notificationPreferences.reset();
-    answer({ disabled: [], groupLevels: { g: 'none' }, groupCalls: {} });
-    expect(await read).toBe(false);
+    resolve(answer({ [G]: 'none' }));
+    expect(await waiting).toEqual({ kind: 'superseded' });
     expect(notificationPreferences.loaded).toBe(false);
-    expect(notificationPreferences.groupLevel('g')).toBe('all');
+    expect(notificationPreferences.groupLevel(G)).toBe('all');
+  });
+
+  it('applies the account copy of the last answer at sign-in, and never another account copy', async () => {
+    notificationPreferences.bind('account-a', { offline: false });
+    api.fetchNotificationPreferences.mockResolvedValueOnce(answer({ [G]: 'none' }));
+    await notificationPreferences.load();
+    notificationPreferences.bind('account-a', { offline: true });
+    expect(notificationPreferences.source).toBe('persisted');
+    expect(notificationPreferences.groupLevel(G)).toBe('none');
+    expect(await notificationPreferences.answered()).toEqual({
+      kind: 'unanswered',
+      source: 'persisted',
+    });
+    notificationPreferences.bind('account-b', { offline: true });
+    expect(notificationPreferences.source).toBe('default');
+    expect(notificationPreferences.groupLevel(G)).toBe('all');
+  });
+
+  it('keeps a level saved on this device in the copy', async () => {
+    notificationPreferences.bind('account-a', { offline: false });
+    api.fetchNotificationPreferences.mockResolvedValueOnce(answer({}));
+    await notificationPreferences.load();
+    await notificationPreferences.setGroupLevel(G, 'mentions');
+    notificationPreferences.bind('account-a', { offline: true });
+    expect(notificationPreferences.groupLevel(G)).toBe('mentions');
   });
 });

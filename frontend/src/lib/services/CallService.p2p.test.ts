@@ -60,10 +60,7 @@ vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
 }));
 vi.mock('$lib/stores/notificationPreferences.svelte', () => ({
-  notificationPreferences: {
-    callsAllowed: vi.fn(() => true),
-    answered: vi.fn(async () => true),
-  },
+  notificationPreferences: { callsAllowed: vi.fn(() => true) },
 }));
 vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'session-token' }));
 vi.mock('$lib/utils/callAudio', () => ({

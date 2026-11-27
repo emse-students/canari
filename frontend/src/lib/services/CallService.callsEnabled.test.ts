@@ -6,12 +6,6 @@ import { CallService } from './CallService';
 import { isBlockedWith } from '$lib/users/blocks';
 import { leafRefreshHold } from '$lib/mls-client/leafRefresh';
 
-// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
-vi.mock('$lib/notifications/preferencesApi', async (orig) =>
-  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
-);
-await (await import('../../test/answeredPreferences')).answerPreferences();
-
 /**
  * The other half of CallService.disabled.test.ts: the same invite, with CALLS_ENABLED on. It proves
  * the sibling file measures the guard rather than a broken signal handler, and it is what will

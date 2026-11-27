@@ -3513,18 +3513,35 @@ The three decisions are asserted against ONE contract, `libs/contracts/mention-d
 `canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
 target yet: there is no Xcode on the workstation that wrote it).
 
-**Nothing is decided before the account's set has answered (2026-11-27).** Until the first
-`GET /mls/notification-preferences` answers, the store holds the account DEFAULT (every category on,
-every conversation `all`), not this account's choice. Read on the iPhone 12 (`1.8.3-alpha.1`): the
-server sent the frames of a group at `none` silent (`[PUSH_SEND] level=none ... sent silent`), iOS
-woke the terminated app in the background for that silent push, the app pulled and decrypted the
-frame and `notifyInbound` raised it 140 ms BEFORE the preferences read answered - "Aucune" rang.
-So `notifyInbound`, the reaction trigger and both call-permission reads (`CallService`'s in-app ring,
-`handleCallSignalForChat`'s record) wait for `notificationPreferences.answered()`: one shared read
-(the sign-in one when it is in flight, never one per frame), the frame re-entering once it answers.
-A read that FAILED decides under the default and says so at WARN (`[NOTIF] ... settings are
-unreadable`), the salon level's rule. A read answering after a sign-out is dropped, never applied to
-the next account.
+**What a decision reads before the server has answered (2026-11-27).** Read on the iPhone 12
+(`1.8.3-alpha.1`): the server sent the frames of a group at `none` silent (`[PUSH_SEND] level=none
+... sent silent`), iOS woke the terminated app in the background for that silent push, the app
+pulled and decrypted the frame and `notifyInbound` raised it 140 ms BEFORE the sign-in
+`GET /mls/notification-preferences` answered - under the all-on default. "Aucune" rang. Decided
+with the fix (coordinator's review of #4207):
+
+- **The device keeps the last answered set, per account** (`ACCOUNT_KEY.notificationPreferences`,
+  in the read's wire shape and validated by the same parser, `preferencesSnapshot.ts`), written at
+  each answer and each successful save, ERASED at that account's sign-out. The sign-in applies it
+  (`notificationPreferences.bind`, before the first frame can be handled) - `source` is `answered`,
+  `persisted` or `default`, and only an account with no copy is ever decided on the default, said
+  at WARN.
+- **A frame decision waits for the answer, not for the network.** `settingsReadyFor` (one rule for
+  messages and reactions) decides at once on an answered set; otherwise it parks behind
+  `notificationPreferences.answered()` - one shared read, the sign-in one when it is in flight - and
+  re-enters. The answer is TYPED where it is known: `answered`, `unanswered` (then the copy or the
+  default decides, and the line says which), or `superseded`.
+- **Superseded means another account's set.** Every sign-in (`bind`) and sign-out (`reset`) moves the
+  store's generation; a parked decision whose generation moved is DROPPED with one line naming the
+  sign-out, never taken on the next account's settings (charter principle 1), and a read answering
+  after a sign-out is discarded.
+- **A failed read is latched.** No new read per frame: the next one waits for connectivity to return
+  (`connectivity.onReconnect`), the next sign-in, or an explicit load (the settings screen). An
+  OFFLINE session starts no read at all until `promoteOfflineSession` loads.
+- **A call ring never waits on the network.** `CallService`'s in-app ring and the call record of
+  `handleCallSignalForChat` read the set in memory synchronously - the answer, else the copy, else
+  the default, which rings: a missed call is worse than an unwanted ring, and the two reads stay one
+  predicate.
 
 **When this device's copy of the levels refreshes, and why that is enough.** The store is read at
 sign-in, at every visit to the notification settings, and at every opening of a conversation's

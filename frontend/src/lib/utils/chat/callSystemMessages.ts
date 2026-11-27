@@ -437,13 +437,8 @@ export async function handleCallSignalForChat(
     // hangup leaves it as it is.
     // The same predicate as `CallService` (the server's kill switch, awaited until answered): an
     // invite that will not ring is a MISSED call, never a "call started" line with no ring.
-    // The permission is the ACCOUNT'S only once its set has answered (`notificationPreferences.answered`):
-    // before that it is the default, and a conversation at "Aucune" would ring.
-    if (!(await notificationPreferences.answered())) {
-      appendLog(
-        `[CallRecord] WARN ${callMsg.callId}: the account's notification settings are unreadable - the call permission is the default`
-      );
-    }
+    // Read from the set in memory, never awaited - `CallService`'s ring takes the same synchronous
+    // read, so the record and the ring cannot disagree.
     if (!notificationPreferences.callsAllowed(groupId) || !(await callsAvailableAnswered())) {
       await recordCallEnded(ctx, groupId, callMsg.callId, at, 'not-answered', senderNorm);
       return;

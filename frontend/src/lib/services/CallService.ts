@@ -905,13 +905,9 @@ export class CallService {
       }
       // The conversation's call permission: the server already withheld the ring push, and the
       // in-app invite is the half it cannot read. The missed-call line is `handleCallSignalForChat`'s
-      // to write, from the same predicate, so the timeline has one writer. Read only once the account's
-      // set has answered: before that `callsAllowed` is the default, and "Aucune" would ring.
-      if (!(await notificationPreferences.answered())) {
-        appendLog(
-          `[Call] WARN invite ${callMsg.callId}: the account's notification settings are unreadable - the call permission is the default`
-        );
-      }
+      // to write, from the same predicate, so the timeline has one writer. NEVER AWAITED: a ring does
+      // not wait on the network (missing a call is worse than an unwanted ring), so it reads the set in
+      // memory - the server's answer, else the device copy of the last one, else the default (rings).
       if (!notificationPreferences.callsAllowed(groupId)) {
         appendLog(
           `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are not allowed in this conversation`

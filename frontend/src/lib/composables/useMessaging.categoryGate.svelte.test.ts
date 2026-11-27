@@ -90,6 +90,12 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('notifies a conversation message by default', async () => {
+    // The account default as the SERVER answers it - never the failure path.
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm1' });
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
@@ -267,13 +273,103 @@ describe("a private conversation's level gates the notification this client rais
       expect(sendSystemNotification).not.toHaveBeenCalled();
     });
 
-    it('decides under the account default, and says so, when the read fails', async () => {
-      api.fetchNotificationPreferences.mockRejectedValue(new Error('offline'));
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('decides under the account default, said at WARN, when the read fails and no copy exists', async () => {
+      api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('offline'));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
       const { ctx, sendSystemNotification } = makeContext('conv-1');
       await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w4' });
       await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
-      expect(warn.mock.calls.some((c) => String(c[0]).includes('unreadable'))).toBe(true);
+      expect(
+        log.mock.calls.some(
+          (c) => String(c[0]).includes('WARN') && String(c[0]).includes('default')
+        )
+      ).toBe(true);
+    });
+
+    it('drops a frame parked across a sign-out, even when the stale read answers', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w5' });
+      await flushMacrotask();
+      notificationPreferences.reset();
+      answer({});
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      expect(notificationPreferences.loaded).toBe(false);
+    });
+
+    it("never decides account A's frame under account B's settings", async () => {
+      notificationPreferences.bind('account-a', { offline: false });
+      const answerA = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w6' });
+      await flushMacrotask();
+      // A signs out, B signs in and B's read answers first ("all" everywhere).
+      notificationPreferences.reset();
+      notificationPreferences.bind('account-b', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        groupLevels: {},
+        groupCalls: {},
+      });
+      await notificationPreferences.load();
+      answerA({});
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the device copy of the account's last answer", () => {
+    const GROUP = '0b9f3d7e-1111-4222-8333-444455556666';
+
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    async function answeredOnce(levels: Record<string, string>) {
+      notificationPreferences.bind('account-a', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        unknownDisabled: [],
+        pushEnabled: [],
+        groupLevels: levels,
+        groupCalls: {},
+      });
+      await notificationPreferences.load();
+      // The app is killed: a fresh process has nothing in memory, only the copy on the device.
+      notificationPreferences.bind('account-a', { offline: false });
+    }
+
+    it('decides "none" from the copy when the read fails, and reads once, not per frame', async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      expect(notificationPreferences.source).toBe('persisted');
+      api.fetchNotificationPreferences.mockClear();
+      api.fetchNotificationPreferences.mockRejectedValue(new Error('offline'));
+      const { ctx, sendSystemNotification } = makeContext(GROUP);
+      await useMessaging().addMessageToChat(PEER, 'one', GROUP, ctx, { messageId: 'p1' });
+      await useMessaging().addMessageToChat(PEER, 'two', GROUP, ctx, { messageId: 'p2' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      // The failed read is latched: the second frame asked for no read of its own.
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts no read in an offline session, and decides on the copy at once', async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      notificationPreferences.bind('account-a', { offline: true });
+      api.fetchNotificationPreferences.mockClear();
+      const { ctx, sendSystemNotification } = makeContext(GROUP);
+      await useMessaging().addMessageToChat(PEER, 'hello', GROUP, ctx, { messageId: 'p3' });
+      await flushMacrotask();
+      expect(api.fetchNotificationPreferences).not.toHaveBeenCalled();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+
+    it("is erased at that account's sign-out", async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      notificationPreferences.reset();
+      notificationPreferences.bind('account-a', { offline: true });
+      expect(notificationPreferences.source).toBe('default');
     });
   });
 
