@@ -646,9 +646,8 @@ sign-in (`MailSignIn.svelte`) shows the address read-only and asks for the passw
 **No address is the ordinary state before rollout**: an account signed in before the claim existed
 gets it only at its next full MiConnect sign-in. The screen then says so in plain words
 (`mail_error_address_unknown`, drawn as information, not as an alert) and offers ONE button,
-"Activer le mail", which calls `activateSchoolMail()` (`mail/mailActivation.ts`): the MiConnect
-sign-in again, back to `/mail`. It calls the existing entry point `startOidcLogin('/mail')` until
-lot 1's dedicated function lands; only that module changes then.
+"Activer le mail", which calls lot 1's `startSchoolMailActivation('/mail')` (`stores/auth.ts`): the
+MiConnect sign-in again, back to `/mail`.
 
 ### The screens (`frontend/src/lib/components/mail/`)
 
@@ -743,6 +742,4 @@ field; the pending state and its button) and `MailStatePanel`.
   `allow-same-origin` (still no scripts) - a decision, not a fix.
 - **The composer sends plain text**: a reply quotes the original as `> ` text; an HTML composer is not
   built.
-- **Lot 1's "Activer le mail" function** (a documented re-run of the MiConnect sign-in in
-  `stores/auth.ts`) has not landed: `mailActivation.ts` calls `startOidcLogin('/mail')` until it does.
 - **No reading on a phone yet**: the screens were seen only in the dev preview (headless Chrome).

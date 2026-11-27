@@ -45,7 +45,6 @@
   import { m } from '$lib/paraglide/messages';
   import type { MailClient } from '$lib/mail/mailClient.svelte';
   import { emptyMessage, forwardMessage, replyMessage } from '$lib/mail/mailCompose';
-  import { activateSchoolMail } from '$lib/mail/mailActivation';
   import { classifyMailFailure } from '$lib/mail/mailErrors';
   import { mailErrorText } from '$lib/mail/mailErrorText';
   import { mailListQuery, type MailListFilter } from '$lib/mail/mailFormat';
@@ -60,6 +59,7 @@
   } from '$lib/mail/mailView';
   import { flattenFolders } from '$lib/mail/zimbraParse';
   import { overlayLayout } from '$lib/stores/phoneViewport.svelte';
+  import { startSchoolMailActivation } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { Log } from '$lib/utils/Log';
@@ -252,9 +252,12 @@
     await client.session.signIn(password, remember);
   }
 
-  /** "Activer le mail": the MiConnect sign-in again (`mailActivation.ts`); it leaves the page. */
+  /**
+   * "Activer le mail": lot 1's re-run of the MiConnect sign-in, which brings the school address and
+   * comes back here. It leaves the page.
+   */
   async function activate() {
-    await activateSchoolMail();
+    await startSchoolMailActivation('/mail');
   }
 
   async function retryUnavailable() {
