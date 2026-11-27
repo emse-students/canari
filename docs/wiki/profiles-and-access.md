@@ -997,12 +997,15 @@ claim and calls the editor account.
   (`users."alumniLinked"`, migration core `028`) and served on the reader's OWN profile only
   (`GET /users/me`), never to another reader of the profile. Until MiConnect emits it, every value
   is `null` and nothing shows.
-- **The reminder banner (D44).** `AlumniLinkBanner.svelte`, in the layout's banner column, decided
-  by `alumniLinkReminderDue` (`lib/profile/alumniLink.ts`, unit-tested on injected dates): an
+- **The reminder card (D44; owner, 2026-11-27: it replaced the top banner, the birthday card being the
+  better pattern).** `components/posts/AlumniLinkCard.svelte`, the quiet line at the top of the feed
+  (`FeedPromptCard`, shared with `BirthdayFeedCard`), decided by `alumniLinkReminderDue` (`lib/profile/alumniLink.ts`, unit-tested on injected dates): an
   explicit `alumniLinked === false`, and today on or after 1 September P+1 where P is the EARLIEST
   promo of the cursus (two cursus: the first one due reminds; no cursus: never). Its button opens
-  `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources`. Dismissed for the run of the app (module
-  state, no storage): a restart reminds again. The blocking half from 1 February P+2 and the
+  `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources` and records nothing; the cross records the help
+  `prompt-alumni-link` in `help_seen`, so it never returns on any device (session-only before). A
+  test or bench account is NOT exempted: no profile value means "test" today, see
+  [the backlog entry](backlog.d/alumni-link-card-test-category.md). The blocking half from 1 February P+2 and the
   2027-02-01 grace are MiConnect's stage, not Canari's.
 - **The duplicates list (D47)** is `/admin/alumni-duplicates` (global admin, beside the profile
   corrections), served by `GET /users/admin/alumni-duplicates` (`AlumniMergeService.listDuplicates`):
