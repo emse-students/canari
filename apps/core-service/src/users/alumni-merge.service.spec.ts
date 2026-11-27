@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
@@ -5,11 +7,14 @@ import type { AccountErasureService } from '../account-erasure/account-erasure.s
 import {
   AlumniMergeService,
   MERGE_MARK,
+  checkMergeReason,
   normalizeName,
   promosOf,
   sameNameAndPromo,
 } from './alumni-merge.service';
 import {
+  ALUMNI_MERGE_REASON_MAX,
+  ALUMNI_MERGE_REASON_MIN,
   AlumniMergeAlreadyMergedError,
   AlumniMergeHoldingsUnavailableError,
   AlumniMergeInProgressError,
@@ -84,6 +89,7 @@ describe('the duplicate rule (D47)', () => {
 /** An `alumni_merges` row of the fake table. */
 interface Row {
   id: string;
+  actorId: string;
   duplicateUuid: string;
   duplicateUsername: string;
   targetUuid: string;
@@ -130,6 +136,7 @@ describe('AlumniMergeService', () => {
     const canari = { ...opts.canari };
     const rows: Row[] = (opts.rows ?? []).map((r, i) => ({
       id: `row-${i}`,
+      actorId: 'admin-1',
       duplicateUuid: DUP_UUID,
       duplicateUsername: 'alumni-0001',
       targetUuid: TARGET_UUID,
@@ -204,6 +211,7 @@ describe('AlumniMergeService', () => {
         if (rows.some((r) => isOpen(r) && r.duplicateUuid === params[1])) return [];
         rows.push({
           id: `row-${rows.length}`,
+          actorId: params[0] as string,
           duplicateUuid: params[1] as string,
           duplicateUsername: params[2] as string,
           targetUuid: params[3] as string,
@@ -225,6 +233,7 @@ describe('AlumniMergeService', () => {
         row.targetSubject ??= params[2] as string | null;
       }
       if (row && sql.includes('"markedAt" = COALESCE')) row.markedAt ??= new Date();
+      if (row && sql.includes('SET "actorId" = $2')) row.actorId = params[1] as string;
       if (sql.includes('RETURNING id') && sql.includes('"completedAt" = now()')) {
         if (!row) return [[], 0];
         row.completedAt = new Date();
@@ -384,6 +393,25 @@ describe('AlumniMergeService', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].markedAt).not.toBeNull();
     expect(erasure.requestErasure).not.toHaveBeenCalled();
+  });
+
+  it('a resume by another admin records that admin on the row and on the mark', async () => {
+    const { service, rows, accounts } = make({
+      accounts: world(),
+      rows: [{ actorId: 'admin-1', held: {} }],
+    });
+    await service.merge(DUP_UUID, TARGET_UUID, 'admin-2');
+    expect(rows[0].actorId).toBe('admin-2');
+    expect(accounts[DUP_UUID].user.attributes[MERGE_MARK.by]).toBe('admin-2');
+    expect(log.log).toHaveBeenCalledWith(expect.stringContaining('resumed by another admin'));
+    expect(log.log).toHaveBeenCalledWith(expect.stringContaining('opened by actor=admin-1'));
+  });
+
+  it('a resume by the same admin writes no actor change', async () => {
+    const { service, rows } = make({ accounts: world(), rows: [{ actorId: 'admin-1' }] });
+    await service.merge(DUP_UUID, TARGET_UUID, 'admin-1');
+    expect(rows[0].actorId).toBe('admin-1');
+    expect(log.log).not.toHaveBeenCalledWith(expect.stringContaining('resumed by another admin'));
   });
 
   it('stops when another request opened the merge first: nothing marked, nothing erased', async () => {
@@ -709,14 +737,69 @@ describe('AlumniMergeService', () => {
       expect(rows).toHaveLength(1);
     });
 
-    it('says at error when a merged row has no subject: its site jobs are owed by hand', async () => {
+    it('writes the site jobs from the subjects the push names, for a row that captured none', async () => {
       const { service, siteJobs } = make({
         accounts: merged(),
         rows: [{ markedAt: new Date() }],
       });
+      await service.completeFromPush(DUP_UUID, TARGET_UUID, '', {
+        duplicateSubject: 'pushed-dup',
+        targetSubject: 'pushed-target',
+      });
+      expect(siteJobs.writeJobs).toHaveBeenCalledWith(
+        expect.anything(),
+        'row-0',
+        'pushed-dup',
+        'pushed-target'
+      );
+      expect(log.error).not.toHaveBeenCalled();
+    });
+
+    it("keeps the row's captured subjects over the push's, and says so at error", async () => {
+      const { service, siteJobs } = make({
+        accounts: merged(),
+        rows: [{ markedAt: new Date(), ...subjects }],
+      });
+      await service.completeFromPush(DUP_UUID, TARGET_UUID, '', {
+        duplicateSubject: 'forged-dup',
+        targetSubject: 'sub-target',
+      });
+      expect(siteJobs.writeJobs).toHaveBeenCalledWith(
+        expect.anything(),
+        'row-0',
+        'sub-duplicate',
+        'sub-target'
+      );
+      expect(log.error).toHaveBeenCalledWith(
+        expect.stringContaining('duplicate subject differs from the one captured at the mark')
+      );
+    });
+
+    it('cannot write jobs with no subject on the row nor in the push: an invariant broke, at error', async () => {
+      const { service, rows, siteJobs } = make({
+        accounts: merged(),
+        rows: [{ markedAt: new Date() }],
+      });
       await service.completeFromPush(DUP_UUID, TARGET_UUID, '');
+      expect(rows[0].completedAt).not.toBeNull();
       expect(siteJobs.writeJobs).not.toHaveBeenCalled();
-      expect(log.error).toHaveBeenCalledWith(expect.stringContaining('owed BY HAND'));
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining('an invariant broke'));
+    });
+
+    it('decides MERGED from the proof, not markedAt: a request that died after the mark at MiConnect', async () => {
+      // The process wrote the mark at MiConnect, then died before `markedAt`: the row is REQUESTED,
+      // and MiConnect merged at the sign-in. The push completes it like any merge.
+      const { service, rows, erasure, siteJobs } = make({
+        accounts: merged(),
+        canari: { [DUP_UUID]: 'canari-dup' },
+        rows: [{ markedAt: null, ...subjects }],
+      });
+      expect(await service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0')).toEqual({
+        completed: true,
+      });
+      expect(rows[0].completedBy).toBe('push');
+      expect(erasure.requestErasure).toHaveBeenCalledWith('canari-dup');
+      expect(siteJobs.writeJobs).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -733,6 +816,31 @@ describe('AlumniMergeService', () => {
       expect(log.warn).toHaveBeenCalledWith(
         expect.stringContaining('[ALUMNI_MERGE] completed by the reconciler, not the push')
       );
+    });
+
+    it('decides MERGED from the proof as the push does: a requested row whose sign-in merged it', async () => {
+      const { service, rows, erasure, siteJobs } = make({
+        accounts: merged(),
+        canari: { [DUP_UUID]: 'canari-dup' },
+        rows: [{ markedAt: null, ...subjects }],
+      });
+      expect(await service.listOpenMerges()).toEqual([]);
+      expect(rows[0].completedBy).toBe('reconciler');
+      expect(erasure.requestErasure).toHaveBeenCalledWith('canari-dup');
+      expect(siteJobs.writeJobs).toHaveBeenCalledTimes(1);
+    });
+
+    it('a "Rattacher" on a merged duplicate completes it from the proof, markedAt or not', async () => {
+      const { service, rows, erasure } = make({
+        accounts: merged(),
+        canari: { [DUP_UUID]: 'canari-dup' },
+        rows: [{ markedAt: null, ...subjects }],
+      });
+      await expect(service.merge(DUP_UUID, TARGET_UUID, 'admin-1')).rejects.toBeInstanceOf(
+        AlumniMergeAlreadyMergedError
+      );
+      expect(rows[0].completedAt).not.toBeNull();
+      expect(erasure.requestErasure).toHaveBeenCalledWith('canari-dup');
     });
 
     it('lists a closed merge with its site states', async () => {
@@ -941,5 +1049,65 @@ describe('AlumniMergeService', () => {
       expect(found.map((t) => t.uuid)).toEqual([TARGET_UUID]);
       expect(await service.eligibleTargets(DUP_UUID, 'c')).toEqual([]);
     });
+
+    // The search discloses e-mails and last sign-ins: never for an account that is not an Alumni
+    // duplicate, whatever uuid the caller names.
+    const notDuplicates: [
+      string,
+      Record<string, { user: MiconnectUserListing; slugs: string[] }>,
+    ][] = [
+      ['a CAS account', { [DUP_UUID]: { user: TARGET, slugs: ['cas-emse'] } }],
+      [
+        'an alumni- account holding another link',
+        { [DUP_UUID]: { user: DUP, slugs: ['alumni', 'cas-emse'] } },
+      ],
+    ];
+    for (const [name, accounts] of notDuplicates) {
+      it(`refuses a target search for ${name}, nothing searched`, async () => {
+        const { service, editor } = make({ accounts: { ...manualWorld(), ...accounts } });
+        await expect(service.eligibleTargets(DUP_UUID, 'camille')).rejects.toBeInstanceOf(
+          AlumniMergeNotDuplicateError
+        );
+        expect(editor.searchUsers).not.toHaveBeenCalled();
+      });
+    }
+  });
+});
+
+describe('the reason bounds are the contract (D55, libs/contracts/alumni-merge-reason.json)', () => {
+  const CONTRACT = JSON.parse(
+    readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'alumni-merge-reason.json'),
+      'utf8'
+    )
+  ) as { min: number; max: number; cases: { text: string; problem: string | null }[] };
+
+  it('holds the contract bounds', () => {
+    expect([ALUMNI_MERGE_REASON_MIN, ALUMNI_MERGE_REASON_MAX]).toEqual([
+      CONTRACT.min,
+      CONTRACT.max,
+    ]);
+  });
+
+  it.each(CONTRACT.cases)('counts %j in code points, as the page does', ({ text, problem }) => {
+    const verdict = (() => {
+      try {
+        checkMergeReason(text, 'manual');
+        return null;
+      } catch (err) {
+        return (err as AlumniMergeReasonRequiredError).reason;
+      }
+    })();
+    // The empty text is `missing` here (a manual merge owes one); the page calls it too short.
+    expect(verdict === 'missing' ? 'too_short' : verdict).toBe(problem);
+  });
+
+  it('counts an emoji once at the upper bound', () => {
+    expect(checkMergeReason('\u{1F600}'.repeat(CONTRACT.max), 'manual')).toHaveLength(
+      2 * CONTRACT.max
+    );
+    expect(() => checkMergeReason('\u{1F600}'.repeat(CONTRACT.max + 1), 'manual')).toThrow(
+      AlumniMergeReasonRequiredError
+    );
   });
 });

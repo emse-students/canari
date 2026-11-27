@@ -4,7 +4,8 @@
 --   mode               `auto` (the target is the unique name-and-promo match, D47) or `manual` (the
 --                      admin decided identity, D55); every row written before this file was `auto`;
 --   reason             the admin's written reason, required for a manual merge (20-1000 characters,
---                      checked by core-service); never sent to MiConnect;
+--                      code points, checked by core-service); never sent to MiConnect; blanked when
+--                      the target is erased while the merge is open;
 --   duplicateSubject   the duplicate's and the target's MiConnect `uid` (the OIDC subject every
 --   targetSubject      provider of the estate gives them, `hashed_user_id`), read at the mark while
 --                      both exist: once the duplicate is deleted its subject is gone for good, and the
@@ -13,8 +14,14 @@
 --
 -- `alumni_merge_site_jobs`: one durable job per completed merge and sibling site (`sky`, `migallery`,
 -- `le-cercle`), written in the transaction that closes the merge, run by core-service's worker until
--- the site answers what it did (D53, D54). It is erased with its merge (ON DELETE CASCADE): a merge
--- row goes with its target's erasure (CORE_ERASURE_STATEMENTS), the register's M1.
+-- the site answers what it did (D53, D54). EACH JOB CARRIES THE SUBJECTS IT NEEDS, so it never reads
+-- its merge row: a `transfer` moves the duplicate's account onto the target's subject; an `erase`
+-- (no target subject) erases the duplicate's account on that site. NOTHING CASCADES TO A JOB: the
+-- target's erasure (CORE_ERASURE_STATEMENTS, the register's M1) deletes the jobs already done and
+-- turns every job still owed into an `erase` before it deletes the merge row, whose deletion then only
+-- nulls `mergeId` (ON DELETE SET NULL) - a duplicate's account on a sibling site is never left behind
+-- because the person it was merged into left. `unreadySince`: the site answered 404 (its endpoint not
+-- served yet), asked again daily, reported once a day per site.
 --
 -- ROLLOUT ORDER. The deploy applies migrations before it starts the new services, while the previous
 -- release still runs: its code never names these columns (its INSERT leaves `mode` to its default,
@@ -34,18 +41,22 @@ ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "completedBy" VARCHAR(16);
 
 CREATE TABLE IF NOT EXISTS alumni_merge_site_jobs (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    "mergeId"           UUID NOT NULL REFERENCES alumni_merges(id) ON DELETE CASCADE,
+    "mergeId"           UUID REFERENCES alumni_merges(id) ON DELETE SET NULL,
     site                VARCHAR(32) NOT NULL,
+    kind                VARCHAR(8) NOT NULL DEFAULT 'transfer',
     "duplicateSubject"  VARCHAR(255) NOT NULL,
-    "targetSubject"     VARCHAR(255) NOT NULL,
+    "targetSubject"     VARCHAR(255),
     "createdAt"         TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempts            INT NOT NULL DEFAULT 0,
     "nextAttemptAt"     TIMESTAMPTZ NOT NULL DEFAULT now(),
     "lastAttemptAt"     TIMESTAMPTZ,
     "lastError"         VARCHAR(500),
     "blockedAt"         TIMESTAMPTZ,
+    "unreadySince"      TIMESTAMPTZ,
     outcome             VARCHAR(32),
-    "completedAt"       TIMESTAMPTZ
+    "completedAt"       TIMESTAMPTZ,
+    CONSTRAINT "CHK_alumni_merge_site_jobs_kind" CHECK (
+        (kind = 'transfer' AND "targetSubject" IS NOT NULL) OR (kind = 'erase' AND "targetSubject" IS NULL))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_alumni_merge_site_jobs_merge_site"

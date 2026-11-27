@@ -1231,11 +1231,20 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
     backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
     `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token Canari signs with its
-    handoff key, `typ: canari-merge+jwt`, audience the site, claims `dup`, `target`, `jti` = the job
-    id - verified by the site's VENDORED verifier against Canari's JWKS, the file `shape.mjs` already
+    handoff key, `typ: canari-merge+jwt`, audience the site, claims `op` (`transfer`, or `erase` once
+    the target was erased - see below), `dup`, `target` (a `transfer` only), `jti` = the job id -
+    verified by the site's VENDORED verifier against Canari's JWKS, the file `shape.mjs` already
     compares. A `2xx` with its outcome completes the job; a `409` with a typed refusal marks it
-    `blocked` (no retry: the state, not the network, refused) and is an ERROR line; anything else is
-    retried. The daily report names every job pending over 24 h and every blocked one, and the admin
+    `blocked` (no retry: the state, not the network, refused) and is an ERROR line; a `404` is a site
+    that does not serve the path yet - the job waits UNREADY, asked again daily, with no line per try
+    (a site that serves the path never answers 404: an account it does not hold is `absent`);
+    anything else is retried.
+  - **The target erased before its sites answered** (the review of 2026-11-27): NOTHING CASCADES to a
+    job. Each job carries the subjects it needs and never reads its merge row; the target's erasure
+    deletes the jobs a site already settled and turns every job still owed into an `erase` of the
+    duplicate's account on that site, the target's subject blanked, before it deletes the merge row,
+    whose foreign key then only nulls `mergeId` (`ON DELETE SET NULL`). A duplicate's account on a
+    sibling site never outlives the merge because the person it was merged into left. The daily report names every job pending over 24 h and every blocked one, and the admin
     page shows each closed merge's three site states.
   - **Idempotence from durable state**: the job row says what is owed, the site's own tables say what
     is done - a duplicate subject with no account is `absent`, whether it never signed in or the
@@ -1316,7 +1325,13 @@ build made:
   a mark with no mode is `auto` (a mark written before 1.8.3). The manual names are compared through
   the SAME `miconnect-alumni-names-agree` policy as the automatic rule. The merge Event is
   `Event.new("alumni_merge", ...)`, `set_user(target)`, the client address from
-  `ClientIPMiddleware.get_client_ip`, ONE `save()`. Refusals keep `from_http` (nothing is deleted).
+  `ClientIPMiddleware.get_client_ip`, ONE `save()`, run by `transaction.on_commit`: saving the Event
+  is what dispatches the push, which must never announce a merge that rolls back. Step M reads the
+  Event after a committed merge; it does not drive a sign-in inside an outer transaction, because the
+  flow executor then re-plans forever (measured 2026-11-27), so the rolled-back case is not exercised
+  there. The Event and the
+  push carry both OIDC subjects (`uid`), the duplicate's read BEFORE its delete, since it derives from
+  the pk. Refusals keep `from_http` (nothing is deleted).
 - **The push** is `85-alumni-merge-push.yaml`: the policy `miconnect-alumni-merge-is-the-event`, the
   two webhook mappings, the transport (`send_once`) and the rule. The header mapping reads the secret
   from the WORKER's environment (`os.environ`, not `!Env`: the blueprint would otherwise store it in
@@ -1329,19 +1344,37 @@ build made:
   measured still queued two minutes after the sign-in, so awaiting it would have been a timer. The
   stored transport points at the stub for the whole run and never gets its production URL back.
 - **The endpoint** (`alumni-merge-hook.controller.ts`) is routed by the edge as its own
-  `location =`, `client_max_body_size 4k`, every trust header stripped, no `auth_request`
+  `location =`, `client_max_body_size 4k`, rate-limited (`limit_req` zone `miconnect_hook`, 1 r/s
+  burst 20 per client address), every trust header stripped, no `auth_request`
   (`Dockerfile.frontend`). The secret is checked before the body is read; an unset secret refuses
   everything, at error.
 - **The busy target** is enforced by a transaction-scoped advisory lock on the target's uuid and a
   check of the open rows, not a unique index: an index would have failed the migration on any data
   that already broke the rule, and the lock serializes the only writer.
 - **The subjects** are read from the editor API's `uid`; `listOpenMerges` backfills an open row that
-  has none. A row completed with no subject says so at ERROR, `owed BY HAND`, and writes no job.
+  has none, and the push names both, used where the row captured none (a row's own subject wins, a
+  push that differs is said at error). With neither, an invariant broke: ERROR, no job written.
+- **"Merged" has ONE predicate**, read by the push and the reconciler alike (`provenMerged`): the
+  target holds the duplicate's Alumni link (`af_id`) at MiConnect now. Never `markedAt`, which only
+  says Canari recorded its mark: a request that died between the mark at MiConnect and that record
+  is merged all the same.
+- **The target search** (`eligibleTargets`) refuses a uuid that is not an Alumni-created duplicate
+  whose links are exactly `['alumni']` - the same check the mark makes - since it discloses e-mails
+  and last sign-ins (register M1).
+- **The reason** is counted in code points after trimming on both sides; the bounds and the cases
+  that tell code points from UTF-16 units are `libs/contracts/alumni-merge-reason.json`, asserted by
+  core-service's spec and the page's test.
+- **A resume by another admin** writes that admin onto the row (`actorId`), as the mark it writes
+  names them; the admin who opened it stays in the log line.
 - **The site jobs** (`alumni-merge-site-jobs.service.ts`) and the account erasure share ONE runner,
   `src/common/durable-queue.ts` (timers, single-flight drain, logged failures); each keeps its own
   claim, because the two tables differ. A `2xx` must name `absent`, `transferred` or `merged`, else it
-  is retried as `SITE_ANSWER_MALFORMED`; a `404` (a site that has not shipped its endpoint) is
-  retried, never blocked, and is accused by the daily report after 24 h.
+  is retried as `SITE_ANSWER_MALFORMED`; a `404` (a site that has not shipped its endpoint) makes the
+  job UNREADY (`unreadySince`): asked again every 24 h, no WARN per try, never accused as overdue, and
+  the daily report says ONE warning per such site with its count. Every write that settles an attempt
+  names the job's kind as claimed and checks it wrote one row; none - the target's erasure turned a
+  transfer into an erase under the call - is said at ERROR and records nothing, and the job as it now
+  stands runs next. A done `erase` whose merge row is gone deletes its own row.
 - **The admin page** lists every Alumni-created account not in an open merge: the flagged ones with
   their targets, then those that match nobody, which only "Rattacher à un autre compte"
   (`AlumniManualMerge.svelte`) can attach. The open merges show their mode and reason, the closed

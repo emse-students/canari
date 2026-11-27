@@ -15,6 +15,12 @@ import { AlumniMergeService } from './alumni-merge.service';
 export const ALUMNI_MERGE_HOOK_SECRET_HEADER = 'x-miconnect-alumni-merge-secret';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** An OIDC subject as MiConnect issues it (`hashed_user_id`, hex), bounded like the column holding it. */
+const SUBJECT_RE = /^[A-Za-z0-9._-]{1,255}$/;
+
+/** Absent, empty, or a well-formed subject. */
+const subjectOk = (v: unknown): boolean =>
+  v === undefined || v === '' || (typeof v === 'string' && SUBJECT_RE.test(v));
 
 const logger = new Logger('AlumniMergeHook');
 
@@ -49,15 +55,27 @@ export function assertAlumniMergeHookSecret(received: string | undefined): void 
 export class AlumniMergeHookController {
   constructor(private readonly alumniMerge: AlumniMergeService) {}
 
-  /** `{ duplicateUuid, targetUuid, mergeId }` -> `{ completed: true }` or `{ already: true }`. */
+  /**
+   * `{ duplicateUuid, targetUuid, mergeId, duplicateSubject, targetSubject }` -> `{ completed: true }`
+   * or `{ already: true }`. The subjects are optional (a policy older than this body sends none).
+   */
   @Post('alumni-merge')
   @HttpCode(200)
   push(
     @Headers(ALUMNI_MERGE_HOOK_SECRET_HEADER) secret: string | undefined,
-    @Body() body: { duplicateUuid?: unknown; targetUuid?: unknown; mergeId?: unknown } | undefined
+    @Body()
+    body:
+      | {
+          duplicateUuid?: unknown;
+          targetUuid?: unknown;
+          mergeId?: unknown;
+          duplicateSubject?: unknown;
+          targetSubject?: unknown;
+        }
+      | undefined
   ) {
     assertAlumniMergeHookSecret(secret);
-    const { duplicateUuid, targetUuid, mergeId } = body ?? {};
+    const { duplicateUuid, targetUuid, mergeId, duplicateSubject, targetSubject } = body ?? {};
     if (
       typeof duplicateUuid !== 'string' ||
       !UUID_RE.test(duplicateUuid) ||
@@ -65,17 +83,23 @@ export class AlumniMergeHookController {
       !UUID_RE.test(targetUuid) ||
       (mergeId !== undefined &&
         mergeId !== '' &&
-        (typeof mergeId !== 'string' || !UUID_RE.test(mergeId)))
+        (typeof mergeId !== 'string' || !UUID_RE.test(mergeId))) ||
+      !subjectOk(duplicateSubject) ||
+      !subjectOk(targetSubject)
     ) {
       logger.error('[ALUMNI_MERGE] push refused: a malformed body, nothing read');
       throw new BadRequestException(
-        'duplicateUuid and targetUuid must be uuids, mergeId a uuid or empty'
+        'duplicateUuid and targetUuid must be uuids, mergeId a uuid or empty, the subjects well-formed'
       );
     }
     return this.alumniMerge.completeFromPush(
       duplicateUuid,
       targetUuid,
-      typeof mergeId === 'string' ? mergeId : ''
+      typeof mergeId === 'string' ? mergeId : '',
+      {
+        duplicateSubject: (duplicateSubject as string | undefined) || undefined,
+        targetSubject: (targetSubject as string | undefined) || undefined,
+      }
     );
   }
 }

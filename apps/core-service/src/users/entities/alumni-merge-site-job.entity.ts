@@ -1,4 +1,12 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { AlumniMerge } from './alumni-merge.entity';
 
 /**
@@ -8,22 +16,29 @@ import { AlumniMerge } from './alumni-merge.entity';
  * `FOR UPDATE SKIP LOCKED`); this class exists so the table is registered and built by
  * `synchronize` outside production.
  *
- * Its state is read from the timestamps: pending (`completedAt` and `blockedAt` null), blocked
- * (`blockedAt`: the site refused on its own state, a typed 409 no retry can change), completed
- * (`completedAt`, with the site's `outcome`). One row per merge and site. Erased with its merge
- * (`ON DELETE CASCADE`).
+ * Its state is read from the timestamps: pending (`completedAt` and `blockedAt` null), unready
+ * (`unreadySince`: the site answered 404, its endpoint not served yet), blocked (`blockedAt`: the site
+ * refused on its own state, a typed 409 no retry can change), completed (`completedAt`, with the site's
+ * `outcome`). One row per merge and site. A job carries the subjects it needs and never reads its merge
+ * row: the target's erasure turns a job still owed into an `erase` and the merge row's deletion only
+ * nulls `mergeId` (`ON DELETE SET NULL`) - nothing cascades to a job (migration 030).
  */
 @Entity('alumni_merge_site_jobs')
 @Index('UQ_alumni_merge_site_jobs_merge_site', ['mergeId', 'site'], { unique: true })
+@Check(
+  'CHK_alumni_merge_site_jobs_kind',
+  `(kind = 'transfer' AND "targetSubject" IS NOT NULL) OR (kind = 'erase' AND "targetSubject" IS NULL)`
+)
 export class AlumniMergeSiteJob {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ type: 'uuid' })
-  mergeId!: string;
+  /** Null once the target's erasure deleted the merge row: the job, an `erase` by then, still runs. */
+  @Column({ type: 'uuid', nullable: true })
+  mergeId!: string | null;
 
-  /** The foreign key, so a `synchronize` stack cascades the erasure of the merge as migration 030 does. */
-  @ManyToOne(() => AlumniMerge, { onDelete: 'CASCADE' })
+  /** The foreign key, so a `synchronize` stack nulls it on the merge's deletion as migration 030 does. */
+  @ManyToOne(() => AlumniMerge, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'mergeId' })
   merge?: AlumniMerge;
 
@@ -31,13 +46,17 @@ export class AlumniMergeSiteJob {
   @Column({ type: 'varchar', length: 32 })
   site!: string;
 
+  /** `transfer` onto the target's subject, or `erase` the duplicate's account (the target was erased). */
+  @Column({ type: 'varchar', length: 8, default: 'transfer' })
+  kind!: 'transfer' | 'erase';
+
   /** The duplicate's OIDC subject, by which the site finds its account. */
   @Column({ type: 'varchar', length: 255 })
   duplicateSubject!: string;
 
-  /** The target's OIDC subject, onto which the site moves it. */
-  @Column({ type: 'varchar', length: 255 })
-  targetSubject!: string;
+  /** The target's OIDC subject, onto which the site moves it; null for an `erase`. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  targetSubject!: string | null;
 
   @Column({ type: 'timestamptz', default: () => 'now()' })
   createdAt!: Date;
@@ -59,6 +78,10 @@ export class AlumniMergeSiteJob {
   /** Set when the site refused on its own state (a typed 409): no retry, an ERROR line. */
   @Column({ type: 'timestamptz', nullable: true })
   blockedAt!: Date | null;
+
+  /** Since when the site answers 404 (its endpoint not served yet): asked again daily, no WARN per try. */
+  @Column({ type: 'timestamptz', nullable: true })
+  unreadySince!: Date | null;
 
   /** What the site did: `absent`, `transferred` or `merged`. */
   @Column({ type: 'varchar', length: 32, nullable: true })

@@ -18,7 +18,11 @@ export const ALUMNI_MERGE_CODES = {
   notMerged: 'ALUMNI_MERGE_NOT_MERGED',
 } as const;
 
-/** The bounds of a merge's written reason, in characters after trimming (D55). */
+/**
+ * The bounds of a merge's written reason, in CODE POINTS after trimming (D55) - never UTF-16 units, so
+ * an emoji counts once. Asserted equal to `libs/contracts/alumni-merge-reason.json`, which the admin
+ * page asserts too, so the two counts cannot drift apart.
+ */
 export const ALUMNI_MERGE_REASON_MIN = 20;
 export const ALUMNI_MERGE_REASON_MAX = 1000;
 
@@ -100,7 +104,7 @@ export class AlumniMergeAlreadyMergedError extends HttpException {
 
 /**
  * A MANUAL merge (the target is not the unique name-and-promo match, D55) came without a written
- * reason of {@link ALUMNI_MERGE_REASON_MIN}-{@link ALUMNI_MERGE_REASON_MAX} characters, or a reason
+ * reason of {@link ALUMNI_MERGE_REASON_MIN}-{@link ALUMNI_MERGE_REASON_MAX} code points, or a reason
  * given is out of those bounds. The admin decides identity, and says why.
  */
 export class AlumniMergeReasonRequiredError extends HttpException {

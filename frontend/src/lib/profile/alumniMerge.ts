@@ -28,7 +28,10 @@ export interface AlumniAccount {
  */
 type AlumniMergeMode = 'auto' | 'manual';
 
-/** The bounds of a manual merge's reason, the server's (`alumni-merge.errors.ts`). */
+/**
+ * The bounds of a manual merge's reason, in code points after trimming: the server's
+ * (`alumni-merge.errors.ts`), both asserted against `libs/contracts/alumni-merge-reason.json`.
+ */
 export const ALUMNI_MERGE_REASON_MIN = 20;
 export const ALUMNI_MERGE_REASON_MAX = 1000;
 
@@ -48,10 +51,13 @@ export interface AlumniOpenMerge {
   markedAt: string | null;
 }
 
-/** One sibling site's job of a completed merge (D52-D54). */
+/**
+ * One sibling site's job of a completed merge (D52-D54). `unready`: the site does not serve its half
+ * yet, asked again daily.
+ */
 interface AlumniMergeSiteState {
   site: string;
-  state: 'pending' | 'blocked' | 'done';
+  state: 'pending' | 'unready' | 'blocked' | 'done';
   outcome: 'absent' | 'transferred' | 'merged' | null;
   attempts: number;
   lastError: string | null;
@@ -68,6 +74,25 @@ export interface AlumniClosedMerge {
   /** `reconciler` means the push never arrived: the page reading completed it. */
   completedBy: 'push' | 'reconciler' | null;
   sites: AlumniMergeSiteState[];
+}
+
+/** The sentence for one sibling site's job of a completed merge, as the admin page lists it. */
+export function alumniSiteLine(s: AlumniMergeSiteState): string {
+  if (s.state === 'done') {
+    const outcome =
+      s.outcome === 'transferred'
+        ? m.admin_alumni_site_outcome_transferred()
+        : s.outcome === 'merged'
+          ? m.admin_alumni_site_outcome_merged()
+          : m.admin_alumni_site_outcome_absent();
+    return m.admin_alumni_site_done({ site: s.site, outcome });
+  }
+  if (s.state === 'blocked') {
+    return m.admin_alumni_site_blocked({ site: s.site, error: s.lastError ?? '' });
+  }
+  // Not a failure: the site has not shipped its half, and is asked again daily.
+  if (s.state === 'unready') return m.admin_alumni_site_unready({ site: s.site });
+  return m.admin_alumni_site_pending({ site: s.site, attempts: s.attempts });
 }
 
 /**
@@ -198,7 +223,7 @@ export async function fetchAlumniMergeTargets(
   return (await res.json()) as AlumniAccount[];
 }
 
-/** Where a manual merge's reason stands against the server's bounds, counted on the trimmed text. */
+/** Where a manual merge's reason stands against the server's bounds, in code points of the trimmed text. */
 export interface AlumniReasonState {
   length: number;
   valid: boolean;
@@ -208,7 +233,8 @@ export interface AlumniReasonState {
 
 /** The same rule the server applies (`checkMergeReason`), so the button is enabled only when it would pass. */
 export function alumniReasonState(text: string): AlumniReasonState {
-  const length = text.trim().length;
+  // Code points, as the server counts: `.length` would count an emoji twice.
+  const length = [...text.trim()].length;
   const problem =
     length < ALUMNI_MERGE_REASON_MIN
       ? 'too_short'

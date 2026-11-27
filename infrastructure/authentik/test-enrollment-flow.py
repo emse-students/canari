@@ -508,6 +508,7 @@ with Tenant.objects.get(ready=True):
         target, duplicate, link = merge_case("90020")
         duplicate_pk = duplicate.pk
         duplicate_uuid = str(duplicate.uuid)
+        duplicate_subject_before = duplicate.uid
         last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
         link.refresh_from_db()
         check(signed_in_as == target.username, f"a marked duplicate's sign-in signs the TARGET in ({signed_in_as}, {last.get('component')})")
@@ -524,9 +525,13 @@ with Tenant.objects.get(ready=True):
         check(len(survivors) == 1, f"EXACTLY ONE merge Event exists after the duplicate's GDPR cleanup ({len(survivors)})")
         check(survivors[0].user.get("pk") == target.pk, f"its user is the TARGET, not the deleted duplicate ({survivors[0].user})")
         check(survivors[0].context.get("duplicate_uuid") == duplicate_uuid and survivors[0].context.get("target_uuid") == str(target.uuid) and survivors[0].context.get("mode") == "auto", f"its context names both uuids and the mode ({survivors[0].context})")
+        # D54: both OIDC subjects, the duplicate's read before its delete (it derives from the pk).
+        check(survivors[0].context.get("target_subject") == target.uid, f"its context names the target's subject ({survivors[0].context.get('target_subject')})")
+        check(duplicate_subject_before and survivors[0].context.get("duplicate_subject") == duplicate_subject_before, f"its context names the DUPLICATE's subject as it was before the delete ({survivors[0].context.get('duplicate_subject')})")
         check(survivors[0].client_ip, "it carries the client's address")
         check(rule_sends(survivors[0]), "the push rule sends the merge's Event")
         pushed.append(survivors[0])
+
         target.refresh_from_db()
         check((target.attributes.get("alumni") or {}).get("cotisant") is True, f"the membership read is written on the target ({target.attributes.get('alumni')})")
         _, again = sign_in_to_the_end(target, link, asserted)
@@ -645,7 +650,8 @@ with Tenant.objects.get(ready=True):
             got = stub.for_duplicate(duplicate_uuid)
             check(len(got) == 1, f"the merge of {duplicate_uuid[:8]} is pushed EXACTLY once ({len(got)})")
             check(got[0]["headers"].get(PUSH_SECRET_HEADER.lower()) == secret, "the push carries the shared secret")
-            check(got[0]["body"] == {"duplicateUuid": duplicate_uuid, "targetUuid": event.context["target_uuid"], "mergeId": event.context.get("merge_id", "")}, f"the push names the duplicate, the target and the merge ({got[0]['body']})")
+            check(got[0]["body"] == {"duplicateUuid": duplicate_uuid, "targetUuid": event.context["target_uuid"], "mergeId": event.context.get("merge_id", ""), "duplicateSubject": event.context["duplicate_subject"], "targetSubject": event.context["target_subject"]}, f"the push names the duplicate, the target, the merge and both subjects ({got[0]['body']})")
+            check(event.context["duplicate_subject"] and event.context["target_subject"], "both subjects are pushed non-empty")
     finally:
         if stub is not None:
             stub.close()

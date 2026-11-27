@@ -26,6 +26,7 @@
   import { intlLocale } from '$lib/utils/intlLocale';
   import {
     alumniMergeErrorMessage,
+    alumniSiteLine,
     cancelAlumniMerge,
     fetchAlumniClosedMerges,
     fetchAlumniDuplicates,
@@ -147,23 +148,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  /** The sentence for one sibling site's job of a completed merge. */
-  function siteLine(s: AlumniClosedMerge['sites'][number]): string {
-    if (s.state === 'done') {
-      const outcome =
-        s.outcome === 'transferred'
-          ? m.admin_alumni_site_outcome_transferred()
-          : s.outcome === 'merged'
-            ? m.admin_alumni_site_outcome_merged()
-            : m.admin_alumni_site_outcome_absent();
-      return m.admin_alumni_site_done({ site: s.site, outcome });
-    }
-    if (s.state === 'blocked') {
-      return m.admin_alumni_site_blocked({ site: s.site, error: s.lastError ?? '' });
-    }
-    return m.admin_alumni_site_pending({ site: s.site, attempts: s.attempts });
   }
 
   const day = (iso: string) => new Date(iso).toLocaleDateString(intlLocale());
@@ -380,7 +364,7 @@
             <ul class="text-xs">
               {#each done.sites as site (site.site)}
                 <li class={site.state === 'blocked' ? 'text-red-err' : 'text-text-muted'}>
-                  {siteLine(site)}
+                  {alumniSiteLine(site)}
                 </li>
               {/each}
             </ul>

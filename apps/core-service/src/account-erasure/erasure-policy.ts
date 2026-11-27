@@ -95,6 +95,26 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   // deleting it would leave that account behind. Where the erased account was the admin who merged,
   // the row keeps the merge without the admin's id. The table has an entity (`AlumniMerge`), so a
   // stack built by `synchronize` has it too.
+  //
+  // ITS SIBLING-SITE JOBS FIRST (D54, migration 030), and nothing cascades to them: the jobs a site
+  // already settled go with the merge's history; a job still OWED becomes an `erase` of the
+  // duplicate's account on that site, the target's subject blanked - a transfer onto an erased person
+  // is no longer owed, and the duplicate's account there must not outlive the merge. The merge row's
+  // deletion below then only nulls the job's `mergeId` (ON DELETE SET NULL).
+  {
+    label: 'alumni_merge_site_jobs_done',
+    sql: `DELETE FROM alumni_merge_site_jobs WHERE "completedAt" IS NOT NULL
+            AND "mergeId" IN (SELECT id FROM alumni_merges
+              WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
+  {
+    label: 'alumni_merge_site_jobs_owed',
+    sql: `UPDATE alumni_merge_site_jobs
+            SET kind = 'erase', "targetSubject" = NULL, "blockedAt" = NULL, "unreadySince" = NULL,
+                attempts = 0, "lastError" = NULL, "nextAttemptAt" = now()
+          WHERE "completedAt" IS NULL AND "mergeId" IN (SELECT id FROM alumni_merges
+              WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
   {
     label: 'alumni_merges',
     sql: `DELETE FROM alumni_merges WHERE "completedAt" IS NOT NULL
@@ -102,7 +122,8 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   },
   {
     label: 'alumni_merges_open',
-    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2, "targetSubject" = NULL WHERE "completedAt" IS NULL
+    // The admin's reason may name the target (a married name, an e-mail exchange): blanked with it.
+    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2, "targetSubject" = NULL, reason = NULL WHERE "completedAt" IS NULL
             AND ("targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
     replacement: DELETED_ACCOUNT,
   },

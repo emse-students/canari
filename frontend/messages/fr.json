@@ -3581,7 +3581,7 @@
   "legal_child_safety_subtitle": "Canari - Association Rootz",
   "legal_privacy_subtitle": "Canari - Association Rootz · EMSE",
   "legal_privacy_retention_settings_note": "Les durées des CanaReels, des rediffusions et des fichiers de conversation sont fixées par les administrateurs de la plateforme ; celles affichées ici sont les valeurs en vigueur. Une durée modifiée ne s'applique qu'au contenu créé après la modification : un contenu déjà publié ou envoyé garde la durée de sa création.",
-  "legal_privacy_alumni_duplicate_review": "Une exception : si votre compte MiConnect a été créé par une connexion Alumni et que son nom et sa promotion correspondent à un seul compte existant, les administrateurs de Canari voient, pour décider de rattacher les deux comptes, l'adresse e-mail que MiConnect a de chacun (pour le compte créé par les Alumni, celle enregistrée chez les Alumni) et sa date de dernière connexion à MiConnect. Canari les lit chez MiConnect à l'affichage et ne les conserve pas. Quand MiConnect fusionne ensuite les deux comptes à la connexion Alumni suivante, ou refuse de le faire, il journalise l'opération avec l'adresse IP de cette connexion.",
+  "legal_privacy_alumni_duplicate_review": "Une exception : si votre compte MiConnect a été créé par une connexion Alumni, les administrateurs de Canari peuvent le rattacher à votre compte existant. Pour en décider, ils voient l'adresse e-mail que MiConnect a de chaque compte (pour le compte créé par les Alumni, celle enregistrée chez les Alumni) et sa date de dernière connexion à MiConnect : pour le seul compte dont le nom et la promotion correspondent ou, quand les noms diffèrent, pour chaque compte trouvé en cherchant un nom. Canari les lit chez MiConnect à l'affichage et ne les conserve pas. Un rattachement décidé à la main conserve la raison écrite par l'administrateur, et MiConnect garde sur le compte en double les deux noms qu'il a vus, pour les vérifier de nouveau. Quand MiConnect fusionne les deux comptes à la connexion Alumni suivante, ou refuse de le faire, il journalise l'opération avec l'adresse IP de cette connexion ; le journal d'une fusion est rattaché au compte conservé et supprimé avec lui. MiConnect prévient alors Canari, qui supprime le compte en double et demande à Sky, MiGallery et Le Cercle de reporter sur votre compte ce que le doublon y possédait, en leur transmettant les deux identifiants techniques MiConnect des comptes (jamais un nom ni une adresse). Si votre compte est supprimé avant la fin, la raison écrite est effacée et ces sites suppriment le compte en double au lieu de le reporter.",
   "legal_privacy_retention_defaults_notice": "Le serveur n'a pas pu être joint : les durées réglables ci-dessous sont les valeurs par défaut, et peuvent différer de celles en vigueur. Elles se mettent à jour dès que l'application joint le serveur.",
   "legal_privacy_retention_cached_notice": "Le serveur n'a pas pu être joint : valeurs du {date}.",
   "legal_footer_credits": "Canari - Mines Saint-Étienne · Association Rootz",
@@ -7352,9 +7352,10 @@
   "admin_alumni_closed_title": "Rattachements terminés",
   "admin_alumni_closed_at": "Fusionné par MiConnect le {date}",
   "admin_alumni_closed_by_reconciler": "Fusionné par MiConnect, constaté le {date} par cette page : l'avis de MiConnect n'est pas arrivé",
-  "admin_alumni_sites_none": "Aucun site à prévenir n'a été enregistré : le transfert vers les autres sites est à faire à la main.",
+  "admin_alumni_sites_none": "Aucune tâche vers les autres sites n'a été enregistrée pour ce rattachement : c'est une anomalie, signalée dans les journaux du serveur.",
   "admin_alumni_site_done": "{site} : {outcome}",
   "admin_alumni_site_blocked": "{site} : bloqué ({error}), à régler à la main",
+  "admin_alumni_site_unready": "{site} : ce site ne gère pas encore le rattachement, il sera redemandé chaque jour",
   "admin_alumni_site_pending": [
     {
       "declarations": ["input attempts", "input site", "local attemptsPlural = attempts: plural"],

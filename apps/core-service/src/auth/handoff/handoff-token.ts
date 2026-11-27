@@ -144,10 +144,16 @@ export interface AlumniMergeCallClaims {
   iss: string;
   /** The site's id in `libs/contracts/ecosystem-sites.json`. */
   aud: string;
+  /**
+   * `transfer`: move what the duplicate's account owns onto `target`'s. `erase`: erase the duplicate's
+   * account - the target was erased before the site answered (D54, migration 030), and no `target`
+   * is sent.
+   */
+  op: 'transfer' | 'erase';
   /** The duplicate's subject on that site. */
   dup: string;
-  /** The target's subject, onto which the site moves what the duplicate owns. */
-  target: string;
+  /** The target's subject, onto which the site moves what the duplicate owns; a `transfer` only. */
+  target?: string;
   /** The job's id: the site's idempotence key. */
   jti: string;
   iat: number;

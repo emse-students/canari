@@ -175,8 +175,9 @@ entries:
   # it was made) is an ORPHAN: it is cleared (only if the duplicate, read under its row lock, still
   # carries that same mark), logged at warning, and the sign-in goes on as an ordinary one. Otherwise the policy re-reads both accounts under a row lock and, if ALL of these
   # hold, moves the Alumni connection onto the target, deletes the duplicate (its mark with it) - the
-  # two in ONE transaction - records an authentik Event `custom_alumni_merge` (both pks and uuids, who
-  # marked, the af_id, the mode and Canari's merge id) whose USER IS THE TARGET (D57: an Event of the
+  # two in ONE transaction - records an authentik Event `custom_alumni_merge` (both pks, uuids and
+  # OIDC subjects, who marked, the af_id, the mode and Canari's merge id), saved once that transaction
+  # COMMITTED (`transaction.on_commit`: its save is what dispatches the push), whose USER IS THE TARGET (D57: an Event of the
   # duplicate is deleted with it by the tenant's `gdpr_compliance` cleanup, the merge's own trace
   # included), and switches the plan's pending user to the target, so the write below records the
   # membership read on the target and the login signs the TARGET in. That Event is what
@@ -340,15 +341,22 @@ entries:
                     UserSourceConnection.objects.filter(pk=links[0].pk).update(user=target)
                     duplicate_pk = duplicate.pk
                     duplicate_uuid = str(duplicate.uuid)
+                    # Both OIDC subjects (`uid`, the `hashed_user_id` every provider issues), read BEFORE the
+                    # delete: the duplicate's is derived from its pk, gone with it. Canari's sibling-site
+                    # jobs find the duplicate's accounts by it (D54).
+                    duplicate_subject = duplicate.uid
                     duplicate.delete()
                     # D57: the merge's Event is the TARGET's, never built with `from_http`, which makes it
                     # the flow's pending user's - the duplicate's, deleted just above, and with it, under
                     # `gdpr_compliance`, every Event of its own. ONE save: one dispatch, one push.
-                    merged = Event.new("alumni_merge", app="miconnect", duplicate_pk=duplicate_pk, duplicate_username=pending.username, duplicate_uuid=duplicate_uuid, target_pk=target.pk, target_username=target.username, target_uuid=str(target.uuid), marked_by=marked_by, af_id=af_id, mode=mode, merge_id=merge_id)
+                    merged = Event.new("alumni_merge", app="miconnect", duplicate_pk=duplicate_pk, duplicate_username=pending.username, duplicate_uuid=duplicate_uuid, duplicate_subject=duplicate_subject, target_pk=target.pk, target_username=target.username, target_uuid=str(target.uuid), target_subject=target.uid, marked_by=marked_by, af_id=af_id, mode=mode, merge_id=merge_id)
                     merged.set_user(target)
                     if request.http_request is not None:
                         merged.client_ip = ClientIPMiddleware.get_client_ip(request.http_request)
-                    merged.save()
+                    # SAVED ONCE THE MERGE IS COMMITTED: saving an Event dispatches it to every Notification
+                    # Rule, and the push it triggers must never announce a merge this transaction could
+                    # still roll back. Outside an outer atomic block, the commit is this block's exit.
+                    transaction.on_commit(merged.save)
         if refused:
             ak_logger.error("[ALUMNI_MERGE] refused at sign-in, nothing changed and the mark is kept", duplicate=pending.username, into=into, mode=mode, reasons=refused)
             journal(Event.new("alumni_merge_refused", app="miconnect", duplicate_pk=pending.pk, duplicate_username=pending.username, into=into, marked_by=marked_by, af_id=af_id, mode=mode, merge_id=merge_id, reasons=refused))

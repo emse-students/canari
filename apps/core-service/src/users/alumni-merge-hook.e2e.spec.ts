@@ -56,7 +56,31 @@ describe('POST /api/hooks/miconnect/alumni-merge', () => {
     const res = await post({ [ALUMNI_MERGE_HOOK_SECRET_HEADER]: SECRET });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ completed: true });
-    expect(completeFromPush).toHaveBeenCalledWith(BODY.duplicateUuid, BODY.targetUuid, '');
+    expect(completeFromPush).toHaveBeenCalledWith(BODY.duplicateUuid, BODY.targetUuid, '', {
+      duplicateSubject: undefined,
+      targetSubject: undefined,
+    });
+  });
+
+  it('hands the service both subjects the push names (D54)', async () => {
+    const res = await post(
+      { [ALUMNI_MERGE_HOOK_SECRET_HEADER]: SECRET },
+      { ...BODY, duplicateSubject: 'a1b2c3', targetSubject: 'd4e5f6' }
+    );
+    expect(res.status).toBe(200);
+    expect(completeFromPush).toHaveBeenCalledWith(BODY.duplicateUuid, BODY.targetUuid, '', {
+      duplicateSubject: 'a1b2c3',
+      targetSubject: 'd4e5f6',
+    });
+  });
+
+  it('with the secret but a malformed subject: 400, nothing read', async () => {
+    const res = await post(
+      { [ALUMNI_MERGE_HOOK_SECRET_HEADER]: SECRET },
+      { ...BODY, duplicateSubject: 'not a subject; drop table' }
+    );
+    expect(res.status).toBe(400);
+    expect(completeFromPush).not.toHaveBeenCalled();
   });
 
   it('without the secret: 401, nothing read', async () => {
@@ -98,6 +122,10 @@ describe('POST /api/hooks/miconnect/alumni-merge', () => {
     const block = nginx.slice(start, nginx.indexOf('    }', start));
     expect(block).toContain('proxy_pass http://$target_core_service;');
     expect(block).not.toContain('auth_request');
+    // Rate-limited at the edge, its zone declared (a zone used but never declared fails nginx -t).
+    expect(block).toContain('limit_req zone=miconnect_hook burst=20 nodelay;');
+    expect(block).toContain('limit_req_status 429;');
+    expect(nginx).toContain('limit_req_zone $miconnect_hook_key zone=miconnect_hook:1m rate=1r/s;');
     for (const header of ['X-User-Id', 'X-Global-Admin', 'X-Internal-Token', 'X-Internal-Secret']) {
       expect(block).toMatch(new RegExp(`proxy_set_header ${header} "(false)?";`));
     }

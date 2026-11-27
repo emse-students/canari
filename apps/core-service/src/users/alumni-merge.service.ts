@@ -145,6 +145,8 @@ const NOTHING_HELD: AlumniHoldings = {
 /** An `alumni_merges` row that is neither completed nor cancelled. */
 interface OpenRow {
   id: string;
+  /** The admin who marked it last: a resume by another admin records that admin (D55). */
+  actorId: string;
   duplicateUuid: string;
   duplicateUsername: string;
   targetUuid: string;
@@ -158,11 +160,21 @@ interface OpenRow {
 }
 
 /** The columns {@link OpenRow} is read with. */
-const OPEN_ROW_COLUMNS = `id, "duplicateUuid", "duplicateUsername", "targetUuid", held, "requestedAt",
+const OPEN_ROW_COLUMNS = `id, "actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held, "requestedAt",
        "markedAt", mode, reason, "duplicateSubject", "targetSubject"`;
 
 /** Who closes a merge whose duplicate MiConnect no longer has (D54). */
 type Completer = 'push' | 'reconciler';
+
+/**
+ * Both OIDC subjects as MiConnect's push names them (D54, 85-alumni-merge-push.yaml), read by the merge
+ * policy while both accounts existed. Only used where the row has none (a mark written before 1.8.3
+ * and never read again before its merge); a row's own subject, captured at the mark, always wins.
+ */
+export interface PushedSubjects {
+  duplicateSubject?: string;
+  targetSubject?: string;
+}
 
 /** Letters NFKD does not decompose, spelled out; and the typographic apostrophe as the plain one. */
 const LIGATURES: Record<string, string> = {
@@ -232,7 +244,8 @@ const MARK_REMOVED: Record<string, null> = Object.fromEntries(
 /**
  * The admin's written reason (D55), trimmed, or null when none is owed and none was given. A MANUAL
  * merge requires one; a reason given in either mode must hold {@link ALUMNI_MERGE_REASON_MIN} to
- * {@link ALUMNI_MERGE_REASON_MAX} characters (code points, as the page counts them).
+ * {@link ALUMNI_MERGE_REASON_MAX} code points after trimming - the page counts the same way
+ * (`libs/contracts/alumni-merge-reason.json`, asserted on both sides).
  */
 export function checkMergeReason(reason: unknown, mode: AlumniMergeMode): string | null {
   const text = typeof reason === 'string' ? reason.trim() : '';
@@ -353,6 +366,9 @@ export class AlumniMergeService {
       this.logger.warn(`[ALUMNI_MERGE] target search refused ${tag}: no such account`);
       throw new AlumniMergeNotFoundError();
     }
+    // The search discloses e-mails and last sign-ins (register M1): only for a real Alumni duplicate,
+    // never for any account a caller names.
+    await this.assertDuplicateShaped(dup, `target search ${tag}`);
     const busy = new Set(
       (await this.openRows())
         .filter((r) => r.duplicateUuid !== duplicateUuid)
@@ -387,7 +403,7 @@ export class AlumniMergeService {
       const tag = `dup=${row.duplicateUuid.slice(0, 8)} target=${row.targetUuid.slice(0, 8)}`;
       const dup = await this.editor.userByUuid(row.duplicateUuid);
       if (!dup) {
-        await this.complete(row, tag, 'reconciler');
+        await this.complete(row, tag, 'reconciler', await this.provenMerged(row));
         continue;
       }
       await this.captureSubjects(row, dup, tag);
@@ -515,10 +531,11 @@ export class AlumniMergeService {
     }
     const dup = await this.editor.userByUuid(duplicateUuid);
     if (!dup) {
-      if (open?.markedAt) {
-        await this.complete(open, tag, 'reconciler');
-        throw new AlumniMergeAlreadyMergedError();
-      }
+      // The proof decides, never `markedAt`: a request that died between the mark at MiConnect and
+      // its `markedAt` is merged all the same once the target holds the duplicate's link.
+      const merged = open ? await this.provenMerged(open) : false;
+      if (open) await this.complete(open, tag, 'reconciler', merged);
+      if (merged) throw new AlumniMergeAlreadyMergedError();
       this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: no such account`);
       throw new AlumniMergeNotFoundError();
     }
@@ -569,6 +586,19 @@ export class AlumniMergeService {
         throw new AlumniMergeTargetBusyError();
       }
       await this.captureSubjects(open, dup, tag, target);
+      if (open.actorId !== actorId) {
+        // The mark below is this admin's (`alumni_merge_marked_by`), so the row is too; the admin who
+        // opened it stays in this line.
+        const earlier = open.actorId;
+        await this.dataSource.query(
+          `UPDATE alumni_merges SET "actorId" = $2 WHERE id = $1 AND "completedAt" IS NULL`,
+          [open.id, actorId]
+        );
+        this.logger.log(
+          `[ALUMNI_MERGE] resumed by another admin ${tag}: the row was opened by actor=${earlier.slice(0, 8)}`
+        );
+        open.actorId = actorId;
+      }
     }
 
     // RE-READ JUST BEFORE THE WRITE: a duplicate gone since the holdings were counted is refused here,
@@ -619,7 +649,7 @@ export class AlumniMergeService {
     }
     const dup = await this.editor.userByUuid(duplicateUuid);
     if (!dup) {
-      await this.complete(open, tag, 'reconciler');
+      await this.complete(open, tag, 'reconciler', await this.provenMerged(open));
       throw new AlumniMergeAlreadyMergedError();
     }
     if (Object.values(MERGE_MARK).some((key) => key in dup.attributes)) {
@@ -641,12 +671,14 @@ export class AlumniMergeService {
    * duplicate's Alumni link - the same {@link complete} the page's reading runs. Anything else writes
    * nothing and is refused ({@link AlumniMergeNotMergedError}, at error): a forged call, even one with
    * the secret, can only make Canari look at the truth. No open merge of that duplicate (closed
-   * already, or never asked for): `{ already: true }`, so a replayed push is a no-op.
+   * already, or never asked for): `{ already: true }`, so a replayed push is a no-op. The push also
+   * names both subjects ({@link PushedSubjects}), used only where the row captured none.
    */
   async completeFromPush(
     duplicateUuid: string,
     targetHint: string,
-    mergeIdHint: string
+    mergeIdHint: string,
+    pushed: PushedSubjects = {}
   ): Promise<{ completed: true } | { already: true }> {
     const tag = `dup=${duplicateUuid.slice(0, 8)} target=${targetHint.slice(0, 8)}`;
     this.logger.log(`[ALUMNI_MERGE] push received ${tag}`);
@@ -671,16 +703,13 @@ export class AlumniMergeService {
       );
       throw new AlumniMergeNotMergedError('the duplicate still exists');
     }
-    if (
-      !row.markedAt ||
-      !(await this.targetHoldsTheAlumniLink(row.targetUuid, row.duplicateUsername))
-    ) {
+    if (!(await this.provenMerged(row))) {
       this.logger.error(
         `[ALUMNI_MERGE] push refused ${tag}: the target does not hold the duplicate's Alumni link`
       );
       throw new AlumniMergeNotMergedError("the target does not hold the duplicate's Alumni link");
     }
-    await this.complete(row, tag, 'push');
+    await this.complete(row, tag, 'push', true, pushed);
     return { completed: true };
   }
 
@@ -717,13 +746,7 @@ export class AlumniMergeService {
       this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: ${error.message}`);
       throw error;
     };
-    if (!isAlumniCreated(dup) || !isPersonAccount(dup)) {
-      refuse(new AlumniMergeNotDuplicateError('not created by an Alumni sign-in'));
-    }
-    const slugs = await this.editor.sourceSlugsOf(dup.pk);
-    if (slugs.length !== 1 || slugs[0] !== ALUMNI_SOURCE_SLUG) {
-      refuse(new AlumniMergeNotDuplicateError(`its links are [${slugs.join(', ')}], not [alumni]`));
-    }
+    await this.assertDuplicateShaped(dup, tag);
     if (targetUuid === dup.uuid) refuse(new AlumniMergeNoMatchError('the same account'));
     const target = await this.editor.userByUuid(targetUuid);
     if (!target) return refuse(new AlumniMergeNoMatchError('no such target account'));
@@ -749,6 +772,24 @@ export class AlumniMergeService {
       );
     }
     return { target, mode };
+  }
+
+  /**
+   * The duplicate half of the allowlist, re-read from MiConnect now: an account created by an Alumni
+   * sign-in, a person, whose links are exactly ['alumni'] ({@link AlumniMergeNotDuplicateError}).
+   */
+  private async assertDuplicateShaped(dup: MiconnectUserListing, tag: string): Promise<void> {
+    const refuse = (error: Error): never => {
+      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: ${error.message}`);
+      throw error;
+    };
+    if (!isAlumniCreated(dup) || !isPersonAccount(dup)) {
+      refuse(new AlumniMergeNotDuplicateError('not created by an Alumni sign-in'));
+    }
+    const slugs = await this.editor.sourceSlugsOf(dup.pk);
+    if (slugs.length !== 1 || slugs[0] !== ALUMNI_SOURCE_SLUG) {
+      refuse(new AlumniMergeNotDuplicateError(`its links are [${slugs.join(', ')}], not [alumni]`));
+    }
   }
 
   /**
@@ -872,25 +913,31 @@ export class AlumniMergeService {
   }
 
   /**
-   * Closes a row whose duplicate MiConnect no longer has, `by` the push or the reconciler (D54). A
-   * MARKED row is the expected end: the sign-in merged it, and the duplicate's Canari account is erased
-   * NOW, after the merge and never before it (owner, 2026-11-24) - requested first, the row closed
-   * after, so a call that dies in between finds the row still open and requests again (the erasure is
-   * idempotent). A duplicate gone is not by itself proof of a merge: the erasure needs the TARGET to
-   * hold the duplicate's Alumni link now, read from MiConnect. A marked duplicate gone with the target
-   * holding no such link went some other way (deleted by hand in MiConnect's admin, or the target
-   * itself gone): logged at error, nothing erased, the row closed. A REQUESTED one likewise erases
-   * nothing.
+   * Closes a row whose duplicate MiConnect no longer has, `by` the push or the reconciler (D54).
+   * `merged` is {@link provenMerged}'s answer, the ONE predicate both callers read: the target holds
+   * the duplicate's Alumni link at MiConnect now. Never `markedAt`, which says Canari recorded its
+   * mark - a request that died between the mark at MiConnect and that record is merged all the same.
+   *
+   * A MERGED row is the expected end: the sign-in merged it, and the duplicate's Canari account is
+   * erased NOW, after the merge and never before it (owner, 2026-11-24) - requested first, the row
+   * closed after, so a call that dies in between finds the row still open and requests again (the
+   * erasure is idempotent). A duplicate gone with the target holding no such link went some other way
+   * (deleted by hand in MiConnect's admin, or the target itself gone): nothing erased, the row closed,
+   * at error when it had been marked.
    *
    * The transaction that closes a MERGED row also writes its sibling-site jobs (D52): a closed merge
-   * always owes its sites, and only the closer writes them. A row closed by the reconciler rather than
-   * the push says so at warning, with its age: a dead push is seen the first time an admin opens the
-   * page.
+   * always owes its sites, and only the closer writes them, with the subjects the row captured at the
+   * mark - or, for a row that captured none, the ones MiConnect's push names ({@link PushedSubjects}).
+   * A row closed by the reconciler rather than the push says so at warning, with its age: a dead push
+   * is seen the first time an admin opens the page.
    */
-  private async complete(row: OpenRow, tag: string, by: Completer): Promise<void> {
-    const merged = row.markedAt
-      ? await this.targetHoldsTheAlumniLink(row.targetUuid, row.duplicateUsername)
-      : false;
+  private async complete(
+    row: OpenRow,
+    tag: string,
+    by: Completer,
+    merged: boolean,
+    pushed: PushedSubjects = {}
+  ): Promise<void> {
     if (merged) {
       const duplicateUserId = (await this.canariIdsOf([row.duplicateUuid])).get(row.duplicateUuid);
       if (duplicateUserId) {
@@ -899,6 +946,7 @@ export class AlumniMergeService {
         this.logger.log(`[ALUMNI_MERGE] ${tag}: no Canari account to erase`);
       }
     }
+    const subjects = this.subjectsOf(row, pushed, tag);
     const { closed, jobs } = await this.dataSource.transaction(async (manager) => {
       const [updated] = (await manager.query(
         `UPDATE alumni_merges SET "completedAt" = now(), "completedBy" = $2
@@ -909,15 +957,16 @@ export class AlumniMergeService {
       if (!merged || (updated ?? []).length === 0) {
         return { closed: (updated ?? []).length > 0, jobs: false };
       }
-      if (!row.duplicateSubject || !row.targetSubject) {
+      if (!subjects) {
+        // CANNOT HAPPEN: the mark captures both subjects, a pre-1.8.3 row gets them at its first
+        // reading, and the push names both. Reaching here is a broken invariant, never a path.
         this.logger.error(
-          `[ALUMNI_MERGE] completed ${tag} merge=${row.id}: no subject was captured while the ` +
-            'duplicate existed - its sibling-site jobs are owed BY HAND from the recovered subject ' +
-            '(docs/wiki/profiles-and-access.md, D54)'
+          `[ALUMNI_MERGE] completed ${tag} merge=${row.id}: no subject on the row nor in the push - ` +
+            'an invariant broke (the mark captures both, the push names both); no site job written'
         );
         return { closed: true, jobs: false };
       }
-      await this.siteJobs.writeJobs(manager, row.id, row.duplicateSubject, row.targetSubject);
+      await this.siteJobs.writeJobs(manager, row.id, subjects.duplicate, subjects.target);
       return { closed: true, jobs: true };
     });
     if (!closed) {
@@ -925,10 +974,11 @@ export class AlumniMergeService {
       return;
     }
     if (merged && by === 'reconciler') {
-      const ageMinutes = Math.round((Date.now() - new Date(row.markedAt!).getTime()) / 60_000);
+      const since = row.markedAt ?? row.requestedAt;
+      const ageMinutes = Math.round((Date.now() - new Date(since).getTime()) / 60_000);
       this.logger.warn(
         `[ALUMNI_MERGE] completed by the reconciler, not the push ${tag} merge=${row.id} ` +
-          `marked ${ageMinutes} min ago - MiConnect's push did not land`
+          `${row.markedAt ? 'marked' : 'requested'} ${ageMinutes} min ago - MiConnect's push did not land`
       );
     } else if (merged) {
       this.logger.log(
@@ -945,6 +995,44 @@ export class AlumniMergeService {
       );
     }
     if (jobs) void this.siteJobs.drain();
+  }
+
+  /**
+   * The two subjects a merged row's site jobs carry: the row's own, captured while both accounts
+   * existed, else the push's. A push naming a subject that differs from the row's is said at error and
+   * the row's is kept - it was read from MiConnect, the push is only a hint. Null when either is still
+   * missing.
+   */
+  private subjectsOf(
+    row: OpenRow,
+    pushed: PushedSubjects,
+    tag: string
+  ): { duplicate: string; target: string } | null {
+    for (const [key, ours, theirs] of [
+      ['duplicate', row.duplicateSubject, pushed.duplicateSubject],
+      ['target', row.targetSubject, pushed.targetSubject],
+    ] as const) {
+      if (ours && theirs && ours !== theirs) {
+        this.logger.error(
+          `[ALUMNI_MERGE] push ${tag}: its ${key} subject differs from the one captured at the mark - ` +
+            'the captured one is kept'
+        );
+      }
+    }
+    const duplicate = row.duplicateSubject || pushed.duplicateSubject || null;
+    const target = row.targetSubject || pushed.targetSubject || null;
+    if (duplicate && !row.duplicateSubject) {
+      this.logger.log(`[ALUMNI_MERGE] ${tag}: the duplicate's subject taken from the push`);
+    }
+    return duplicate && target ? { duplicate, target } : null;
+  }
+
+  /**
+   * THE ONE PREDICATE OF "MERGED" (D54), read by the push and the reconciler alike: the merge's target
+   * holds, at MiConnect now, the duplicate's Alumni link. Never `markedAt`.
+   */
+  private provenMerged(row: OpenRow): Promise<boolean> {
+    return this.targetHoldsTheAlumniLink(row.targetUuid, row.duplicateUsername);
   }
 
   /**

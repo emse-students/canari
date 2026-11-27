@@ -10,10 +10,12 @@
  *
  *   CORE_IT_DATABASE_URL=postgres://user:pass@localhost:5432/auth_db bun run test -- account-erasure.integration
  */
+import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { AlumniMergeSiteJobsService } from '../users/alumni-merge-site-jobs.service';
 import { AccountErasureService } from './account-erasure.service';
 import { subjectDigest } from './erasure-policy';
 
@@ -29,6 +31,9 @@ const OTHER = '0b0b0b0b-0000-4000-8000-00000000e1a5';
 const RESTORED = '0c0c0c0c-0000-4000-8000-00000000e1a5';
 const RETURNER = '0d0d0d0d-0000-4000-8000-00000000e1a5';
 const OWED = '0e0e0e0e-0000-4000-8000-00000000e1a5';
+/** The Alumni merge case's two targets: erased while their merges' site jobs are still owed. */
+const MERGE_TARGET = '0f0f0f0f-0000-4000-8000-00000000e1a5';
+const RACED_TARGET = '1a1a1a1a-0000-4000-8000-00000000e1a5';
 
 const CORE_TABLES = [
   'users',
@@ -47,7 +52,7 @@ const CORE_TABLES = [
 maybe('account erasure queue against PostgreSQL', () => {
   const schema = `erasure_core_it_${Date.now()}`;
   let ds: DataSource;
-  const axios = jest.requireMock('axios') as { delete: jest.Mock };
+  const axios = jest.requireMock('axios') as { delete: jest.Mock; post: jest.Mock };
 
   beforeAll(async () => {
     const admin = new DataSource({ type: 'postgres', url: URL });
@@ -284,5 +289,171 @@ maybe('account erasure queue against PostgreSQL', () => {
     await service.replayAfterRestore(journal);
     await service.drain();
     expect(await count(`account_erasure_jobs`)).toBe(jobs);
+  }, 60_000);
+
+  /**
+   * D54, migration 030: a target erased while its merge's sibling-site jobs are still owed. NOTHING
+   * CASCADES to a job - the jobs a site settled go with the merge's history, every job still owed
+   * becomes an `erase` of the duplicate's account there - and an open merge into it loses the reason
+   * with the target's identifiers.
+   */
+  it("a target's erasure turns its merge's owed site jobs into erases, and never cascades them", async () => {
+    axios.delete = jest.fn(async () => ({ data: { ok: true } }));
+    const service = new AccountErasureService(ds);
+    await ds.query(
+      `INSERT INTO users (id, "displayName", "miconnectUuid") VALUES ($1, 'Target', $2)`,
+      [MERGE_TARGET, 'mc-merge-target']
+    );
+    const [closed] = await ds.query(
+      `INSERT INTO alumni_merges
+         ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held, mode,
+          reason, "duplicateSubject", "targetSubject", "markedAt", "completedAt", "completedBy")
+       VALUES ('admin', 'dup-closed', 'alumni-31', 'mc-merge-target', $1, '{}'::jsonb, 'manual',
+               'Her married name, confirmed by e-mail.', 'sub-dup', 'sub-target', now(), now(), 'push')
+       RETURNING id`,
+      [MERGE_TARGET]
+    );
+    await ds.query(
+      `INSERT INTO alumni_merges
+         ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held, mode, reason)
+       VALUES ('admin', 'dup-open', 'alumni-32', 'mc-merge-target', $1, '{}'::jsonb, 'manual',
+               'Names the target: a reason is personal data.')`,
+      [MERGE_TARGET]
+    );
+    await ds.query(
+      `INSERT INTO alumni_merge_site_jobs
+         ("mergeId", site, "duplicateSubject", "targetSubject", "completedAt", outcome, "blockedAt", "unreadySince")
+       VALUES ($1, 'sky', 'sub-dup', 'sub-target', now(), 'absent', NULL, NULL),
+              ($1, 'migallery', 'sub-dup', 'sub-target', NULL, NULL, NULL, now()),
+              ($1, 'le-cercle', 'sub-dup', 'sub-target', NULL, NULL, now(), NULL)`,
+      [closed.id]
+    );
+
+    await service.requestErasure(MERGE_TARGET);
+
+    // The settled job went with the merge's history; the two still owed stand, now erases.
+    expect(
+      await count(`alumni_merge_site_jobs WHERE site = 'sky' AND "duplicateSubject" = 'sub-dup'`)
+    ).toBe(0);
+    const owed = await ds.query(
+      `SELECT site, kind, "mergeId", "targetSubject", "blockedAt", "unreadySince", attempts
+         FROM alumni_merge_site_jobs WHERE "duplicateSubject" = 'sub-dup' ORDER BY site`
+    );
+    expect(owed).toEqual([
+      {
+        site: 'le-cercle',
+        kind: 'erase',
+        mergeId: null,
+        targetSubject: null,
+        blockedAt: null,
+        unreadySince: null,
+        attempts: 0,
+      },
+      {
+        site: 'migallery',
+        kind: 'erase',
+        mergeId: null,
+        targetSubject: null,
+        blockedAt: null,
+        unreadySince: null,
+        attempts: 0,
+      },
+    ]);
+    expect(await count(`alumni_merges WHERE id = $1`, [closed.id])).toBe(0);
+    // The open merge keeps its row, the target and the REASON blanked.
+    expect(
+      await ds.query(
+        `SELECT "targetUuid", "targetUserId", "targetSubject", reason FROM alumni_merges WHERE "duplicateUuid" = 'dup-open'`
+      )
+    ).toEqual([{ targetUuid: '[deleted]', targetUserId: null, targetSubject: null, reason: null }]);
+
+    // The schema itself never cascades: deleting a merge row only nulls its jobs' merge.
+    const [fk] = await ds.query(
+      `SELECT confdeltype FROM pg_constraint
+        WHERE conrelid = 'alumni_merge_site_jobs'::regclass AND contype = 'f'`
+    );
+    expect(fk.confdeltype).toBe('n');
+    // ...and a transfer always names its target, an erase never does.
+    await expect(
+      ds.query(
+        `INSERT INTO alumni_merge_site_jobs (site, kind, "duplicateSubject", "targetSubject")
+         VALUES ('sky', 'transfer', 'sub-x', NULL)`
+      )
+    ).rejects.toThrow(/CHK_alumni_merge_site_jobs_kind/);
+  }, 60_000);
+
+  it('a call in flight when its target is erased settles nothing, and the erase it became runs next', async () => {
+    const saved = { key: process.env.HANDOFF_SIGNING_KEY, url: process.env.FRONTEND_URL };
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    process.env.HANDOFF_SIGNING_KEY = privateKey
+      .export({ format: 'der', type: 'pkcs8' })
+      .toString('base64');
+    process.env.FRONTEND_URL = 'https://canari.example';
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      axios.delete = jest.fn(async () => ({ data: { ok: true } }));
+      const erasure = new AccountErasureService(ds);
+      const siteJobs = new AlumniMergeSiteJobsService(ds);
+      await ds.query(
+        `INSERT INTO users (id, "displayName", "miconnectUuid") VALUES ($1, 'Raced', $2)`,
+        [RACED_TARGET, 'mc-raced-target']
+      );
+      const [merge] = await ds.query(
+        `INSERT INTO alumni_merges
+           ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held,
+            "duplicateSubject", "targetSubject", "markedAt", "completedAt", "completedBy")
+         VALUES ('admin', 'dup-raced', 'alumni-33', 'mc-raced-target', $1, '{}'::jsonb,
+                 'sub-raced', 'sub-raced-target', now(), now(), 'push')
+         RETURNING id`,
+        [RACED_TARGET]
+      );
+      await ds.manager.transaction((m) =>
+        siteJobs.writeJobs(m, merge.id, 'sub-raced', 'sub-raced-target')
+      );
+      // Only Sky's job is due: every other job of this table waits.
+      await ds.query(
+        `UPDATE alumni_merge_site_jobs SET "nextAttemptAt" = now() + interval '1 hour'
+          WHERE NOT ("duplicateSubject" = 'sub-raced' AND site = 'sky')`
+      );
+
+      // Sky's transfer is in flight when the target is erased, and Sky answers it transferred; the
+      // erase it became is due at once and runs in the same drain - Sky answers that one absent.
+      axios.post = jest.fn(async () => {
+        if (axios.post.mock.calls.length > 1) return { status: 200, data: { outcome: 'absent' } };
+        await erasure.requestErasure(RACED_TARGET);
+        return { status: 200, data: { outcome: 'transferred' } };
+      });
+      await siteJobs.drain();
+      // The transfer's answer is not recorded on the job it no longer is...
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('its row is gone or changed under the call')
+      );
+      // ...and the erase ran next, naming no target.
+      const ops = (
+        axios.post.mock.calls as [string, unknown, { headers: { authorization: string } }][]
+      ).map(([, , config]) =>
+        JSON.parse(Buffer.from(config.headers.authorization.split('.')[1], 'base64url').toString())
+      );
+      // (The erasure made all three of the merge's owed jobs due at once: each ran as an erase.)
+      expect(ops[0]).toEqual(
+        expect.objectContaining({ aud: 'sky', op: 'transfer', target: 'sub-raced-target' })
+      );
+      expect(
+        ops
+          .slice(1)
+          .map((c) => [c.aud, c.op, 'target' in c])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      ).toEqual([
+        ['le-cercle', 'erase', false],
+        ['migallery', 'erase', false],
+        ['sky', 'erase', false],
+      ]);
+      // Done, an erase leaves no row: no merge is left to show it.
+      expect(await count(`alumni_merge_site_jobs WHERE "duplicateSubject" = 'sub-raced'`)).toBe(0);
+    } finally {
+      error.mockRestore();
+      process.env.HANDOFF_SIGNING_KEY = saved.key;
+      process.env.FRONTEND_URL = saved.url;
+    }
   }, 60_000);
 });

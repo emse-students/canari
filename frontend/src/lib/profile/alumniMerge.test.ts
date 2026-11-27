@@ -2,6 +2,8 @@
  * The Alumni merge client (D48): "Rattacher" marks, "Annuler" removes the mark, and every refusal
  * is read from the `code` of the body, never from its prose.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const apiFetch = vi.hoisted(() => vi.fn());
@@ -10,8 +12,11 @@ vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://core.test' }));
 
 import { m } from '$lib/paraglide/messages';
 import {
+  ALUMNI_MERGE_REASON_MAX,
+  ALUMNI_MERGE_REASON_MIN,
   alumniMergeErrorMessage,
   alumniReasonState,
+  alumniSiteLine,
   cancelAlumniMerge,
   fetchAlumniClosedMerges,
   fetchAlumniMergeTargets,
@@ -21,6 +26,18 @@ import {
 
 const answer = (status: number, body: unknown = {}) =>
   new Response(JSON.stringify(body), { status });
+
+/** The reason bounds both sides assert, and the cases that tell code points from UTF-16 units. */
+const REASON_CONTRACT = JSON.parse(
+  readFileSync(
+    join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'alumni-merge-reason.json'),
+    'utf8'
+  )
+) as {
+  min: number;
+  max: number;
+  cases: { text: string; length: number; problem: 'too_short' | 'too_long' | null }[];
+};
 
 const DUP = '11111111-1111-4111-8111-111111111111';
 const TARGET = '22222222-2222-4222-8222-222222222222';
@@ -81,6 +98,41 @@ describe('the Alumni merge client', () => {
     ['x'.repeat(1001), 1001, false, 'too_long'],
   ])('reads a reason against the server bounds (%#)', (text, length, valid, problem) => {
     expect(alumniReasonState(text)).toEqual({ length, valid, problem });
+  });
+
+  it.each(REASON_CONTRACT.cases)(
+    'counts %j in code points, as the server does (libs/contracts/alumni-merge-reason.json)',
+    ({ text, length, problem }) => {
+      expect(alumniReasonState(text)).toEqual({ length, valid: problem === null, problem });
+    }
+  );
+
+  it('holds the contract bounds, and counts an emoji once at the upper one', () => {
+    expect([ALUMNI_MERGE_REASON_MIN, ALUMNI_MERGE_REASON_MAX]).toEqual([
+      REASON_CONTRACT.min,
+      REASON_CONTRACT.max,
+    ]);
+    expect(alumniReasonState('😀'.repeat(REASON_CONTRACT.max)).valid).toBe(true);
+    expect(alumniReasonState('😀'.repeat(REASON_CONTRACT.max + 1)).problem).toBe('too_long');
+  });
+
+  it.each([
+    [
+      'done',
+      { outcome: 'transferred' },
+      m.admin_alumni_site_done({ site: 'sky', outcome: m.admin_alumni_site_outcome_transferred() }),
+    ],
+    [
+      'blocked',
+      { lastError: 'HTTP 409 X' },
+      m.admin_alumni_site_blocked({ site: 'sky', error: 'HTTP 409 X' }),
+    ],
+    ['unready', {}, m.admin_alumni_site_unready({ site: 'sky' })],
+    ['pending', { attempts: 2 }, m.admin_alumni_site_pending({ site: 'sky', attempts: 2 })],
+  ] as const)('says a %s site job as the admin reads it', (state, over, said) => {
+    expect(
+      alumniSiteLine({ site: 'sky', state, outcome: null, attempts: 0, lastError: null, ...over })
+    ).toBe(said);
   });
 
   it('cancels by POST on the duplicate', async () => {

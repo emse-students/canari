@@ -1,6 +1,7 @@
 # THE ALUMNI MERGE, PUSHED TO CANARI (D54, docs/wiki/profiles-and-access.md, "The Alumni merge,
 # extended"). When the merge policy of 30-sources.yaml merges a duplicate at its Alumni sign-in, it
-# saves ONE Event `custom_alumni_merge` whose user is the TARGET (D57). authentik dispatches every saved
+# saves ONE Event `custom_alumni_merge` whose user is the TARGET (D57), once the merge's transaction
+# COMMITTED (`transaction.on_commit`), so no push ever announces a merge that was rolled back. authentik dispatches every saved
 # Event to every Notification Rule (`event_post_save_notification` -> `event_trigger_dispatch`, read in
 # 2026.8.6), and the rule's policies decide: the one below passes that action and nothing else, so the
 # rule sends it ONCE (`send_once`, to the event's user - the target, who exists) through a webhook
@@ -44,13 +45,16 @@ entries:
       name: "miconnect-alumni-merge-push-body"
     attrs:
       expression: |-
-        # What Canari reads: which duplicate, into which account, and Canari's own merge id (empty on a
-        # mark written before 1.8.3). Nothing nominative.
+        # What Canari reads: which duplicate, into which account, Canari's own merge id (empty on a
+        # mark written before 1.8.3), and both OIDC subjects - the duplicate's is gone with it, and
+        # Canari's sibling-site jobs need it where its row captured none. Nothing nominative.
         context = notification.event.context if notification.event else {}
         return {
             "duplicateUuid": str(context.get("duplicate_uuid") or ""),
             "targetUuid": str(context.get("target_uuid") or ""),
             "mergeId": str(context.get("merge_id") or ""),
+            "duplicateSubject": str(context.get("duplicate_subject") or ""),
+            "targetSubject": str(context.get("target_subject") or ""),
         }
   - model: authentik_events.notificationwebhookmapping
     identifiers:
