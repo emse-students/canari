@@ -221,8 +221,8 @@ impl RelayConfig {
 pub enum EligibilityError {
     /// core-service could not be reached, or did not answer within [`ELIGIBILITY_DEADLINE`].
     Unreachable(String),
-    /// It answered something other than the two answers below (a 5xx: MiConnect unreachable or
-    /// not configured there, a refused secret).
+    /// It answered something other than a 200 or a 404 (a 5xx: its database unreachable; a 403: a
+    /// refused secret).
     Upstream(u16),
     /// A 200 whose body is not `{ "mailClass": string | null }`.
     Malformed(String),
@@ -247,8 +247,8 @@ struct ClassAnswer {
 }
 
 /// Asks core-service for an account's mail class (`GET /api/internal/users/:id/mail-class`): the
-/// class learnt from MiConnect's `school_mail` claim at the last sign-in and stored on the user row.
-/// Canari stores no address, and nobody asks MiConnect per connection
+/// class learnt from MiConnect's `school_mail` claim at the last sign-in granted that scope, and
+/// stored on the user row. Canari stores no address, and nobody asks MiConnect per connection
 /// (mail-client-transport.md#eligibility).
 pub struct Eligibility {
     http: reqwest::Client,

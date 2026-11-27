@@ -107,13 +107,13 @@
           MiGallery ou Le Cercle depuis Canari, le serveur de Canari lit aussi chez MiConnect, sans
           le conserver, ce qui décide de votre accès à ces sites (parcours, appartenances, qualité
           de cotisant Alumni de l'année et lien Alumni), pour vous y ouvrir déjà connecté seulement
-          si MiConnect vous y laisserait entrer. Si votre compte MiConnect est lié au CAS de
+          si MiConnect vous y laisserait entrer. Si votre compte MiConnect a été créé par le CAS de
           l'École, Canari reçoit aussi, à chaque connexion, votre adresse e-mail de l'École : son
           serveur n'en garde que la catégorie (élève ou personnel), qui décide si la messagerie de
           l'École vous est proposée, et l'adresse elle-même n'est gardée que sur votre appareil,
-          pour pré-remplir la connexion à cette messagerie. Canari ne reçoit pas l'adresse
-          enregistrée chez les Alumni ni votre adresse e-mail personnelle, et ne connaît pas votre
-          mot de passe. Votre photo de profil est servie par MiGallery. {m.legal_privacy_alumni_duplicate_review()}
+          pour pré-remplir la connexion à cette messagerie, jusqu'à votre déconnexion. Canari ne
+          reçoit pas l'adresse enregistrée chez les Alumni ni votre adresse e-mail personnelle, et
+          ne connaît pas votre mot de passe. Votre photo de profil est servie par MiGallery. {m.legal_privacy_alumni_duplicate_review()}
         </dd>
       </div>
       <div>

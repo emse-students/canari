@@ -449,6 +449,44 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     );
   });
 
+  it('leaves the stored class alone when the sign-in carried none (scope not granted)', async () => {
+    const stored = {
+      id: 's1',
+      displayName: 'A B',
+      firstName: 'A',
+      lastName: 'B',
+      ...profile,
+      mailClass: 'student' as const,
+      promo: 2025,
+      formation: 'ISMIN',
+    };
+    const { mailClass: _granted, ...ungranted } = profile;
+    const { service, update } = makeService(stored);
+    const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', ungranted);
+    expect(update).not.toHaveBeenCalled();
+    expect(user.mailClass).toBe('student');
+    // And a change elsewhere does not carry the class with it.
+    const other = makeService(stored);
+    await other.service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+      ...ungranted,
+      campus: 'saint-etienne',
+    });
+    expect(other.update.mock.calls[0][1]).not.toHaveProperty('mailClass');
+  });
+
+  it('returns the STORED row when the update is refused, never the claims it could not write', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service, update } = makeService(stored);
+    update.mockRejectedValueOnce(new Error('database refused'));
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+      ...profile,
+      mailClass: 'student',
+    });
+    expect(user.mailClass).toBeNull();
+    warn.mockRestore();
+  });
+
   it('does not write when nothing changed', async () => {
     const stored = {
       id: 's1',

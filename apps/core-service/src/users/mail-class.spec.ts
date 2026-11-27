@@ -33,6 +33,9 @@ describe('mail class', () => {
       'x@emse.fr.example.org',
       '@emse.fr',
       'a b@emse.fr',
+      'a@b@emse.fr',
+      'a@@etu.emse.fr',
+      'a' + String.fromCharCode(9) + 'b@emse.fr',
       'emse.fr',
     ]) {
       expect(readSchoolMail(claim)).toBeNull();

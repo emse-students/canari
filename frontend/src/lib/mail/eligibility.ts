@@ -15,12 +15,14 @@ export const MAIL_CLASS_BY_DOMAIN: Readonly<Record<string, MailClass>> = {
 export type MailClass = 'student' | 'staff';
 
 /**
- * The class of `address` (`local@domain`, case-insensitive), or `null` when it is no school address.
- * PURE and silent: the caller logs its decision, and never the address.
+ * The class of `address` (`local@domain`, case-insensitive), or `null` when it is not ONE school
+ * address: exactly one `@`, a local part, no whitespace, a listed domain exactly - the rule of the
+ * MiConnect mapping and of core-service's `readSchoolMail`. PURE and silent: the caller logs its
+ * decision, and never the address.
  */
 export function mailClassOf(address: string | null | undefined): MailClass | null {
   const normalized = (address ?? '').trim().toLowerCase();
-  const at = normalized.lastIndexOf('@');
-  if (at <= 0) return null;
+  const at = normalized.indexOf('@');
+  if (at <= 0 || normalized.indexOf('@', at + 1) !== -1 || /\s/.test(normalized)) return null;
   return MAIL_CLASS_BY_DOMAIN[normalized.slice(at + 1)] ?? null;
 }
