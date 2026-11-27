@@ -52,6 +52,7 @@
 - [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered
 - [Moderation authority](moderation-authority.md) — the ONE grid of who may do what to whom: every role, every content kind, the owner's target of 2026-11-15 and the gaps with their work packages
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
+- [The mail client](mail-client.md) — the school mailbox (RENATER Partage) inside Canari: TLS in the client, a blind relay for the web, the twelve decisions and the measurements (2026-11-27)
 - [Read receipt privacy](read-receipt-privacy.md) — every path that can move a salon's "Lu par", its evidence, and the closed chantier (2026-10-14)
 
 ### Frontend

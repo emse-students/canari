@@ -36,5 +36,5 @@ the only native builds. But the Tauri project already targets the desktop:
    end to end.
 
 **Why it matters beyond itself.** A native desktop app can open a raw TCP connection, which a browser
-page cannot. That is the precondition of the mail-client question in
-[open-questions](../open-questions.md#a-mail-client-inside-canari-asked-2026-11-27).
+page cannot. That is the precondition of the mail client on the apps, in
+[mail-client](../mail-client.md).
