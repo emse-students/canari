@@ -33,7 +33,7 @@ What it proves, in order:
      so the two implementations cannot drift: the link page each person meets through the REAL
      authorization flow on that day ("today" is put in the plan as `miconnect_today`, never read
      from the wall clock), and MiGallery's, Le Cercle's and MinoWiki's answer through authentik's own policy
-     engine; Sky stays unbound;
+     engine, and that a `mino-*` member past the window enters MinoWiki alone; Sky stays unbound;
   9. the reminder links to the link flow with THIS authorization as `next`, is skippable and shows
      once per session (a new session meets it again); the blocking page shows at every
      authorization, cannot be submitted until the link exists, and goes on once it does;
@@ -410,6 +410,22 @@ with Tenant.objects.get(ready=True):
                 check(verdict.passing == case["gate"], f"{case['name']}: {slug} {'admits' if case['gate'] else 'refuses'}")
                 if not case["gate"]:
                     check(any("cotisants" in str(text) for text in verdict.messages), f"{case['name']}: {slug} says why ({verdict.messages})")
+        # The wiki's own roles pass its gate (60-applications.yaml, miconnect-mino-wiki-roles): a member
+        # of a `mino-*` group past the window, with no post and no contribution, enters MinoWiki and only
+        # MinoWiki; a group that merely resembles the prefix admits nobody.
+        past = {"promos": [2010], "posts": [], "alumni": None, "accessGroup": False, "linked": True}
+        for name, wiki in ((PREFIX + "x-mino-editor", False), ("mino-" + PREFIX + "editor", True)):
+            become(past)
+            role, _ = Group.objects.get_or_create(name=name)
+            try:
+                student.groups.add(role)
+                today = date(2030, 1, 1)
+                check(admitted("mino-wiki", student, today).passing is wiki, f"a member of {name} past the window: MinoWiki {'admits' if wiki else 'refuses'}")
+                for slug in ("migallery", "cercle"):
+                    check(not admitted(slug, student, today).passing, f"a member of {name} past the window: {slug} refuses")
+            finally:
+                student.groups.clear()
+                role.delete()
         check(not PolicyBinding.objects.filter(target=Application.objects.get(slug="sky")).exists(), "Sky is not gated")
 
         # 9 - the pages themselves. The reminder carries the link to the source and lets the person go on.

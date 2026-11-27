@@ -18,8 +18,10 @@
 # The answer is stored on the
 # account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO
 # PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
-# check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
-# date, the test's VERSION and core-service's CONSENT_VERSION (the handoff mint's gate) disagree.
+# check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's
+# `acceptedVersion`, the test's VERSION and core-service's CONSENT_VERSION (the handoff mint's gate)
+# disagree. ONLY A MATERIAL CHANGE MOVES IT (owner, 2026-11-27): a minor revision of the page, or of
+# the notice below, moves the page's `updated` date alone and asks nobody again.
 # EVERY BINDING ON THIS FLOW IS ON AN ALLOWLIST OF core-service's handoff gate
 # (miconnect-reader.client.ts CONSENT_FLOW_ALLOWLIST): it recognises exactly them, by policy and
 # stage names - the two terms bindings, answered from the person's `cgu_version`, and the two Alumni
@@ -50,7 +52,9 @@ entries:
       label: "Information"
       type: "static"
       order: 1
-      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, le wiki Mino, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p>Si tu te connectes avec ton compte Alumni, nous enregistrons aussi si tu es <strong>cotisant</strong> de l'association des Alumni, avec la date de cette lecture, et, si ton compte MiConnect a été créé par les Alumni, ton <strong>adresse e-mail</strong>. Ils ne sont transmis à aucun service : MiConnect s'en sert seul, pour ouvrir MiGallery et Le Cercle aux cotisants après tes cinq premières années.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+      # THE MINIMUM (owner, 2026-11-27): two sentences and the link. The detail lives in ONE place, the
+      # page it links to; this notice changes with no version (the version is what asks again).
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École. Il enregistre ton <strong>nom</strong>, ton prénom et le profil que tu déclares, et les transmet aux services auxquels tu te connectes : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-accept"

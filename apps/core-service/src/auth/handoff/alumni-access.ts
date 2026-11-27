@@ -3,7 +3,7 @@
  *
  * MiConnect decides it with three expression policies: the link step's reminder and block on the
  * authorization flow (`miconnect-alumni-link-reminder` / `-required`, 45-consent.yaml) and the
- * MiGallery / Le Cercle / MinoWiki gate (`miconnect-access-window-post-or-cotisant` plus the group
+ * MiGallery / Le Cercle gate (`miconnect-access-window-post-or-cotisant` plus the group
  * `acces-<app>`, 60-applications.yaml). WHY A SECOND IMPLEMENTATION: Canari's sign-in handoff must
  * not sign a person into a site MiConnect would stop them at, and it cannot ask MiConnect -
  * authentik 2026.8 honours `check_access?for_user` for a superuser only and silently answers for
@@ -87,8 +87,8 @@ export function alumniLinkStep(facts: AlumniFacts, today: string): AlumniLinkSte
 }
 
 /**
- * Whether MiGallery, Le Cercle or MinoWiki lets a person in on `today` (engine mode `any` over the
- * policy `miconnect-access-window-post-or-cotisant` and the group `acces-<application>`). A membership
+ * Whether MiGallery or Le Cercle lets a person in on `today` (engine mode `any` over the policy
+ * `miconnect-access-window-post-or-cotisant` and the group `acces-<application>`). A membership
  * INHERITED through a child group is not read here: such a person is refused, Canari opens the site
  * plainly, and MiConnect itself lets them in - the safe direction.
  */

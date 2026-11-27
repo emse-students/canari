@@ -925,7 +925,7 @@ user sets" with a rule per promo, and adds the cotisant gate. Planned in `1.8.0`
   from Alumnforce at EVERY Alumni sign-in and stored with its read date. It counts only within the
   calendar year of that read. It is never handed to an application. **Extended to MinoWiki (owner,
   2026-11-27)**: the same policy, a group `acces-mino-wiki`, engine mode `any`, the D43 shape copied
-  exactly ([mino-access](infrastructure/mino-access.md#who-may-enter-the-same-cotisant-gate-as-migallery-and-le-cercle-owner-2026-11-27)).
+  exactly, plus a binding that admits the wiki's own `mino-*` roles ([mino-access](infrastructure/mino-access.md#who-may-enter-the-same-cotisant-gate-as-migallery-and-le-cercle-owner-2026-11-27)).
 - **D50 - The gate stays declarative** (owner, 2026-11-24, on the adversarial review of #4001). The
   window and the link step read the promo of `attributes.profile.cursus`, which the person declared
   at enrolment and only an admin edits since (D10); D43's cotisant is the one fact read from

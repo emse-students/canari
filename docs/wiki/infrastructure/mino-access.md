@@ -17,8 +17,18 @@ MinoWiki is gated EXACTLY like MiGallery and Le Cercle (D42-D43,
 expression policy `miconnect-access-window-post-or-cotisant` (one policy for the three sites, never a
 copy), a group of its own `acces-mino-wiki` (the nominative exception an admin grants), and
 `policy_engine_mode: any`, in `60-applications.yaml`. A person enters within five years of their entry
-year, with a post (EMSE, ME, ALUMNI), as an Alumni cotisant read this calendar year, or as a member of
-`acces-mino-wiki`.
+year, with a post (EMSE, ME, ALUMNI), as an Alumni cotisant read this calendar year, as a member of
+`acces-mino-wiki`, or **as a member of a `mino-*` group**.
+
+- **The wiki's own roles pass the gate** (lead, 2026-11-27, from the adversarial review). The wiki's
+  administrators and editors are the members of the `mino-*` groups (created by hand in production,
+  sent to the wiki in the claim `minoGroups`). `acces-mino-wiki` is created EMPTY, so without more one
+  of them past the window, with no post and no contribution, would have been locked out of the wiki
+  they run on the day the stable applied. A THIRD binding, the expression policy
+  `miconnect-mino-wiki-roles` (order 2), admits a person with a DIRECT group named `mino-*` - the same
+  predicate as the claim, so whoever the wiki gives a role to can reach it. Deterministic, no hand
+  step, and no group named in this public file. It is not a copy of the gate's rule, which stays ONE
+  policy; it says nothing when it refuses, so a refused person reads the gate's message.
 
 - **What a refused person sees.** The gate decides at `/application/o/authorize/`, before any page of
   the wiki: authentik's own "access denied" page, carrying the policy's message, *"Après tes cinq
@@ -30,12 +40,14 @@ year, with a post (EMSE, ME, ALUMNI), as an Alumni cotisant read this calendar y
   `miconnect-mino-wiki` lists `authorization_code` alone since the same change, as every gated provider
   must ([authentik](authentik.md#the-refresh-grant-is-closed-on-gated-providers-181)). Nothing is lost:
   it carries no `offline_access` mapping, so no refresh token could be minted before either.
-- **core-service's handoff allowlist** (`ALUMNI_GATED_APPLICATIONS`) names `mino-wiki` too, so it stays
-  equal to what MiConnect binds; the wiki is in no handoff registry, so no mint asks about it today.
+- **core-service's handoff gate does NOT recognise the wiki's shape** (three bindings): its allowlist
+  (`ALUMNI_GATED_APPLICATIONS`) stays MiGallery and Le Cercle, and a mint for the wiki would be refused
+  `policy_bound` - the safe direction, and moot, since the wiki is in no handoff registry
+  (`handoff-access.spec.ts` asserts that refusal).
 - **Tests:** `test-consent-flow.py` runs every case of `libs/contracts/alumni-access.json` on the
-  three applications through authentik's policy engine, `test-refresh-gate.py` requires the wiki among
-  the gated providers, and core-service's `alumni-access.spec.ts` / `handoff-access.spec.ts` run the
-  same rule and the recognised shape.
+  three applications through authentik's policy engine, and proves a `mino-*` member past the window
+  enters the wiki and neither of the two others, while a group that merely contains `mino` admits
+  nobody; `test-refresh-gate.py` requires the wiki among the gated providers.
 
 ## Archives MINO is retired (2026-11-27)
 
@@ -69,10 +81,9 @@ deletion and the rename on an instance that had them.
 2. **Then** the operators remove the `301` container and the tunnel route of `archives.canari-emse.fr`
    (private notes). Not before: until the stable, MinoWiki's sign-out still lands on that name.
 
-The MiConnect terms (`/legal/miconnect`, the notice of `45-consent.yaml`) still name "les archives"
-and say the cotisant read opens "MiGallery et Le Cercle": their text is VERSIONED, and a new version asks
-every account again, so it is the owner's decision
-([register](../compliance/register-of-processing.md#3-miconnect-authentik)).
+The MiConnect terms (`/legal/miconnect`) were revised the same day: the archives are gone from them and
+the cotisant rule names the wiki. A minor revision, so nobody is asked to accept again (owner,
+[decisions](../decisions/owner-decisions-of-2026-11-27.md)).
 
 ## The provider's callbacks follow the wiki's version (2026-11-13)
 

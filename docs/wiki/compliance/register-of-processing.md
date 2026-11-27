@@ -93,13 +93,12 @@ Sources: `infrastructure/authentik/blueprints/`, [authentik](../infrastructure/a
 the wiki Mino (Wiki.js - [mino-access](../infrastructure/mino-access.md); the Omeka archives were retired on
 2026-11-27, their provider deleted by the next stable), and since 2026-11-25
 the Rootz association's MDE network console, for the members of `acces-reseau` only; the school's CAS
-is the source. **The public face does not name the console yet:** the MiConnect terms list their
-recipients (section 4 of `/legal/miconnect`, and the notice of `45-consent.yaml`), and that text is
-VERSIONED - naming a new service is a new terms version, which asks every account again (the precedent:
-the wiki Mino, 2026-11-20). That version is the owner's decision; until it is taken, this register is
-ahead of the page. **The same text also still names "les archives"** (retired 2026-11-27) **and says the
-cotisant read opens "MiGallery et Le Cercle"**, while MinoWiki is gated by the same rule since
-2026-11-27: one next terms version would carry the three corrections, the owner's call. Backups: `authentik_db.sql.gz`, 14 days (section 7); the release's rollback copies, 3 copies
+is the source. **The public face is `/legal/miconnect`, the ONE detailed copy** (the notice of
+`45-consent.yaml` is two sentences and its link since 2026-11-27). Its revision of 2026-11-27 names
+every recipient above, the console and what it receives included, drops the archives, and says the
+cotisant rule opens MiGallery, Le Cercle and MinoWiki. **Only a MATERIAL change asks every account
+again** (owner, 2026-11-27, [decisions](../decisions/owner-decisions-of-2026-11-27.md)): a minor revision
+moves the page's `updated` date and not `acceptedVersion`, which stays `2026-11-24` for this one. Backups: `authentik_db.sql.gz`, 14 days (section 7); the release's rollback copies, 3 copies
 and 30 days at most (M3). The public face is the MiConnect terms (`/legal/miconnect`, section 5),
 whose "quelques semaines au plus" in the backups already covers both bounds, so its text (and its
 version, which re-asks every member) is unchanged; Canari's privacy policy describes Canari's own

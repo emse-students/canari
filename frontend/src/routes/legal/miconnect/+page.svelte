@@ -13,14 +13,26 @@
     { id: 'droits', label: '7. Tes droits' },
     { id: 'modifications', label: '8. Modifications' },
   ];
+
+  /**
+   * THE VERSION A PERSON ACCEPTS (YYYY-MM-DD), distinct from `updated`, the date of the text's last
+   * revision (owner, 2026-11-27): a MATERIAL change moves this, and with it the version literal of
+   * 45-consent.yaml, so every account is asked once more; a MINOR revision moves `updated` alone and
+   * asks nobody. check-consent-version.sh pins this value to the other four places.
+   */
+  const acceptedVersion = '2026-11-24';
+  const acceptedVersionLabel = acceptedVersion.split('-').reverse().join('/');
 </script>
 
-<!-- The text the MiConnect consent stage links to (infrastructure/authentik/blueprints/45-consent.yaml).
-     CHANGE THE TEXT => bump `updated` here AND the version literal in that blueprint, so everyone is asked again. -->
+<!-- The text the MiConnect consent stage links to (infrastructure/authentik/blueprints/45-consent.yaml), and
+     the ONE detailed copy: the stage's notice is two sentences and this link.
+     A MINOR revision (a service retired, a wording made precise, a recipient added under rules already
+     described) => `updated` only. A MATERIAL change (a new kind of data, a new purpose) => `updated` AND
+     `acceptedVersion` above AND the version literal in that blueprint, so everyone is asked again. -->
 <LegalDocument
   title={m.legal_miconnect_title()}
   subtitle={m.legal_miconnect_subtitle()}
-  updated="24/11/2026"
+  updated="27/11/2026"
   {sections}
 >
   <section id="objet">
@@ -85,8 +97,8 @@
       suivante, et seulement si le compte existant est lié au CAS et porte le nom que les Alumni
       transmettent ; chaque rattachement, ou son refus, est journalisé avec l'adresse IP de la
       connexion. MiConnect se sert de ta qualité de cotisant : après tes cinq premières années à
-      l'École (jusqu'au 31 août de ton année d'entrée plus cinq), MiGallery et Le Cercle sont
-      réservés aux cotisants de l'année en cours, aux personnels et aux personnes que les
+      l'École (jusqu'au 31 août de ton année d'entrée plus cinq), MiGallery, Le Cercle et le wiki
+      Mino sont réservés aux cotisants de l'année en cours, aux personnels et aux personnes que les
       administrateurs y autorisent. Canari reçoit le fait que ton compte Alumni est lié, pour te
       rappeler de le lier ; et quand tu ouvres MiGallery ou Le Cercle depuis Canari, son serveur lit
       cette même règle chez MiConnect, sans la conserver, pour ne t'y ouvrir déjà connecté que si
@@ -112,9 +124,14 @@
     <h2>4. Qui les reçoit</h2>
     <p>
       Ces données sont transmises, à chaque connexion, aux services auxquels tu te connectes avec
-      MiConnect : Canari, Sky, MiGallery, Le Cercle, le wiki Mino et les archives des Mines. Chacun
-      ne s'en sert que pour te reconnaître et afficher ton profil, et publie ses propres conditions
-      pour le reste de ce qu'il fait.
+      MiConnect : Canari, Sky, MiGallery, Le Cercle et le wiki Mino. Chacun ne s'en sert que pour te
+      reconnaître et afficher ton profil, et publie ses propres conditions pour le reste de ce qu'il
+      fait.
+    </p>
+    <p>
+      La console de supervision du réseau de la Maison des Élèves, outil de l'association Rootz, ne
+      reçoit que les personnes que ses administrateurs y autorisent, et d'elles seulement leur nom,
+      leur prénom, leur identifiant et un identifiant technique, rien de leur profil.
     </p>
     <p>
       MiConnect fonctionne sur le serveur partagé de l'École, administré avec sa direction des
@@ -138,10 +155,10 @@
     <h2>6. Ton acceptation</h2>
     <p>
       En cochant la case lors de ta connexion, tu confirmes avoir lu ces conditions. Elle est
-      redemandée quand le texte change, une seule fois par version, pour tous les services à la
-      fois. Tu peux demander la suppression de ton compte MiConnect à tout moment en écrivant au
-      contact ci-dessus ; tu ne pourras plus te connecter aux services tant que tu n'auras pas un
-      nouveau compte.
+      redemandée quand elles changent de façon importante, une seule fois par version, pour tous les
+      services à la fois. Tu peux demander la suppression de ton compte MiConnect à tout moment en
+      écrivant au contact ci-dessus ; tu ne pourras plus te connecter aux services tant que tu
+      n'auras pas un nouveau compte.
     </p>
   </section>
 
@@ -159,8 +176,10 @@
   <section id="modifications">
     <h2>8. Modifications</h2>
     <p>
-      Si ces conditions changent, la date en haut de cette page change et la case t'est redemandée à
-      la connexion suivante.
+      Si ces conditions changent de façon importante (une donnée ou un usage nouveau), la case t'est
+      redemandée à la connexion suivante. Une modification mineure (un service retiré, une
+      formulation précisée) change seulement la date en haut de cette page, sans rien te redemander.
+      Version en vigueur pour l'acceptation : {acceptedVersionLabel}.
     </p>
   </section>
 </LegalDocument>
