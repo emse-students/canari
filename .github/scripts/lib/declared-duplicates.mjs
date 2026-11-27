@@ -28,6 +28,15 @@
  */
 export const DECLARED_GROUPS = [
   {
+    what: 'semver precedence (`compareSemver`), pre-releases included',
+    compare: 'exact',
+    why: 'the client floor (`minClientVersion`) is judged on the client and guarded on core-service, and a floor naming a pre-release (`1.8.3-alpha.1`) locks out the wrong builds if the two order versions differently. No shared TS package, for the reason the CORS allowlist below gives; the comparison sits alone in its file so the copies are identical, and its spec sits beside the core-service copy (`semver.spec.ts`). A THIRD hand-written precedence copy, `tools/version-report/lib.mjs` (`compareVersions`), cannot import TS: the three must move together.',
+    files: [
+      'frontend/src/lib/utils/semverCompare.ts',
+      'apps/core-service/src/platform/semver-compare.ts',
+    ],
+  },
+  {
     what: 'the SIGTERM drain a release relies on to retire a replica without dropping a request',
     compare: 'exact',
     why: 'no shared TS package, for the reason the CORS allowlist below gives; each image must carry the handler itself',
