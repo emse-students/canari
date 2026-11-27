@@ -14,6 +14,10 @@ import { Log } from '$lib/utils/Log';
  * handed here into `display_names.json`, which the FCM service, the iOS extension and
  * `canari_push.mm` read; an id it does not hold stays "someone".
  *
+ * THE FIRST NAME RIDES BESIDE THE NAME (2026-11-27): the profile's given name, when it has one, is
+ * what a push for an UNNAMED group is titled by while the app is dead (Rust
+ * `mobile/unnamed_group_label.rs`, the app's `composeUnnamedGroupLabel` rule).
+ *
  * WRITTEN WHEN A NAME CHANGES, NOT WHEN THE APP IS HIDDEN. A change schedules ONE write at the end
  * of the current task (a microtask), so a burst - a profile batch settling twenty names - is one
  * IPC; one write is in flight at a time, and whatever changed meanwhile goes in the next. No timer.
@@ -32,8 +36,14 @@ import { Log } from '$lib/utils/Log';
 /** A mention can only name a 64-hex user id; anything else could never be looked up natively. */
 const MENTION_ID = /^[0-9a-f]{64}$/;
 
+/** One resolved person: their name, and their profile's first name when it has one. */
+interface MirroredName {
+  name: string;
+  firstName: string | null;
+}
+
 /** Changes since the last write, by lower-cased id: a name, or `null` for a deleted account. */
-const pending = new Map<string, string | null>();
+const pending = new Map<string, MirroredName | null>();
 /**
  * The account those changes were learned under. The native file is one account's, so names noted
  * before a sign-out are never written under the account that signs in after it.
@@ -45,7 +55,7 @@ let inFlight: Promise<void> | null = null;
 let scheduled = false;
 
 /** Records one change for the signed-in account and schedules its write; false when not noted. */
-function note(userId: string, value: string | null): boolean {
+function note(userId: string, value: MirroredName | null): boolean {
   const id = userId.trim().toLowerCase();
   const owner = currentUserId()?.trim().toLowerCase();
   if (!owner || !MENTION_ID.test(id) || !isMobileTauriRuntime()) return false;
@@ -67,13 +77,14 @@ function note(userId: string, value: string | null): boolean {
 
 /**
  * Records a name the app has RESOLVED for `userId` - a real name, never the unknown-user label,
- * which would then be printed on a banner as if it were somebody's name.
+ * which would then be printed on a banner as if it were somebody's name - with the profile's first
+ * name when it carries one.
  *
  * Synchronous: the write follows at the end of the current task ({@link flushNameMirror}).
  */
-export function noteResolvedName(userId: string, name: string): void {
+export function noteResolvedName(userId: string, name: string, firstName?: string | null): void {
   const value = name.trim();
-  if (value) note(userId, value);
+  if (value) note(userId, { name: value, firstName: firstName?.trim() || null });
 }
 
 /**
@@ -95,14 +106,24 @@ async function writePending(): Promise<void> {
   const batch = new Map(pending);
   pending.clear();
   const names: Record<string, string> = {};
+  const firstNames: Record<string, string> = {};
   const removed: string[] = [];
-  for (const [id, name] of batch) {
-    if (name === null) removed.push(id);
-    else names[id] = name;
+  for (const [id, entry] of batch) {
+    if (entry === null) {
+      removed.push(id);
+      continue;
+    }
+    names[id] = entry.name;
+    if (entry.firstName) firstNames[id] = entry.firstName;
   }
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const held = await invoke<number>('store_display_names', { userId, names, removed });
+    const held = await invoke<number>('store_display_names', {
+      userId,
+      names,
+      firstNames,
+      removed,
+    });
     Log.d(
       'NameMirror',
       `mirrored ${batch.size - removed.length} name(s), ${removed.length} removal(s), ${held} held`

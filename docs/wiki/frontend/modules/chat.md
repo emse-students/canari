@@ -8057,8 +8057,11 @@ choose, and the label is composed from what each device already holds.
 - **What they are called**: the local display-name cache, by FIRST name (`getUserFirstNameSync`;
   a nickname set in the group replaces it, as everywhere in the group). Each member's profile is
   asked once when the tree is read, and the label fills in as profiles land.
-- **The order** is the first names' under ONE fixed collation (`'fr'`), then the ids', never the
-  tree's leaf order, so every device spells the same label. Up to three names are spelt out; past
+- **The order** is the names' under ONE fixed collation, written out rather than left to an engine's
+  ICU table (2026-11-27, so a WebView and the native push agree): Unicode NFD with every combining
+  mark removed, lower-cased (`labelCollationKey`), compared code point by code point; then the names
+  themselves; then the ids - never the tree's leaf order, so every device spells the same label.
+  Up to three names are spelt out; past
   three, two are named and the rest counted ("Alice, Bob et 3 autres"), so the count is never one.
   The viewer is never named; alone in it, the group reads
   "Groupe".
@@ -8066,18 +8069,45 @@ choose, and the label is composed from what each device already holds.
   the members' label before "Groupe": the list and its search, the thread header, the conversation
   panel, the share sheet, a call's peers - and an in-app or Android-builder notification
   (`notificationGroupName` takes the resolved title for a group, `useMessaging`).
-- **What it does not cover**, and is accepted: a push raised while the app is DEAD is composed by the
-  native code from the server's push or the mirrored rows, and an unnamed group's carries no title,
-  so it reads as the sender alone - the plain-notification rule for "a group with no name to show"
-  (`composePlainNotificationText`). A build older than this one reads the server's NULL name and
-  shows "Groupe". A row that only knows its id (a newcomer's placeholder of a NAMED group, before the
-  name arrives) shows the members' names for that moment instead of "Groupe".
+- **A push raised while the app is DEAD** (2026-11-27, the owner's entry of 2026-11-17) is titled
+  the same way, composed ON THE PHONE by the one native copy of the rule,
+  `src-tauri/src/mobile/unnamed_group_label.rs`, which the Android FCM service
+  (`nativeUnnamedGroupTitle`) and the iOS extension (`canari_native_unnamed_group_title`) both call
+  when the push declares a group (`isGroup`) and names none:
+  - **who** is the tree AT THE MESSAGE'S EPOCH: the push decrypt answers `treeMembers` (canonical
+    user ids, sorted) from the state it just decrypted with, after its in-memory commit catch-up
+    (`with_tree_members`, `background.rs`) - so a member removed while the app was dead is already
+    gone from the next banner;
+  - **what they are called** comes from the phone's own copies the WebView writes: the nickname in
+    THIS group (`conversation_nicknames.json`), else the profile's first name, else its name
+    (`display_names.json`, whose `firstNames` map the name mirror fills since this change,
+    `nameMirror.ts` -> `store_display_names`);
+  - **ONE RULE, TWO IMPLEMENTATIONS, ONE CONTRACT**: the web cannot run the Rust and a dead app cannot
+    run the WebView, so `libs/contracts/unnamed-group-label.cases.json` holds the rule and the
+    words of both languages, read by `unnamedGroupLabel.contract.test.ts` and by Rust's
+    `the_rule_answers_the_shared_contract`; Rust's words are also held to `messages/{fr,en}.json`
+    (`push_text.rs`);
+  - **no label** - a member the phone has never named (added while the app was away), no name file,
+    another account's file, nobody else in the group, an unreadable message - keeps "Conversation de
+    groupe" / "Group conversation", never an id or "someone" printed as a name; the native caller
+    says which (`[GROUP_LABEL]`, info for an ordinary state, error for a fault).
+  Principle 1 holds: the server sends only `isGroup` and no name, and the label is composed from ids
+  the device already holds and names it already resolved. A build older than this one shows
+  "Conversation de groupe" on a dead-app push, and one older than 1.7.0 reads the server's NULL name
+  and shows "Groupe". A row that only knows its id (a newcomer's placeholder of a NAMED group, before
+  the name arrives) shows the members' names for that moment instead of "Groupe".
 - **Naming it later** is the ordinary rename (`groupRenamed`, dated by step 1 of the sealed-names work,
   PR #3785). Taking a name back off - "remove the name" - does not exist; a frame carrying an empty
   name is refused (`empty-name`).
 
-Tests: `unnamedGroupLabel.test.ts`, `groupTreeMembers.test.ts`, `conversations.unnamedGroup.test.ts`,
-`groupCreation.unnamed.test.ts`, `nativeNotification.test.ts`, `Sidebar.creationRefusal.svelte.test.ts`.
+Tests: `unnamedGroupLabel.test.ts`, `unnamedGroupLabel.contract.test.ts`, `groupTreeMembers.test.ts`,
+`conversations.unnamedGroup.test.ts`, `groupCreation.unnamed.test.ts`, `nativeNotification.test.ts`,
+`Sidebar.creationRefusal.svelte.test.ts`, `nameMirror.test.ts` (the first names), and in Rust
+`mobile::unnamed_group_label` (the contract, the copies, the reasons),
+`a_message_answer_names_the_tree_members_at_its_epoch` (`background.rs`) and
+`first_names_ride_beside_their_names_and_the_book_reads_them` (`display_names.rs`). Nothing here runs
+Kotlin or Swift: the native callers are plumbing around the one Rust call. **Owed on hardware**:
+[the reading](../../backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md).
 
 ## Per-conversation nicknames ("Modifier les pseudos", 2026-11-08)
 

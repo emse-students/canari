@@ -108,7 +108,9 @@ describe('an unreadable direct message does not repeat its sender (owner, 2026-1
     expect(nse).toContain(
       'senderName: shownName, groupName: groupName, declared: isGroup, locale: ctx.locale'
     );
-    expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(2);
+    // The decrypted banner's title is the push's name, or an unnamed group's members' label.
+    expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(1);
+    expect(nse.match(/groupName: titleName, declaredGroup: isGroup,/g)).toHaveLength(1);
     expect(nse).toContain('declared ?? (!groupName.isEmpty && groupName != senderName)');
     expect(nse).toContain('return localized("notif.message.new", locale: locale)');
     expect(app).toContain('CanariBuildFallbackText(shownName, groupName, isGroup)');

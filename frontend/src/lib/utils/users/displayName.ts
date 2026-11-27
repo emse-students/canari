@@ -183,8 +183,9 @@ export function seedUserDisplayName(userId: string, name: string, firstName?: st
   const trimmed = name.trim();
   if (trimmed) {
     displayNameCache.set(normalized, trimmed);
-    // The phone's own copy of names, for a mention banner drawn natively (WP-MENTION-NAME).
-    noteResolvedName(normalized, trimmed);
+    // The phone's own copy of names, for a mention banner drawn natively (WP-MENTION-NAME), and of
+    // first names, for an unnamed group's push drawn while the app is dead.
+    noteResolvedName(normalized, trimmed, firstName);
     notePeerName(currentUserId(), normalized, trimmed);
   }
   const first = firstName?.trim();
@@ -415,7 +416,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // Mirrored only when the profile carries a name: the unknown-user LABEL is this app's word
       // for "no name", and a banner would print it as if it were one (WP-MENTION-NAME).
       if (profileHasName(profile)) {
-        noteResolvedName(normalized, value);
+        noteResolvedName(normalized, value, profile.firstName);
         notePeerName(askedFor, normalized, value);
       }
       const first = profile.firstName?.trim();

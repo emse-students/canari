@@ -1,0 +1,124 @@
+{
+  "$comment": [
+    "THE LABEL OF AN UNNAMED GROUP, WRITTEN ONCE AND ASSERTED ON BOTH IMPLEMENTATIONS.",
+    "",
+    "Owner, 2026-11-17: a group created without a name stores none, and EVERY device draws it by its",
+    "other members' first names - in the app (`composeUnnamedGroupLabel`, unnamedGroupLabel.ts) and,",
+    "since 2026-11-27, on a push raised while the app is dead (Rust `compose_unnamed_group_label`,",
+    "src-tauri/src/mobile/unnamed_group_label.rs, the ONE native copy: the Android FCM service and the",
+    "iOS extension both call it). The web cannot run the Rust and a dead app cannot run the WebView, so",
+    "the RULE is shared as data: a case added here fails in both at once.",
+    "",
+    "THE RULE. The members are user ids (the group's ratchet tree, one per person), compared ASCII-",
+    "lower-cased; the viewer and duplicates are dropped. Each is named by `names[id]` trimmed - the",
+    "caller's resolution (a nickname set in the group, else the profile's first name, else its name) -",
+    "or by its id when that is empty. The ORDER is fixed, never the device's locale: first by the",
+    "collation key (Unicode NFD, every combining mark (General_Category M) removed, then lower-cased),",
+    "compared code point by code point; then by the name itself, code point by code point; then by the",
+    "id. One name reads alone; two and three are joined by the language's 'and'; past three, two are",
+    "named and the rest counted, so the count is never one. Nobody else in the group: null, and the",
+    "caller keeps its own word.",
+    "",
+    "`fr` and `en` are the label in each language, words from messages/{fr,en}.json",
+    "(`group_default_name_two`, `_three`, `_more`). docs/wiki/frontend/modules/chat.md, 'An unnamed",
+    "group: no name stored, the members' first names drawn'."
+  ],
+  "cases": [
+    {
+      "name": "names the other members, never the viewer",
+      "members": ["me", "alice", "bob"],
+      "viewer": "me",
+      "names": { "me": "Moi", "alice": "Alice", "bob": "Bob" },
+      "fr": "Alice et Bob",
+      "en": "Alice and Bob"
+    },
+    {
+      "name": "compares the viewer and the members ASCII-lower-cased",
+      "members": ["me", "alice", "ALICE"],
+      "viewer": "ME",
+      "names": { "alice": "Alice" },
+      "fr": "Alice",
+      "en": "Alice"
+    },
+    {
+      "name": "the order is the names', never the tree's",
+      "members": ["chloe", "bob", "alice"],
+      "viewer": "me",
+      "names": { "alice": "Alice", "bob": "Bob", "chloe": "Chloé" },
+      "fr": "Alice, Bob et Chloé",
+      "en": "Alice, Bob and Chloé"
+    },
+    {
+      "name": "an accent does not move a name at the first level",
+      "members": ["zoe", "eve", "emile"],
+      "viewer": "me",
+      "names": { "zoe": "Zoé", "eve": "Eve", "emile": "Émile" },
+      "fr": "Émile, Eve et Zoé",
+      "en": "Émile, Eve and Zoé"
+    },
+    {
+      "name": "case does not move a name at the first level",
+      "members": ["b", "a"],
+      "viewer": "me",
+      "names": { "a": "bob", "b": "Alice" },
+      "fr": "Alice et bob",
+      "en": "Alice and bob"
+    },
+    {
+      "name": "two names equal at the first level are ordered by the names themselves",
+      "members": ["u1", "u2"],
+      "viewer": "me",
+      "names": { "u1": "Léa", "u2": "Lea" },
+      "fr": "Lea et Léa",
+      "en": "Lea and Léa"
+    },
+    {
+      "name": "a hyphen sorts before a letter",
+      "members": ["jeanne", "jeanluc"],
+      "viewer": "me",
+      "names": { "jeanne": "Jeanne", "jeanluc": "Jean-Luc" },
+      "fr": "Jean-Luc et Jeanne",
+      "en": "Jean-Luc and Jeanne"
+    },
+    {
+      "name": "a member with no name is named by their id",
+      "members": ["me", "alice", "zed"],
+      "viewer": "me",
+      "names": { "alice": "Alice", "zed": "   " },
+      "fr": "Alice et zed",
+      "en": "Alice and zed"
+    },
+    {
+      "name": "past three, two are named and the rest counted",
+      "members": ["alice", "bob", "chloe", "david"],
+      "viewer": "me",
+      "names": { "alice": "Alice", "bob": "Bob", "chloe": "Chloé", "david": "David" },
+      "fr": "Alice, Bob et 2 autres",
+      "en": "Alice, Bob and 2 others"
+    },
+    {
+      "name": "the count says how many more",
+      "members": ["alice", "bob", "chloe", "david", "emma", "me"],
+      "viewer": "me",
+      "names": { "alice": "Alice", "bob": "Bob", "chloe": "Chloé", "david": "David", "emma": "Emma" },
+      "fr": "Alice, Bob et 3 autres",
+      "en": "Alice, Bob and 3 others"
+    },
+    {
+      "name": "the viewer alone has no label",
+      "members": ["me"],
+      "viewer": "me",
+      "names": { "me": "Moi" },
+      "fr": null,
+      "en": null
+    },
+    {
+      "name": "an empty tree has no label",
+      "members": [],
+      "viewer": "me",
+      "names": {},
+      "fr": null,
+      "en": null
+    }
+  ]
+}

@@ -73,6 +73,12 @@ pub enum PushText<'a> {
     Poll(&'a str),
     VideoCallIncoming,
     CallIncoming,
+    /// The label of an UNNAMED group of two other members (`group_default_name_two`).
+    UnnamedGroupTwo(&'a str, &'a str),
+    /// ... of three (`group_default_name_three`).
+    UnnamedGroupThree(&'a str, &'a str, &'a str),
+    /// ... of more: two named, the rest counted (`group_default_name_more`).
+    UnnamedGroupMore(&'a str, &'a str, usize),
 }
 
 impl PushText<'_> {
@@ -141,6 +147,18 @@ impl PushText<'_> {
                 "\u{1f4f9} Incoming video call",
             ),
             Self::CallIncoming => s("\u{1f4de} Appel entrant", "\u{1f4de} Incoming call"),
+            Self::UnnamedGroupTwo(first, second) => pick(
+                format!("{first} et {second}"),
+                format!("{first} and {second}"),
+            ),
+            Self::UnnamedGroupThree(first, second, third) => pick(
+                format!("{first}, {second} et {third}"),
+                format!("{first}, {second} and {third}"),
+            ),
+            Self::UnnamedGroupMore(first, second, count) => pick(
+                format!("{first}, {second} et {count} autres"),
+                format!("{first}, {second} and {count} others"),
+            ),
         }
     }
 }
@@ -253,13 +271,54 @@ mod tests {
             captioned.render(PushLanguage::English),
             message(&en, "chat_preview_captioned", &params)
         );
+        // An unnamed group's label: the words the app's own list draws (`composeUnnamedGroupLabel`).
+        let labels: [Case<'_>; 3] = [
+            (
+                PushText::UnnamedGroupTwo("A", "B"),
+                "group_default_name_two",
+                &[("first", "A"), ("second", "B")],
+            ),
+            (
+                PushText::UnnamedGroupThree("A", "B", "C"),
+                "group_default_name_three",
+                &[("first", "A"), ("second", "B"), ("third", "C")],
+            ),
+            (
+                PushText::UnnamedGroupMore("A", "B", 4),
+                "group_default_name_more",
+                &[("first", "A"), ("second", "B"), ("count", "4")],
+            ),
+        ];
+        for (text, key, params) in labels {
+            assert_eq!(
+                text.render(PushLanguage::French),
+                message(&fr, key, params),
+                "{key} fr"
+            );
+            assert_eq!(
+                text.render(PushLanguage::English),
+                message(&en, key, params),
+                "{key} en"
+            );
+        }
     }
 
     /// EVERY sentence, both languages, written out. The `match` guarantees each variant HAS two
     /// renderings; this guarantees the English one is English - a copy-pasted French arm compiles.
     #[test]
     fn every_sentence_is_written_in_both_languages() {
-        let cases: [(PushText<'_>, &str, &str); 23] = [
+        let cases: [(PushText<'_>, &str, &str); 26] = [
+            (PushText::UnnamedGroupTwo("A", "B"), "A et B", "A and B"),
+            (
+                PushText::UnnamedGroupThree("A", "B", "C"),
+                "A, B et C",
+                "A, B and C",
+            ),
+            (
+                PushText::UnnamedGroupMore("A", "B", 2),
+                "A, B et 2 autres",
+                "A, B and 2 others",
+            ),
             (
                 PushText::GroupRenamed(None),
                 "a renommé le groupe",

@@ -44,6 +44,10 @@ pub mod proto_fields;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod push_text;
 
+// The title of a dead app's push for an UNNAMED group: its members' first names, the app's rule.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub mod unnamed_group_label;
+
 // The cross-version gate for `aes-gcm`, and the only module here that is TEST-ONLY: it asserts
 // against committed bytes rather than shipping anything. It lives inside the crate rather than
 // under `tests/` because `mod mobile` exists only under `cfg(test)` on a host build, so an

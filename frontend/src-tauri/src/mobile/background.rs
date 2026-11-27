@@ -1735,6 +1735,9 @@ fn classify_verified(
         return refused("sender-mismatch");
     }
     let mut out = classify_plaintext(&app.plaintext, language);
+    if out["ok"] == true {
+        with_tree_members(&mut out, manager, group_id);
+    }
     if out["reason"] == "graine-key-material" {
         let seeds = out["seeds"].as_array().cloned().unwrap_or_default();
         let offered = seeds.len();
@@ -1762,6 +1765,33 @@ fn classify_verified(
         }
     }
     out
+}
+
+/// Adds `treeMembers` to a message's answer: the people `group_id`'s ratchet tree holds AT THIS
+/// MESSAGE'S EPOCH (the manager has applied the catch-up's commits), one canonical user id per
+/// person, sorted. What an UNNAMED group's push is titled by (`unnamed_group_label.rs`): ids only -
+/// the names come from the phone's own copies, never from here. A tree that cannot be read right
+/// after it decrypted is a fault, named in the answer (`treeMembersError`) since this crate's log
+/// reaches no logger in a killed app; the native caller then keeps the generic title and says so.
+fn with_tree_members(out: &mut serde_json::Value, manager: &MlsManager, group_id: &str) {
+    match manager.member_identities(group_id) {
+        Ok(identities) => {
+            let mut users: Vec<String> = identities
+                .iter()
+                .filter_map(|identity| canonical_user_of(identity))
+                .collect();
+            users.sort();
+            users.dedup();
+            out["treeMembers"] = users.into();
+        }
+        Err(e) => {
+            log::error!(
+                "[PushBG] the tree of {} could not be read after a decrypt: {e}",
+                group_id.get(..8).unwrap_or(group_id)
+            );
+            out["treeMembersError"] = e.to_string().into();
+        }
+    }
 }
 
 /// Whether a seed a key-material frame carried may reach the mirror: a v2 seed only once its
@@ -2895,6 +2925,65 @@ mod tests {
         assert_eq!(info["ok"], false);
         assert_eq!(info["reason"], "mls-refused-for-good");
         assert_eq!(info["kind"], "SecretReuse");
+    }
+
+    /// A MESSAGE'S ANSWER NAMES WHO THE TREE HOLDS AT ITS EPOCH - the members an unnamed group's
+    /// push is titled by (`unnamed_group_label.rs`). Through the catch-up, so a member added while
+    /// the app was dead is in it: the next banner follows the tree, as the app's list does.
+    #[test]
+    fn a_message_answer_names_the_tree_members_at_its_epoch() {
+        let _fg = quiet_foreground();
+        let tag = "treemembers";
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(79)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None)
+            .expect("carol load_or_create");
+        let kp = carol.generate_key_package().expect("carol key package");
+        let (commit, _welcome, _added, _skipped) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add commit");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let out = send_messages_background_with_key(
+            &dir_holding(tag, &alice_state),
+            &alice_state,
+            &key_b64(79),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("frame-1", &group_id, &frame)],
+            100,
+        )
+        .expect("alice encrypts");
+        let ciphertext = ciphertexts_of(&out)[0].clone();
+
+        let info = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(79),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &[commit],
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertext,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(info["ok"], true, "{info}");
+        assert_eq!(
+            info["treeMembers"],
+            serde_json::json!([
+                format!("{tag}-alice"),
+                format!("{tag}-bob"),
+                format!("{tag}-carol")
+            ])
+        );
     }
 
     /// THE ADMISSION RULE IS DISARMED ON THE PUSH PATH TOO (owner, 2026-10-31): an external commit
