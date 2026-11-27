@@ -52,6 +52,8 @@ export const BROWSERS = {
   // Second seats of the peer and the third account (1.4.1 campaign, BIG-1..3).
   w7: { port: 9229, profile: join(STATE_DIR, "chrome-w7") },
   w8: { port: 9230, profile: join(STATE_DIR, "chrome-w8") },
+  // The fifth account's only seat (ADM-11, ADM-12): the row revokes its every device, so it is no one's history.
+  w9: { port: 9231, profile: join(STATE_DIR, "chrome-w9") },
 };
 
 /**
