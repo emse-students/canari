@@ -47,7 +47,7 @@ export function everyoneMentionOf(isSalon: boolean, vouched: boolean): EveryoneM
 
 /**
  * Whether a message's raw text names `userId`: the inline `@[<id>]` token, case-insensitive, or a
- * `@tous` / `@everyone` the conversation honours - the same reading as the native paths
+ * picked `@[everyone]` token the conversation honours - the same reading as the native paths
  * (`NotificationLevelGate`, `levelDecision`), pinned for all three by
  * `libs/contracts/mention-decision.cases.json`.
  */

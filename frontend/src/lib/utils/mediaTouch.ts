@@ -85,6 +85,33 @@ const pending = new Map<string, string>();
 const seenThisSession = new Set<string>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * The per-object windows a touch answer names (`{ refreshed, windows }`): ms, or `null` for an
+ * object no sweep takes. An answer without them (an older server, an unreadable body) yields `null`,
+ * and the ledger then holds each copy to the constant window. When it names them, an id it leaves
+ * out (or names unreadably) is one it holds nothing for (`recordServerConfirmed`) - the safe
+ * direction either way.
+ */
+async function readWindows(res: Response): Promise<Record<string, number | null> | null> {
+  try {
+    const body = (await res.json()) as { windows?: unknown };
+    // An older server: the field is absent, which is not "it holds none of them".
+    if (typeof body.windows !== 'object' || body.windows === null) return null;
+    const out: Record<string, number | null> = {};
+    for (const [id, value] of Object.entries(body.windows)) {
+      if (value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+        out[id] = value;
+      }
+    }
+    return out;
+  } catch (e) {
+    appendLog(
+      `[MEDIA_TOUCH] the answer named no windows (${String(e)}); the constant window holds`
+    );
+    return null;
+  }
+}
+
 async function flush(): Promise<void> {
   if (flushTimer !== null) {
     clearTimeout(flushTimer);
@@ -121,12 +148,13 @@ async function flush(): Promise<void> {
         for (const id of mediaIds) seenThisSession.delete(id);
         continue;
       }
+      const windows = await readWindows(res);
       const record = readTouched();
       writeTouched({ day: record.day, ids: [...new Set([...record.ids, ...mediaIds])] });
       appendLog(`[MEDIA_TOUCH] ${mediaIds.length} cached media reported as used`);
       // The server acknowledged: it holds these objects, so their copies are evictable under the
       // cap for a while (`mediaCacheCap.ts`, what a sole copy is).
-      void recordServerConfirmed(baseUrl, mediaIds);
+      void recordServerConfirmed(baseUrl, mediaIds, windows);
     } catch (e) {
       appendLog(`[MEDIA_TOUCH] report failed: ${String(e)}`);
       for (const id of mediaIds) seenThisSession.delete(id);

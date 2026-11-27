@@ -254,7 +254,8 @@ export interface SendChannelMessageDto {
    */
   mentionedUserIds?: string[];
   /**
-   * The sender's text calls every member (`@tous` / `@everyone`). DECLARED, never trusted: the
+   * The sender's text carries a PICKED `@[everyone]` token (drawn `@tous` / `@everyone`; a typed
+   * word is plain text and declares nothing). DECLARED, never trusted: the
    * server vouches for it only when the sender holds the moderation grant in this community
    * ({@link vouchedEveryoneMention}), and only a vouched call reaches anyone - every member at
    * `mentions` is then pushed, and the row says so (`mentionsEveryone`) so a client deciding from

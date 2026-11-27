@@ -55,6 +55,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import PostSearchField from '$lib/components/posts/PostSearchField.svelte';
   import PostSearchFilters from '$lib/components/posts/PostSearchFilters.svelte';
   import { hasSearchCriteria, type PostSearchPick } from '$lib/posts/postSearchFilters';
   import FeedSuggestions from '$lib/components/suggestions/FeedSuggestions.svelte';
@@ -79,7 +80,7 @@
   import { isTransportFailure } from '$lib/utils/transportFailure';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, SquarePen, Inbox, Search, X, Clock } from '@lucide/svelte';
+  import { RefreshCw, SquarePen, Inbox, Clock } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -348,7 +349,9 @@
       if (search) {
         searchOpen = true;
         // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-        queueMicrotask(() => searchInput?.focus());
+        queueMicrotask(() =>
+          document.querySelector<HTMLInputElement>('#posts-search input[type=search]')?.focus()
+        );
       }
     };
     // Whether the strip landed is read off the page, never off the error: kit rejects an overtaken
@@ -379,7 +382,6 @@
    * tap from the top of this page and it is one tap from the top of every page.
    */
   let searchOpen = $state(false);
-  let searchInput = $state<HTMLInputElement | null>(null);
 
   /** Closes the field and drops whatever it was filtering by, which are one gesture. */
   function closeSearch() {
@@ -1023,35 +1025,13 @@
   </div>
 
   <!-- Barre de recherche - masquee derriere la loupe sur telephone, toujours visible des `md`. -->
-  <div id="posts-search" class="relative mb-5 {searchOpen ? '' : 'hidden md:block'}">
-    <Search
-      size={16}
-      class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
-    />
-    <input
-      bind:this={searchInput}
-      type="search"
+  <div id="posts-search" class="mb-5 {searchOpen ? '' : 'hidden md:block'}">
+    <PostSearchField
       value={searchQuery}
+      showClear={searchActive || searchOpen}
       oninput={onSearchInput}
-      placeholder={m.posts_search_placeholder()}
-      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/20 w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:ring-2"
+      onclear={closeSearch}
     />
-    <!--
-      ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
-      field is permanent, so this appears with a query and clears it. Below `md` the field only
-      exists while it is open, so it is always there and closes it - and closing drops the query,
-      since a hidden field still filtering the feed is a filter with no visible cause.
-    -->
-    {#if searchActive || searchOpen}
-      <button
-        type="button"
-        onclick={closeSearch}
-        class="tap-target text-text-muted hover:text-text-main absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-        aria-label={m.common_clear_aria()}
-      >
-        <X size={16} />
-      </button>
-    {/if}
     <PostSearchFilters
       author={searchAuthor}
       association={searchAssociation}
