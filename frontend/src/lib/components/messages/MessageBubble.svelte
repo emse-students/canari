@@ -51,6 +51,7 @@
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
+  import type { QuotedVisual } from '$lib/utils/chat/quotedMedia';
   import MessageTextBody from './MessageTextBody.svelte';
   import MessageMetadata from './MessageMetadata.svelte';
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
@@ -114,6 +115,8 @@
       senderId: string;
       content: string;
     };
+    /** The quoted photo or video when the thread holds the original (`quotedVisualMedia`). */
+    replyToMedia?: QuotedVisual | null;
     /** Emoji reactions attached to this message. */
     reactions?: MessageReaction[];
     /** User IDs who have read the message, shown in the info tooltip. */
@@ -212,6 +215,7 @@
     isOwn,
     isSystem = false,
     replyTo,
+    replyToMedia = null,
     reactions = [],
     readBy = [],
     isLastOwn = false,
@@ -418,7 +422,17 @@
     return text ? () => void runShareOut(what, () => shareTextOut(text)) : undefined;
   });
 
-  const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
+  // A photo or video with no caption is drawn like a plain one even when it answers a message
+  // (owner, 2026-11-27: "le bord jaune pour l'image dans une reponse"): no bubble padding around it,
+  // the quote stays stacked above. A reel, a voice note or a file keeps its own framing.
+  const isVisualReply = $derived(
+    !!effectiveReplyTo &&
+      (mediaRef?.type === 'image' || mediaRef?.type === 'video') &&
+      !isReelMessageRow
+  );
+  const isMediaOnly = $derived(
+    !!mediaRef && !textContent && (!effectiveReplyTo || isVisualReply) && !isDeleted
+  );
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
   // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
   // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A quoted reply stacks its own
@@ -1200,6 +1214,7 @@
             quotedDisplayName={quotedFirstName}
             {currentUserId}
             headerShown={senderHeaderShown}
+            quotedMedia={replyToMedia}
             {onNavigateToMessage}
           />
         {/if}

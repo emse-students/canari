@@ -8416,3 +8416,19 @@ the quoted chip is a second, separate bubble (`MessageReplyQuote`) and is not ou
 fill of its own (media alone, link card, poll, emoji) carries `rounded-bubble` so the shadow still has
 a corner; a row with no bubble (system notice, channel invite card) is its own shape and carries the
 class itself. The old `isHighlighted` ring prop of `MessageBubble` has no caller and was left alone.
+
+## A quoted photo is drawn, not named (2026-11-27)
+
+Owner's two minifixes. **No frame:** an own photo or video with no caption that answers a message
+sets `isMediaOnly` like a plain one (`MessageBubble`, `isVisualReply`): no padded `bg-bubble-out`
+around it, the quote stays stacked above. A reel, a voice note or a file keeps its framing; a caption
+keeps the bubble (principle 7, simplicity: the owner asked only about the bare image).
+
+**Thumbnail in the quote:** a stored quote carries only a text preview, so `ChatMessageGroups` looks
+the original up among the messages it already renders (`quotedVisualMedia`, never a fetch) and hands
+its ref to `MessageReplyQuote`, which draws `ReplyMediaThumb` (60% opacity, `aria-label` = the kind
+label) from, in order: the decrypted blob already in memory (`retainWarmDecryptedMediaBlobUrl`,
+released on teardown; a video shows its first frame), else the ThumbHash the sender embedded, else
+today's text label. The last two states are legitimate (original not loaded, expired, never opened)
+and log at debug only. The blob is read once at mount: a quote mounted before its original finished
+downloading keeps the placeholder or label until it remounts.
