@@ -244,7 +244,7 @@ missing-image report stays empty.
 `$lib/utils/emoji.ts` also exports `isEmojiOnlyText(text, maxCount)`, built on `Intl.Segmenter`
 grapheme clusters (which group a ZWJ family, a flag pair or a skin-toned person as ONE unit each) -
 the same primitive `containsEmoji` uses, shared rather than duplicated. `MessageBubble.svelte`
-computes `isEmojiOnly` from it (up to 5 emoji, no media/reply/poll) and folds it into the same
+computes `isEmojiOnly` from it (up to 5 emoji, no media/poll; a reply changes nothing - the quote is a separate block above, 2026-11-27) and folds it into the same
 "naked bubble" condition as `isMediaOnly`/`isLinkOnly`/`isGifOnly`/`isPollOnly`. `MessageTextBody`'s
 new `jumbo` prop swaps `text-sm leading-relaxed` for `text-3xl leading-tight` - the largest existing
 `--text-*` step, not an eighth size.
