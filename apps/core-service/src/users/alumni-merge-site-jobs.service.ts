@@ -19,6 +19,14 @@ const FIRST_REPORT_DELAY_MS = 5 * 60 * 1000;
 const OVERDUE_AFTER_HOURS = 24;
 /** How long a site that answered 404 (its endpoint not served yet) waits before it is asked again. */
 const UNREADY_RETRY_HOURS = 24;
+/**
+ * How long a job the site REFUSED (401: the token's signature, issuer, audience or time) waits before
+ * it is asked again: slow, since no retry alone fixes a refusal, but not never, so a key rotation or
+ * a site's redeploy heals it without a hand on the job.
+ */
+const REFUSED_RETRY_HOURS = 1;
+/** A refusal class as the site names it in `{ outcome }` (`wrong_audience`, `expired`...). */
+const REFUSAL_CLASS = /^[a-z][a-z_]{0,31}$/;
 /** How long a claimed job is hidden from other claimers; above one call's timeout. */
 const CLAIM_LEASE_SECONDS = 120;
 /** One site's transfer is one local transaction there; this bounds a site that hangs. */
@@ -78,11 +86,24 @@ class SiteBlockedError extends Error {
 }
 
 /**
- * A 404: the site does not serve `ALUMNI_MERGE_SITE_PATH` yet (its half of D54 not shipped). Not a
- * failure - the job waits, asked again daily, and the daily report names the site once with its count.
- * A site that serves the path never answers 404: an account it does not hold is `absent`, a 2xx.
+ * The site is not ready for the call: a `404` (it does not serve `ALUMNI_MERGE_SITE_PATH` yet, its half
+ * of D54 not shipped) or a `503 { outcome: 'not_configured' }` (it serves it, but its trust in Canari's
+ * keys is not configured). Not a failure - the job waits, asked again daily, and the daily report
+ * names the site once with its count. A site that serves the path never answers 404: an account it
+ * does not hold is `absent`, a 2xx.
  */
 class SiteUnreadyError extends Error {}
+
+/**
+ * A `401 { outcome: <class> }`: the site REFUSED the token (its signature, type, issuer, audience,
+ * time or claims). A typed refusal, said at ERROR on EVERY attempt, with the site and the class -
+ * never a silent retry - and asked again on a slow cadence, since a deployment fixes it, not a retry.
+ */
+class SiteRefusedError extends Error {
+  constructor(readonly refusal: string) {
+    super(`refused: ${refusal}`);
+  }
+}
 
 /** A 2xx that does not say what was done: the contract is broken, retried until it is not. */
 class SiteContractError extends Error {
@@ -121,11 +142,13 @@ function siteUrl(site: string): string {
  * merge always owes its sites. The worker - the account-erasure queue's runner
  * ({@link DurableQueueRunner}), its backoff and its failure description - calls
  * `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token signed by the handoff key,
- * `typ: canari-merge+jwt`, audience the site, claims `op` (`transfer` or `erase`), `dup`, `target` (a
- * transfer only), `jti` = the job id; the site verifies it against Canari's JWKS. A `2xx` naming its
- * outcome completes the job; a `409` naming a typed refusal BLOCKS it (the state refused, not the
- * network: no retry, an ERROR line); a `404` is a site that does not serve the path yet - UNREADY,
- * asked again daily, no line per try; anything else is retried with backoff.
+ * `typ: canari-merge+jwt`, audience the site, claims `mode` (`transfer` or `erase`), `dup`, `target`
+ * (a transfer only), `jti` = the job id; the site verifies it with the ONE verifier Canari ships,
+ * `libs/handoff/alumni-merge-verify.ts`, vendored. A `2xx` naming its outcome completes the job; a
+ * `409` naming a typed refusal BLOCKS it (the state refused, not the network: no retry, an ERROR
+ * line); a `401 { outcome: <class> }` is a REFUSED token, an ERROR line on every attempt, asked again
+ * hourly; a `404` or a `503 { outcome: 'not_configured' }` is a site not ready - UNREADY, asked
+ * again daily, no line per try; anything else is retried with backoff.
  *
  * EACH JOB CARRIES THE SUBJECTS IT NEEDS and never reads its merge row. The target's erasure turns a
  * job still owed into an `erase` while a call may be in flight, so every write that settles an attempt
@@ -266,7 +289,7 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
     const token = signAlumniMergeCallToken(this.signer.key, this.signer.jwk.kid, {
       iss: this.signer.issuer,
       aud: job.site,
-      op: job.kind,
+      mode: job.kind,
       dup: job.duplicateSubject,
       ...(job.kind === 'transfer' && job.targetSubject ? { target: job.targetSubject } : {}),
       jti: job.id,
@@ -284,7 +307,17 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
       return outcome;
     } catch (err) {
       const e = err as { response?: { status?: number; data?: { code?: unknown } } };
-      if (e?.response?.status === 404) throw new SiteUnreadyError();
+      const status = e?.response?.status;
+      const outcome = (e?.response?.data as { outcome?: unknown } | undefined)?.outcome;
+      // Classified on the status and a TYPED body field, never on prose.
+      if (status === 404 || (status === 503 && outcome === 'not_configured')) {
+        throw new SiteUnreadyError();
+      }
+      if (status === 401) {
+        throw new SiteRefusedError(
+          typeof outcome === 'string' && REFUSAL_CLASS.test(outcome) ? outcome : 'unclassified'
+        );
+      }
       const code = e?.response?.data?.code;
       if (
         e?.response?.status === 409 &&
@@ -335,6 +368,10 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
         }
         return;
       }
+      if (err instanceof SiteRefusedError) {
+        await this.recordRefusal(job, err, tag);
+        return;
+      }
       if (err instanceof SiteUnreadyError) {
         // NOT A FAILURE, SO NOT A WARN PER TRY: the site has not shipped its half. Asked again daily;
         // the daily report names the site once, with how many jobs wait for it.
@@ -382,6 +419,32 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
         'the job as it stands runs next'
     );
     return false;
+  }
+
+  /**
+   * A refused token: counted as an attempt, asked again in {@link REFUSED_RETRY_HOURS}, and said at
+   * ERROR every time - the site and the class, so a refusal never hides behind a retry.
+   */
+  private async recordRefusal(job: ClaimedJob, err: SiteRefusedError, tag: string): Promise<void> {
+    const attempts = job.attempts + 1;
+    try {
+      await this.settle(
+        job,
+        tag,
+        `UPDATE alumni_merge_site_jobs
+            SET attempts = $3, "lastError" = $4, "unreadySince" = NULL,
+                "nextAttemptAt" = now() + make_interval(hours => $5)`,
+        [attempts, `HTTP 401 ${err.refusal}`, REFUSED_RETRY_HOURS]
+      );
+    } catch (writeErr) {
+      this.logger.error(
+        `[ALUMNI_MERGE_SITE] could not record a refusal ${tag}: ${describeFailure(writeErr)}`
+      );
+    }
+    this.logger.error(
+      `[ALUMNI_MERGE_SITE] REFUSED ${tag} class=${err.refusal} attempts=${attempts} - the site refused ` +
+        `the token; a deployment fixes it (key, issuer, audience, clock), asked again in ${REFUSED_RETRY_HOURS}h`
+    );
   }
 
   private async recordFailure(job: ClaimedJob, err: unknown, tag: string): Promise<void> {

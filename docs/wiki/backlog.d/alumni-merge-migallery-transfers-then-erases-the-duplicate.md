@@ -33,11 +33,15 @@ detail - the promo, then the formation, then the first 8 characters of `id_user`
 show an opaque id; a picker may not). Test: two rows identical in name, promo and formation render
 with different details.
 
-**The `erase` op** (the review of 2026-11-27, [the target erased before its sites answered](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
-a token whose `op` is `erase` names no `target` - the merge's target was erased in Canari before this
-site answered. The site then erases the duplicate's account under `dup` as any account deletion does,
-in one transaction, and answers `{ outcome: 'erased' }`, or `absent` when it holds none; it never
-transfers. A token whose `op` is `transfer` and carries no `target`, or an unknown `op`, is a 400.
-Once the path is served it never answers `404` - Canari reads a `404` as "not shipped yet" and asks
-again only daily. The tests: an `erase` erases and answers `erased`, a replay `absent`; the two
-malformed tokens refused.
+**The `erase` mode and the shared verifier** (the review of 2026-11-27, [the target erased before its sites answered](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
+the token is verified by Canari's `libs/handoff/alumni-merge-verify.ts`, copied byte-identically
+beside the site's `handoff-verify.ts` (a site-local verifier is replaced by it). Its `mode` claim is
+`transfer` (the default when absent: `target` REQUIRED) or `erase` - the merge's target was erased in
+Canari before this site answered, so `target` is ABSENT and a token carrying one is refused. On an
+`erase` the site erases the duplicate's account under `dup` as any account deletion does, in one
+transaction, and answers `{ outcome: 'erased' }`, or `absent` when it holds none; it never transfers.
+The answers Canari classifies, on the status and a typed body field: a refused token
+`401 { outcome: <class> }`; untrusted configuration `503 { outcome: 'not_configured' }` (asked again
+daily); Canari's keys unreachable `503 { outcome: 'keys_unavailable' }`; never a `404` once the path is
+served. The tests: an `erase` erases and answers `erased`, a replay `absent`; an erase naming a target
+and a transfer without one refused.

@@ -12,6 +12,14 @@ export const HANDOFF_VENDORED = [
 ];
 
 /**
+ * The Alumni merge call's verifier (Canari's profiles-and-access.md, D54): each MiConnect site copies
+ * it BESIDE its `handoff-verify.ts`, whose leeway and lifetime it imports (`./handoff-verify.js`) -
+ * `src/lib/server/handoff/alumni-merge-verify.ts` in Sky and MiGallery. A site joins in the pull
+ * request that vendors it; Le Cercle is on GitLab, outside this tool, and holds its copy by its own test.
+ */
+export const ALUMNI_MERGE_VENDORED = [['libs/handoff/alumni-merge-verify.ts', {}]];
+
+/**
  * The Meta in-app browser gate (owner decision of 2026-11-25, docs/wiki/frontend/leaving-in-app-browsers.md
  * section 6): the detector, the server gate, the interstitial and the user-agent fixtures, in Sky,
  * MiGallery and Portail-etu. Le Cercle is on GitLab, outside this tool, and holds its copies by a

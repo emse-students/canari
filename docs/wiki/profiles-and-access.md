@@ -1200,8 +1200,10 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     naming the other (the owner's decision of 2026-11-26,
     [decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 7) - a new ledger type, so a
     Le Cercle schema migration; the duplicate is then closed by `deleteOwnAccount`, its balance
-    already zero: `merged`. **Until that migration ships**, and only until then, this case answers
-    `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD`, changes nothing, and is reported (D54).
+    already zero: `merged`. The migration ships WITH the endpoint, so there is no interim refusal.
+    A target who closed their own Le Cercle account -> `409 { code: 'ALUMNI_MERGE_TARGET_CLOSED' }`,
+    nothing changed: the job is BLOCKED, said at ERROR at once, and named with its code
+    (`lastError`) in every daily report until a human settles it (D54).
   - **Portail-etu**: no package - it keeps no account (read 2026-11-26).
 - **D54 - The completion follows the merge, and the sites follow the completion** (lead, item 5).
   - **The push.** MiConnect journals the merge as an Event `custom_alumni_merge` (D57 makes it
@@ -1231,14 +1233,20 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
     backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
     `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token Canari signs with its
-    handoff key, `typ: canari-merge+jwt`, audience the site, claims `op` (`transfer`, or `erase` once
-    the target was erased - see below), `dup`, `target` (a `transfer` only), `jti` = the job id -
-    verified by the site's VENDORED verifier against Canari's JWKS, the file `shape.mjs` already
-    compares. A `2xx` with its outcome completes the job; a `409` with a typed refusal marks it
-    `blocked` (no retry: the state, not the network, refused) and is an ERROR line; a `404` is a site
-    that does not serve the path yet - the job waits UNREADY, asked again daily, with no line per try
-    (a site that serves the path never answers 404: an account it does not hold is `absent`);
-    anything else is retried.
+    handoff key, `typ: canari-merge+jwt`, audience the site, claims `mode` (`transfer`, the default,
+    or `erase` once the target was erased - see below), `dup`, `target` (a `transfer` only), `jti` =
+    the job id, lifetime 60 s - verified against Canari's JWKS by the ONE verifier Canari ships,
+    `libs/handoff/alumni-merge-verify.ts`, beside the handoff verifier whose leeway and lifetime it
+    imports, VENDORED by each site beside its `handoff-verify.ts` and compared by `shape.mjs`
+    (`ALUMNI_MERGE_VENDORED`); its test signs with core-service's own sender. A `2xx` with its outcome
+    completes the job; a `409` with a typed refusal marks it `blocked` (no retry: the state, not the
+    network, refused) and is an ERROR line; a `401 { outcome: <class> }` is a refused token, an ERROR
+    line naming the site and the class on EVERY attempt, asked again hourly so that a key rotation
+    or a redeploy heals it; a `404`, or a `503 { outcome: 'not_configured' }` (the site serves the
+    path but its trust is unset), is a site not ready - the job waits UNREADY, asked again daily, with
+    no line per try (a site that serves the path never answers 404: an account it does not hold is
+    `absent`); anything else, `503 { outcome: 'keys_unavailable' }` included, is retried with
+    backoff. Each is classified on the status and a typed body field, never on prose.
   - **The target erased before its sites answered** (the review of 2026-11-27): NOTHING CASCADES to a
     job. Each job carries the subjects it needs and never reads its merge row; the target's erasure
     deletes the jobs a site already settled and turns every job still owed into an `erase` of the
@@ -1370,7 +1378,7 @@ build made:
   `src/common/durable-queue.ts` (timers, single-flight drain, logged failures); each keeps its own
   claim, because the two tables differ. A `2xx` must name `absent`, `transferred` or `merged`, else it
   is retried as `SITE_ANSWER_MALFORMED`; a `404` (a site that has not shipped its endpoint) makes the
-  job UNREADY (`unreadySince`): asked again every 24 h, no WARN per try, never accused as overdue, and
+  job UNREADY (`unreadySince`), and so does a `503 { outcome: 'not_configured' }`: asked again every 24 h, no WARN per try, never accused as overdue, and
   the daily report says ONE warning per such site with its count. Every write that settles an attempt
   names the job's kind as claimed and checks it wrote one row; none - the target's erasure turned a
   transfer into an erase under the call - is said at ERROR and records nothing, and the job as it now

@@ -149,7 +149,7 @@ export interface AlumniMergeCallClaims {
    * account - the target was erased before the site answered (D54, migration 030), and no `target`
    * is sent.
    */
-  op: 'transfer' | 'erase';
+  mode: 'transfer' | 'erase';
   /** The duplicate's subject on that site. */
   dup: string;
   /** The target's subject, onto which the site moves what the duplicate owns; a `transfer` only. */

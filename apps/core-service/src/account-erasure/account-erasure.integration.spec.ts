@@ -436,12 +436,12 @@ maybe('account erasure queue against PostgreSQL', () => {
       );
       // (The erasure made all three of the merge's owed jobs due at once: each ran as an erase.)
       expect(ops[0]).toEqual(
-        expect.objectContaining({ aud: 'sky', op: 'transfer', target: 'sub-raced-target' })
+        expect.objectContaining({ aud: 'sky', mode: 'transfer', target: 'sub-raced-target' })
       );
       expect(
         ops
           .slice(1)
-          .map((c) => [c.aud, c.op, 'target' in c])
+          .map((c) => [c.aud, c.mode, 'target' in c])
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
       ).toEqual([
         ['le-cercle', 'erase', false],

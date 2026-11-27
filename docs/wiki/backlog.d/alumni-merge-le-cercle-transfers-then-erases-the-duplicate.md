@@ -16,22 +16,27 @@ lines** (the owner's decision of 2026-11-26, [item 7](../decisions/owner-decisio
 one out of the duplicate and one into the target, each naming the other, carrying the balance; the
 membership moves with them; then `deleteOwnAccount` closes the duplicate, whose balance is already
 zero, so no `cashout` is written -> `merged`. `transfer` is a new ledger type, so a schema migration
-here (the `ledger.type` CHECK rebuilt, a column naming the paired line). **Until that migration
-ships**, and only until then, the both-rows case answers `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD` and
-changes nothing.
+here (the `ledger.type` CHECK rebuilt, a column naming the paired line), which ships WITH the
+endpoint, so the both-rows case has no interim refusal. A target who closed their own account here
+answers `409 { code: 'ALUMNI_MERGE_TARGET_CLOSED' }` and changes nothing: Canari blocks the job,
+logs it at ERROR and names it with its code in every daily report.
 
 The tests that prove it: the rename carries the ledger, sessions and bartender rows and
 `till_requests`; the both-rows case writes exactly two `transfer` lines naming each other, the two
 balance columns and the ledger agree afterwards, the membership is on the target, the duplicate is
 closed with no `cashout`; the migration upgrades a database holding every existing line type
-unchanged; before the migration the both-rows case answers 409 and writes nothing; a replay is
+unchanged; a closed target answers 409 `ALUMNI_MERGE_TARGET_CLOSED` and writes nothing; a replay is
 `absent`; the token's refusals.
 
-**The `erase` op** (the review of 2026-11-27, [the target erased before its sites answered](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
-a token whose `op` is `erase` names no `target` - the merge's target was erased in Canari before this
-site answered. The site then erases the duplicate's account under `dup` as any account deletion does,
-in one transaction, and answers `{ outcome: 'erased' }`, or `absent` when it holds none; it never
-transfers. A token whose `op` is `transfer` and carries no `target`, or an unknown `op`, is a 400.
-Once the path is served it never answers `404` - Canari reads a `404` as "not shipped yet" and asks
-again only daily. The tests: an `erase` erases and answers `erased`, a replay `absent`; the two
-malformed tokens refused.
+**The `erase` mode and the shared verifier** (the review of 2026-11-27, [the target erased before its sites answered](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
+the token is verified by Canari's `libs/handoff/alumni-merge-verify.ts`, copied byte-identically
+beside the site's `handoff-verify.ts` (a site-local verifier is replaced by it). Its `mode` claim is
+`transfer` (the default when absent: `target` REQUIRED) or `erase` - the merge's target was erased in
+Canari before this site answered, so `target` is ABSENT and a token carrying one is refused. On an
+`erase` the site erases the duplicate's account under `dup` as any account deletion does, in one
+transaction, and answers `{ outcome: 'erased' }`, or `absent` when it holds none; it never transfers.
+The answers Canari classifies, on the status and a typed body field: a refused token
+`401 { outcome: <class> }`; untrusted configuration `503 { outcome: 'not_configured' }` (asked again
+daily); Canari's keys unreachable `503 { outcome: 'keys_unavailable' }`; never a `404` once the path is
+served. The tests: an `erase` erases and answers `erased`, a replay `absent`; an erase naming a target
+and a transfer without one refused.

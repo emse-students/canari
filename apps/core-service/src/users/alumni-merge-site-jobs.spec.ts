@@ -114,7 +114,7 @@ describe('AlumniMergeSiteJobsService', () => {
     expect(c).toEqual(
       expect.objectContaining({
         aud: 'migallery',
-        op: 'transfer',
+        mode: 'transfer',
         dup: 'sub-dup',
         target: 'sub-target',
         jti: 'job-1',
@@ -146,7 +146,9 @@ describe('AlumniMergeSiteJobsService', () => {
     const claims = JSON.parse(
       Buffer.from(config.headers.authorization.split('.')[1], 'base64url').toString()
     );
-    expect(claims).toEqual(expect.objectContaining({ op: 'erase', dup: 'sub-dup', jti: 'job-1' }));
+    expect(claims).toEqual(
+      expect.objectContaining({ mode: 'erase', dup: 'sub-dup', jti: 'job-1' })
+    );
     expect(claims).not.toHaveProperty('target');
     const done = queries.find(([sql]) => sql.startsWith('DELETE FROM alumni_merge_site_jobs'));
     expect(done?.[1]).toEqual(['job-1', 'erase']);
@@ -166,11 +168,11 @@ describe('AlumniMergeSiteJobsService', () => {
   it('a typed 409 BLOCKS the job: no retry, an error line', async () => {
     const { service, queries } = make([[JOB]]);
     axios.post.mockRejectedValue({
-      response: { status: 409, data: { code: 'ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD' } },
+      response: { status: 409, data: { code: 'ALUMNI_MERGE_TARGET_CLOSED' } },
     });
     await service.drain();
     const blocked = queries.find(([sql]) => sql.includes('"blockedAt" = now()'));
-    expect(blocked?.[1]).toEqual(['job-1', 'transfer', 'HTTP 409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD']);
+    expect(blocked?.[1]).toEqual(['job-1', 'transfer', 'HTTP 409 ALUMNI_MERGE_TARGET_CLOSED']);
     expect(queries.some(([sql]) => sql.includes('attempts = $3'))).toBe(false);
     expect(log.error).toHaveBeenCalledWith(expect.stringContaining('BLOCKED merge=merge-1'));
   });
@@ -210,6 +212,50 @@ describe('AlumniMergeSiteJobsService', () => {
     expect(log.error).not.toHaveBeenCalled();
   });
 
+  it('a 503 naming not_configured is UNREADY too: the site serves the path, its trust is not set', async () => {
+    const { service, queries } = make([[JOB]]);
+    axios.post.mockRejectedValue({
+      response: { status: 503, data: { outcome: 'not_configured' } },
+    });
+    await service.drain();
+    expect(queries.some(([sql]) => sql.includes('"unreadySince" = COALESCE'))).toBe(true);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('a 503 naming anything else (keys_unavailable) is an ordinary failure, retried with backoff', async () => {
+    const { service, queries } = make([[JOB]]);
+    axios.post.mockRejectedValue({
+      response: { status: 503, data: { outcome: 'keys_unavailable' } },
+    });
+    await service.drain();
+    expect(queries.some(([sql]) => sql.includes('"unreadySince" = COALESCE'))).toBe(false);
+    expect(queries.find(([sql]) => sql.includes('secs => $5'))?.[1]?.[2]).toBe(1);
+  });
+
+  it('a 401 is a typed refusal: an ERROR naming the site and the class on EVERY attempt, asked again hourly', async () => {
+    const { service, queries } = make([[JOB], [{ ...JOB, attempts: 1 }]]);
+    axios.post.mockRejectedValue({
+      response: { status: 401, data: { outcome: 'wrong_audience' } },
+    });
+    await service.drain();
+    const refused = queries.filter(([sql]) => sql.includes('hours => $5'));
+    expect(refused.map(([, params]) => params)).toEqual([
+      ['job-1', 'transfer', 1, 'HTTP 401 wrong_audience', 1],
+      ['job-1', 'transfer', 2, 'HTTP 401 wrong_audience', 1],
+    ]);
+    const lines = log.error.mock.calls.map(([line]) => String(line));
+    expect(lines.filter((l) => l.includes('REFUSED merge=merge-1 site=migallery'))).toHaveLength(2);
+    expect(lines.every((l) => !l.includes('BLOCKED'))).toBe(true);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('a 401 whose body names no class is still a refusal, said unclassified - never prose', async () => {
+    const { service } = make([[JOB]]);
+    axios.post.mockRejectedValue({ response: { status: 401, data: { message: 'Unauthorized!' } } });
+    await service.drain();
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('class=unclassified'));
+  });
+
   it('the daily report names each unready site ONCE at warning, with its count, and never as overdue', async () => {
     const { service, queries } = make([], [], {
       waiting: [{ site: 'sky', jobs: 3, since: new Date('2026-11-20T00:00:00Z') }],
@@ -223,6 +269,30 @@ describe('AlumniMergeSiteJobsService', () => {
     const overdue = queries.find(([sql]) => sql.includes('"createdAt" < now()'));
     expect(overdue?.[0]).toContain('"unreadySince" IS NULL');
     expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it("the daily report names a blocked job at error WITH its site's code (Le Cercle's closed target)", async () => {
+    const { service } = make(
+      [],
+      [
+        {
+          id: 'job-9',
+          mergeId: 'merge-9',
+          site: 'le-cercle',
+          kind: 'transfer',
+          attempts: 0,
+          lastError: 'HTTP 409 ALUMNI_MERGE_TARGET_CLOSED',
+          createdAt: new Date('2026-11-26T00:00:00Z'),
+          blockedAt: new Date('2026-11-26T00:01:00Z'),
+        },
+      ]
+    );
+    await service.report();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /BLOCKED merge=merge-9 site=le-cercle kind=transfer .*lastError=HTTP 409 ALUMNI_MERGE_TARGET_CLOSED/
+      )
+    );
   });
 
   it('the daily report names a job pending over 24 h, by merge and site, at error', async () => {
