@@ -144,6 +144,13 @@ type SealOutcome =
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
 
 /**
+ * The close code a LEAVING page sends (RFC 6455 "going away"). The patched websocket plugin
+ * (`src-tauri/patches/tauri-plugin-websocket`, `GOING_AWAY`) stops forwarding frames on a connection
+ * closed with it: the number is the contract between the two, change both or neither.
+ */
+export const PAGE_LEAVING_CLOSE_CODE = 1001;
+
+/**
  * MLS service implementation for Tauri (mobile/desktop).
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
  */
@@ -680,10 +687,19 @@ export class TauriMlsService extends BaseMlsService {
       // that continuation: the plugin's reader then kept the connection and answered every gateway
       // frame into the dead page's channel, `[TAURI] Couldn't find callback id N` every ~15 s
       // after a reload (iPhone 12, 1.8.2-alpha.8, a language switch: 7 lines in 90 s). The two
-      // invocations leave in order, the frame first; no watcher is registered, since nobody
+      // invocations are not awaited (the page is gone once this returns), so their order at the plugin is
+      // not guaranteed: an answer to the frame that beat the close would still be forwarded, but it needs a
+      // server round trip against two local IPC calls issued back to back. No watcher is registered, since nobody
       // is left to read what it would learn.
       const frame = ws.send(JSON.stringify({ type: 'disconnect' }));
-      const release = ws.disconnect();
+      // A CLOSE CODED 1001 ("going away"), NOT `disconnect()`'s 1000: the plugin's reader mutes the
+      // connection on it, so the server's answer to this very close - which arrives after the page is
+      // gone - is not forwarded into the dead page's channel (`Couldn't find callback id`, one line
+      // per reload on the iPhone 12, 1.8.3-alpha.1). Closing with 1000 still left one.
+      const release = ws.send({
+        type: 'Close',
+        data: { code: PAGE_LEAVING_CLOSE_CODE, reason: 'page leaving' },
+      });
       void frame.catch((e: unknown) =>
         console.log(`[WS] page leaving: the disconnect frame was not accepted (${String(e)})`)
       );
