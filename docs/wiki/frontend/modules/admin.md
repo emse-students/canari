@@ -143,7 +143,8 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   every admin when one marks it for a merge** (the open `alumni_merges` row is the state; no write
   to the flag), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
   (mark, cancel, resolution) with NO push. When MiConnect completes the merge nothing is announced: the
-  item has been gone since the mark. There is no "dismiss". The unpaired duplicates of the manual
+  item has been gone since the mark, and the completion resolves the flag in the SAME statement
+  (`COMPLETE_MERGE_SQL`), so an erasure deleting the merge row cannot bring it back. There is no "dismiss". The unpaired duplicates of the manual
   merge ([profiles-and-access](../../profiles-and-access.md)) are not queue items: only a duplicate
   that matches an account is. Proved in `alumni-duplicate-queue.service.spec.ts` (once, never again,
   resolved, reopened), `alumni-merge-queue.spec.ts` (the sign-in, the cancel), `admin-queues.service.spec.ts`

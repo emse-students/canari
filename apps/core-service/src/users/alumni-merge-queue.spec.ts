@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
-import { AlumniMergeService } from './alumni-merge.service';
+import { AlumniMergeService, COMPLETE_MERGE_SQL } from './alumni-merge.service';
 import type { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import type { MiconnectEditorClient, MiconnectUserListing } from './miconnect-editor.client';
 
@@ -95,6 +95,12 @@ describe('AlumniMergeService and the admin queue', () => {
       await expect(service.flagNewAccount(DUP_UUID)).resolves.toBeUndefined();
       expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT checked for a duplicate'));
     });
+  });
+
+  it('closing a completed merge resolves its flag in the SAME statement, so an erased merge row cannot bring it back', () => {
+    expect(COMPLETE_MERGE_SQL).toContain('UPDATE alumni_merges SET "completedAt" = now()');
+    expect(COMPLETE_MERGE_SQL).toContain('UPDATE alumni_duplicate_flags SET "resolvedAt" = now()');
+    expect(COMPLETE_MERGE_SQL.match(/;/g)).toBeNull();
   });
 
   it('cancelling a mark recounts the admins: the duplicate waits again', async () => {

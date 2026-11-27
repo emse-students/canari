@@ -172,6 +172,16 @@ function isPersonAccount(user: { type: string }): boolean {
   return user.type === 'internal' || user.type === 'external';
 }
 
+/**
+ * Closes merge row `$1` (the duplicate left MiConnect) and, in the same statement, resolves the
+ * duplicate's admin-queue flag (`alumni_duplicate_flags`, migration 031).
+ */
+export const COMPLETE_MERGE_SQL = `WITH closed AS (
+    UPDATE alumni_merges SET "completedAt" = now() WHERE id = $1 AND "completedAt" IS NULL
+    RETURNING "duplicateUuid")
+  UPDATE alumni_duplicate_flags SET "resolvedAt" = now()
+   WHERE "resolvedAt" IS NULL AND "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM closed)`;
+
 /** The write that removes the merge mark: each of its keys set to null, which MiConnect deletes. */
 const MARK_REMOVED: Record<string, null> = Object.fromEntries(
   Object.values(MERGE_MARK).map((key) => [key, null])
@@ -592,10 +602,9 @@ export class AlumniMergeService {
         this.logger.log(`[ALUMNI_MERGE] ${tag}: no Canari account to erase`);
       }
     }
-    await this.dataSource.query(
-      `UPDATE alumni_merges SET "completedAt" = now() WHERE id = $1 AND "completedAt" IS NULL`,
-      [row.id]
-    );
+    // ONE statement, so the closing and the flag's resolution are atomic: the admins' queue never
+    // depends on this row surviving (an erasure of the target deletes it) - the duplicate is gone.
+    await this.dataSource.query(COMPLETE_MERGE_SQL, [row.id]);
     if (merged) {
       this.logger.log(`[ALUMNI_MERGE] completed ${tag}: MiConnect merged it at its sign-in`);
     } else if (row.markedAt) {
