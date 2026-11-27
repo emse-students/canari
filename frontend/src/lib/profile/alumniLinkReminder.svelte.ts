@@ -15,12 +15,13 @@ import { Log } from '$lib/utils/Log';
  */
 export function followAlumniLinkReminder(): { readonly due: boolean; open: () => void } {
   let profile = $state<UserProfile | null>(null);
-  const target = miconnectSourcesSettingsUrl(authentikUrl());
+  /** Read when needed, never at mount: most screens that mount a reminder never get a due profile. */
+  const target = () => miconnectSourcesSettingsUrl(authentikUrl());
 
   $effect(() => {
     const id = currentUserId();
     profile = null;
-    if (!id || !target) return;
+    if (!id) return;
     let live = true;
     fetchMyProfile()
       .then((p) => {
@@ -32,7 +33,7 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
     };
   });
 
-  const due = $derived(!!target && !!profile && alumniLinkReminderDue(profile, new Date()));
+  const due = $derived(!!profile && alumniLinkReminderDue(profile, new Date()) && !!target());
 
   return {
     get due() {
@@ -40,7 +41,8 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
     },
     open() {
       Log.d('alumniLink', 'link tapped');
-      if (target) void openExternal(target);
+      const url = target();
+      if (url) void openExternal(url);
     },
   };
 }
