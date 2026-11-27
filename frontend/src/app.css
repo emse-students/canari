@@ -881,6 +881,24 @@ img[src^='/emoji/'] {
     var(--motion-ease-in-out);
 }
 
+/* THE JUMP OUTLINE COMPOSES WITH THE ARRIVAL (reading 2026-11-27: a captioned photo that arrived live
+   showed no outline). Both rules set `animation` on the bubble, and the later shorthand replaces the
+   earlier, so the pair is stated as ONE list here: the arrival keeps its name - an animation already
+   running or ended under a name is not restarted - and the outline runs beside it. Same arrival
+   timing as the two rules above; no timer. */
+.motion-bubble-in.chat-message-jump-highlight {
+  animation:
+    bubbleIn var(--motion-fast) var(--motion-ease-in-out),
+    messageJumpHighlight 1.8s ease;
+}
+
+.motion-bubble-in[data-glide-entrance].chat-message-jump-highlight {
+  animation:
+    bubbleInAfterGlide calc(var(--motion-thread-glide) + var(--motion-fast))
+      var(--motion-ease-in-out),
+    messageJumpHighlight 1.8s ease;
+}
+
 @keyframes motionSheetIn {
   from {
     transform: translate3d(0, 100%, 0);
@@ -2263,6 +2281,15 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 :root.fullscreen-place-open[data-call-bar] .app-shell {
   padding-top: var(--app-status-top);
   --safe-area-inset-top: 0px;
+}
+
+/* THE BANNERS ON A FULL-SCREEN PLACE (Mi 9T, 2026-11-27: the Alumni banner drew over the clock on
+   `/games/play`). The shell gave its status-bar padding back above, and the banner column sits in the
+   shell, so a banner was painted from y = 0. The column takes the inset itself, only while it holds a
+   banner (an empty one would be a dead band over a place that pads its own controls). During a call
+   the rule below zeroes the variable for the subtree, so the bar is not padded twice. */
+.fullscreen-place-open .app-banner-column:not(:empty) {
+  padding-top: var(--safe-area-inset-top, 0px);
 }
 
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView

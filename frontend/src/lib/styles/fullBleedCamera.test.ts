@@ -18,6 +18,18 @@ describe('the camera place under the status bar', () => {
     expect(APP_CSS).toMatch(/\.fullscreen-place-open \.app-shell\s*\{\s*padding-top: 0;/);
   });
 
+  it('a banner on a full-screen place takes the inset itself, and the jump outline composes with the arrival', () => {
+    expect(APP_CSS).toMatch(
+      /\.fullscreen-place-open \.app-banner-column:not\(:empty\)\s*\{\s*padding-top: var\(--safe-area-inset-top, 0px\);/
+    );
+    expect(APP_CSS).toMatch(
+      /\.motion-bubble-in\.chat-message-jump-highlight\s*\{[^}]*bubbleIn[^}]*messageJumpHighlight/
+    );
+    expect(APP_CSS).toMatch(
+      /\.motion-bubble-in\[data-glide-entrance\]\.chat-message-jump-highlight\s*\{[^}]*bubbleInAfterGlide[^}]*messageJumpHighlight/
+    );
+  });
+
   it.each([
     ['src/lib/components/reels/CameraScreen.svelte', 'close and lens controls'],
     ['src/lib/components/reels/ReelReview.svelte', 'discard button'],
