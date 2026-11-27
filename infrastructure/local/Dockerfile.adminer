@@ -1,24 +1,25 @@
 # THE DATABASE CONSOLE, UPSTREAM'S IMAGE WITH ONE PACKAGE MOVED - A TEMPORARY IMAGE (owner, 2026-11-13).
 #
-# `adminer:6.3.0` (the newest upstream build on 2026-11-13, published 2026-11-06) carries Alpine's
-# `libpq 18.6-r0`, and Alpine 3.24 fixed 38 HIGH PostgreSQL advisories in `18.7-r0`. No upstream digest
-# carried the fix, so the image scan failed every pull request. The owner chose to patch the package here,
-# not to allowlist the advisories and not to remove the console: the base is the SAME digest production
-# ran, and `libpq` is the only package that moves.
+# It began as a `libpq` patch: `adminer:6.3.0` (published 2026-11-06) carried Alpine's `libpq 18.6-r0`
+# and Alpine 3.24 fixed 38 HIGH PostgreSQL advisories in `18.7-r0`. The owner chose to patch the package
+# here, not to allowlist the advisories and not to remove the console. THE `libpq` HALF WAS DELETED ON
+# 2026-11-27: the base digest below now carries `libpq >= 18.7-r0` itself (the scan's "likely a no-op"
+# warning said so).
 #
-# `libxml2` joined it on 2026-11-20: Alpine 3.24 fixed `CVE-2026-86144` (HIGH) in `2.13.9-r3`, and no
-# upstream adminer, nginx or postgres image carried it that day. It leaves with this file.
+# `libxml2` is what keeps the file alive: Alpine 3.24 fixed `CVE-2026-86144` in `2.13.9-r3` (2026-11-20)
+# and `CVE-2026-11979` with five `CVE-2026-861xx` in `2.13.9-r5` (2026-11-27), and no upstream adminer,
+# nginx or postgres image carried either fix.
 #
 # DELETE THIS FILE, and put production's compose back on `image: adminer@sha256:<digest>` with the
-# `pinned` label, the day an upstream adminer image ships `libpq >= 18.7-r0` - Dependabot moves the
+# `pinned` label, the day an upstream adminer image ships `libxml2 >= 2.13.9-r5` - Dependabot moves the
 # `FROM` below, so the scan of its pull request is where that is seen
 # (docs/wiki/legacy-compatibility.md, the patched adminer image).
 #
-# `apk info -e` fails the build if the repository did not hand over a fixed `libpq` or `libxml2`, rather
-# than ship the vulnerable build under a green one. `--no-cache` leaves no index in the image; `USER root` only for the upgrade, and back to the user the
+# `apk info -e` fails the build if the repository did not hand over a fixed `libxml2`, rather than ship
+# the vulnerable build under a green one. `--no-cache` leaves no index in the image; `USER root` only for the upgrade, and back to the user the
 # base runs as (`adminer`, read from the base's own config) - its ENTRYPOINT and CMD are inherited.
 FROM adminer:6.3.0@sha256:037125c2bc4836b4917d4fd08a16f817eac2848778c4e9aab87a8340aef08dfd
 
 USER root
-RUN apk upgrade --no-cache libpq libxml2 && apk info -e 'libpq>=18.7-r0' && apk info -e 'libxml2>=2.13.9-r3'
+RUN apk upgrade --no-cache libxml2 && apk info -e 'libxml2>=2.13.9-r5'
 USER adminer

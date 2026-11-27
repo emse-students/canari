@@ -438,10 +438,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,ignore-error=true
           cache-to: type=gha,mode=min,ignore-error=true
-          # ADMINER AND THE FRONTEND ARE NEVER BUILT FROM THE CACHE (review of #3442; the frontend
+          # ADMINER, THE FRONTEND AND THE TWO RUST RUNTIMES (call-service, chat-gateway; their `apt-get upgrade`, 2026-11-27) ARE NEVER BUILT FROM THE CACHE (review of #3442; the frontend
           # since 2026-11-20): each runs an `apk upgrade` (libpq, libxml2), keyed on the base and the
           # command, so a cached layer could hold an OLD package while the image scan builds fresh -
           # the gate would measure an image production does not run. Every Dockerfile whose shipped
           # stage upgrades is named here (`image-scan-targets.test.sh`). Each build is seconds.
-          no-cache: ${{ matrix.name == 'adminer' || matrix.name == 'frontend' }}
+          no-cache: ${{ matrix.name == 'adminer' || matrix.name == 'frontend' || matrix.name == 'call-service' || matrix.name == 'chat-gateway' }}
 
