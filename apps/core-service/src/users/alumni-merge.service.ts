@@ -473,29 +473,42 @@ export class AlumniMergeService {
 
   /**
    * "Pas un doublon" (the admins' terminal answer): the durable write is the queue's, the REFUSALS
-   * are the merge's. Refused, each logged: a duplicate named by a merge that is not cancelled (open
-   * or completed - a dismissal must never hide an account a merge is acting on, `AlumniMergeInProgressError`),
-   * an account MiConnect does not have, one that is not duplicate-shaped (the allowlist of
+   * are the merge's. Refused, each logged: a duplicate named by a merge that is not cancelled (open:
+   * `AlumniMergeInProgressError`; completed: `AlumniMergeAlreadyMergedError`), an account MiConnect does not have, one that is not duplicate-shaped (the allowlist of
    * {@link duplicateShapeRefusal}: a dismissal of a real person's account is no answer to anything).
    */
   async dismiss(duplicateUuid: string): Promise<void> {
     const tag = `dismissal dup=${duplicateUuid.slice(0, 8)}`;
     this.editor.assertAvailable();
-    const merges = (await this.dataSource.query(
-      `SELECT 1 FROM alumni_merges WHERE "duplicateUuid"::text = $1 AND "cancelledAt" IS NULL LIMIT 1`,
-      [duplicateUuid]
-    )) as unknown[];
-    if (merges.length > 0) {
-      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: a merge of this account is not cancelled`);
-      throw new AlumniMergeInProgressError();
-    }
     const dup = await this.editor.userByUuid(duplicateUuid);
     if (!dup) {
       this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: no such account`);
       throw new AlumniMergeNotFoundError();
     }
     await this.assertDuplicateShaped(dup, tag);
-    await this.queue?.dismiss(duplicateUuid);
+    // The check and the write are ONE step: under the duplicate's advisory lock - the one a mark
+    // takes before it writes its row (`openMerge`) - so a mark and a dismissal of the same duplicate
+    // never both land. The refusal reads the rows INSIDE the lock.
+    await this.dataSource.transaction(async (tx) => {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `alumni-merge-duplicate:${duplicateUuid}`,
+      ]);
+      const merges = (await tx.query(
+        `SELECT "completedAt" FROM alumni_merges
+          WHERE "duplicateUuid"::text = $1 AND "cancelledAt" IS NULL
+          ORDER BY "completedAt" NULLS LAST LIMIT 1`,
+        [duplicateUuid]
+      )) as { completedAt: Date | null }[];
+      if (merges.length > 0) {
+        const merged = merges[0].completedAt != null;
+        this.logger.warn(
+          `[ALUMNI_MERGE] refused ${tag}: a merge of this account is ${merged ? 'completed' : 'open'}`
+        );
+        throw merged ? new AlumniMergeAlreadyMergedError() : new AlumniMergeInProgressError();
+      }
+      await this.queue?.dismiss(duplicateUuid, tx);
+    });
+    await this.queue?.changed();
   }
 
   /** MiConnect's user search for a name; a name shorter than {@link TARGET_SEARCH_MIN} finds nothing. */
@@ -1014,6 +1027,11 @@ export class AlumniMergeService {
     const inserted = await this.dataSource.transaction(async (manager) => {
       await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `alumni-merge-target:${m.target.uuid}`,
+      ]);
+      // The duplicate's own lock: a dismissal of it ("Pas un doublon") takes the same one, so the two
+      // never both land (`dismiss`).
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `alumni-merge-duplicate:${m.dup.uuid}`,
       ]);
       const busy = (await manager.query(
         `SELECT 1 FROM alumni_merges

@@ -48,8 +48,9 @@ const RAW_TABLES = [
   // Removed from this list BY the drop migration
   // (docs/wiki/backlog.d/drop-the-global-association-categories.md).
   'association_categories',
-  // Migration 188's ledger of the Alumni duplicates' found-notices already told: a digest of a batch's
-  // uuids and a date - no account, nothing to erase.
+  // Migration 188's ledger of the Alumni duplicates already told: a MiConnect uuid and a date, no
+  // account. A row is swept by the next announce once its flag is gone (a completed merge, an erased
+  // account - core's erasure deletes the flag), so nothing here outlives the flag.
   'alumni_duplicate_announcements',
   'read_grants',
   'read_grant_journal',

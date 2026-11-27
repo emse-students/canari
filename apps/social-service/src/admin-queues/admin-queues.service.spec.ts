@@ -26,24 +26,29 @@ describe('AdminQueuesService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  const BATCH = 'ab'.repeat(32);
-
   function make(opts: {
     moderates?: boolean;
     validates?: boolean;
     admins?: string[];
     covered?: boolean;
     row?: Record<string, number>;
-    /** The batch ids the ledger already holds. */
+    /** The duplicates the ledger already holds (claimed by an earlier call). */
     told?: string[];
   }) {
+    const ledger = new Set(opts.told ?? []);
     const query = jest.fn(async (sql: string, params: unknown[]) => {
       if (sql === LOCK_REPORT_SUBJECT_SQL) return [{}];
       if (sql === REPORT_ALREADY_ANNOUNCED_SQL) return [{ covered: opts.covered ?? false }];
-      if (sql.includes('SELECT 1 FROM alumni_duplicate_announcements')) {
-        return (opts.told ?? []).includes(params[0] as string) ? [{}] : [];
+      if (sql.includes('DELETE FROM alumni_duplicate_announcements a')) return [];
+      if (sql.includes('INSERT INTO alumni_duplicate_announcements')) {
+        const fresh = [...new Set(params[0] as string[])].filter((u) => !ledger.has(u));
+        fresh.forEach((u) => ledger.add(u));
+        return fresh.map((uuid) => ({ uuid }));
       }
-      if (sql.includes('INSERT INTO alumni_duplicate_announcements')) return [];
+      if (sql.includes('DELETE FROM alumni_duplicate_announcements WHERE')) {
+        (params[0] as string[]).forEach((u) => ledger.delete(u));
+        return [];
+      }
       if (sql.includes('FROM users WHERE admin = true')) {
         return (opts.admins ?? []).filter((id) => id !== params[0]).map((id) => ({ id }));
       }
@@ -65,7 +70,7 @@ describe('AdminQueuesService', () => {
       notifications as never,
       signal as never
     );
-    return { service, query, associations, notifications, signal };
+    return { service, query, associations, notifications, signal, ledger };
   }
 
   describe('pendingCounts', () => {
@@ -140,9 +145,10 @@ describe('AdminQueuesService', () => {
     it('tells EVERY global admin of a found Alumni duplicate - once, as the platform, with no name', async () => {
       const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
-      expect(await service.announceAlumniDuplicates([duplicate], BATCH)).toEqual({
+      expect(await service.announceAlumniDuplicates([duplicate])).toEqual({
         told: 2,
-        replayed: false,
+        claimed: 1,
+        skipped: 0,
       });
       expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
       expect(notifications.createNotifications).toHaveBeenCalledWith({
@@ -169,7 +175,7 @@ describe('AdminQueuesService', () => {
         '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11',
         '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12',
       ];
-      await service.announceAlumniDuplicates(ids, BATCH);
+      await service.announceAlumniDuplicates(ids);
       expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
       expect(notifications.createNotifications.mock.calls[0][0]).toMatchObject({
         postId: ids[0],
@@ -180,45 +186,51 @@ describe('AdminQueuesService', () => {
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });
 
-    it('a batch whose id the ledger holds is NOT told again (a lost answer replayed), the badges still recount, and a told batch is written to the ledger', async () => {
-      const replay = make({ admins: ['a1'], told: [BATCH] });
-      const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
-      expect(await replay.service.announceAlumniDuplicates([duplicate], BATCH)).toEqual({
-        told: 0,
-        replayed: true,
+    it('CLAIMS before it notifies and tells ONLY the newly claimed: {A} lost then {A,B} tells B alone', async () => {
+      const A = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
+      const B = '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11';
+      const { service, notifications, ledger } = make({ admins: ['a1'] });
+      // {A}: told, but its answer never reached the caller, which tells again with a grown set.
+      await service.announceAlumniDuplicates([A]);
+      expect(await service.announceAlumniDuplicates([A, B])).toEqual({
+        told: 1,
+        claimed: 1,
+        skipped: 1,
       });
-      expect(replay.notifications.createNotifications).not.toHaveBeenCalled();
-      expect(replay.signal.changed).toHaveBeenCalledTimes(1);
-
-      const first = make({ admins: ['a1'] });
-      await first.service.announceAlumniDuplicates([duplicate], BATCH);
-      expect(
-        first.query.mock.calls.some(
-          ([sql, params]) =>
-            String(sql).includes('INSERT INTO alumni_duplicate_announcements') &&
-            (params as string[])[0] === BATCH
-        )
-      ).toBe(true);
+      expect(notifications.createNotifications.mock.calls.map((c) => c[0])).toEqual([
+        expect.objectContaining({ postId: A, meta: { duplicateUuids: [A] } }),
+        expect.objectContaining({ postId: B, meta: { duplicateUuids: [B] } }),
+      ]);
+      expect([...ledger]).toEqual([A, B]);
+      // A set that holds nothing new rings nothing at all, and the badges still recount.
+      notifications.createNotifications.mockClear();
+      expect(await service.announceAlumniDuplicates([B, A])).toEqual({
+        told: 0,
+        claimed: 0,
+        skipped: 2,
+      });
+      expect(notifications.createNotifications).not.toHaveBeenCalled();
     });
 
-    it('a failed notice is NOT written to the ledger, so the retry tells it', async () => {
-      const { service, notifications, query } = make({ admins: ['a1'] });
+    it('a failed notice RELEASES exactly the rows it claimed, says it at error, and the retry tells', async () => {
+      const A = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
+      const B = '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11';
+      const { service, notifications, ledger } = make({ admins: ['a1'], told: [A] });
       notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
-      await expect(
-        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'], BATCH)
-      ).rejects.toThrow('db down');
-      expect(
-        query.mock.calls.some(([sql]) =>
-          String(sql).includes('INSERT INTO alumni_duplicate_announcements')
-        )
-      ).toBe(false);
+      await expect(service.announceAlumniDuplicates([A, B])).rejects.toThrow('db down');
+      // B was claimed by this call and is released; A was claimed by an earlier call and stays.
+      expect([...ledger]).toEqual([A]);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('FAILED'));
+      await service.announceAlumniDuplicates([A, B]);
+      expect(notifications.createNotifications).toHaveBeenCalledTimes(2);
+      expect([...ledger].sort()).toEqual([A, B]);
     });
 
     it('a failed write still tells the badges, and the failure reaches the caller to retry', async () => {
       const { service, notifications, signal } = make({ admins: ['a1'] });
       notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
       await expect(
-        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'], BATCH)
+        service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
       ).rejects.toThrow('db down');
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });

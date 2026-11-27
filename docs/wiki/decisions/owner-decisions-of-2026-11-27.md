@@ -69,21 +69,25 @@ the charter principle that bounds it is the third, "your attention is not for sa
    never cleared, so no later reading and no later sign-in flags the account again (it is state, not a
    clock). Reversible only by a migration, deliberately: a "maybe later" would be the repeat the charter
    forbids.
-3. **A notice is durable, once, and idempotent.** `announcedAt` is written only after social-service
+3. **A notice is durable and ONCE PER DUPLICATE.** `announcedAt` is written only after social-service
    accepted the notice; a refused or failed call leaves it null and the next reading - or the next
    sign-in, which flushes the owed notices one batch at most - tells again, in batches of at most 200.
    A backlog found at once is ONE push and ONE bell row per batch, never one row per duplicate. The
-   bell row lists its batch in `meta.duplicateUuids` and stays while ANY of them still waits. Each
-   batch carries an id (a digest of its sorted uuids) that social records in
-   `alumni_duplicate_announcements` AFTER it told it: a batch already there is not told again, so an
-   answer lost on the way never rings the admins' phones twice (a crash between the notice and the
-   record tells again rather than never; a batch that changed in between is another batch).
+   bell row lists its batch in `meta.duplicateUuids` and stays while ANY of them still waits. The
+   guarantee is a PER-DUPLICATE ledger in social (`alumni_duplicate_announcements`, migration 188):
+   a call CLAIMS its duplicates (one `INSERT ... ON CONFLICT DO NOTHING RETURNING`) BEFORE it notifies
+   and announces ONLY the newly claimed. A lost answer replayed, a set that grew ({A} lost, then
+   {A,B} tells B alone) and two flushes at once never tell a duplicate twice; a notice that throws
+   releases exactly the rows it claimed, so the retry tells. A ledger row is swept by the next announce
+   once its flag is gone (a completed merge, an erased account), so it never outgrows the flags.
 4. **What the badge counts.** The flags still waiting (found, not dismissed, no merge marked or
    completed), which is what the page lists as duplicates, PLUS a merge only requested whose mark was
    interrupted (its row stays on the page under the open merges, "Reprendre"): both need an admin.
 5. **"Pas un doublon" refuses what it must not hide, and survives erasure.** The dismissal is refused
-   (409, `ALUMNI_MERGE_IN_PROGRESS`) for a duplicate a merge that is not cancelled names, and (404
-   `ALUMNI_MERGE_NOT_FOUND` / 409 `ALUMNI_MERGE_NOT_DUPLICATE`) for an account MiConnect lacks or that
-   is not duplicate-shaped; each refusal is logged. A DISMISSED flag is not deleted by an erasure
-   (it holds a MiConnect uuid and a time; deleting it would put the account back in the queue),
-   [register M1](../compliance/register-of-processing.md).
+   (409, `ALUMNI_MERGE_IN_PROGRESS`) for a duplicate an OPEN merge names, (409,
+   `ALUMNI_MERGE_ALREADY_MERGED`) for one a COMPLETED merge names, and (404 `ALUMNI_MERGE_NOT_FOUND` /
+   409 `ALUMNI_MERGE_NOT_DUPLICATE`) for an account MiConnect lacks or that is not duplicate-shaped; each
+   refusal is logged. The check and the write are ONE step: under the duplicate's advisory lock, the
+   one a mark takes before it writes its row, so a mark and a dismissal of the same duplicate never
+   both land. A DISMISSED flag is not deleted by an erasure (it holds a MiConnect uuid and a time;
+   deleting it would put the account back in the queue), [register M1](../compliance/register-of-processing.md).

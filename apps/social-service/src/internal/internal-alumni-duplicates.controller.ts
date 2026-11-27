@@ -16,9 +16,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** The most duplicates one reading may announce at once. */
 const MAX_FOUND = 200;
 
-/** A batch's id: the digest core-service names it by (a SHA-256 in hex). */
-const BATCH_ID_RE = /^[0-9a-f]{64}$/;
-
 /**
  * The Alumni duplicates queue's doors for core-service (owner, 2026-11-26: every admin queue runs
  * through the ONE mechanism of `AdminQueuesService`). Internal-only like the profile corrections':
@@ -34,32 +31,28 @@ export class InternalAlumniDuplicatesController {
    * Alumni duplicates were found (`AlumniDuplicateQueue`: a sign-in's one, a reading's backlog, a
    * retry of a notice that was not confirmed): ONE push and ONE bell row to every global admin for the
    * whole batch (`AdminQueuesService.announceAlumniDuplicates`), so a backlog found at once is
-   * never a burst on the admins' phones nor a flood in their bells. IDEMPOTENT on `batchId`: a batch
-   * already told answers `replayed` and rings nothing. A failure to write the row is a
+   * never a burst on the admins' phones nor a flood in their bells. ONCE PER DUPLICATE: only the
+   * duplicates not already told are announced (`skipped` counts the others). A failure to write the row is a
    * 500 the caller logs at ERROR and tries again - its flags are saved and counted.
    */
   @Post('alumni-duplicates-found')
   @HttpCode(200)
   async found(
     @Headers('x-internal-secret') secret: string | undefined,
-    @Body() body: { duplicateUuids?: unknown; batchId?: unknown }
-  ): Promise<{ told: number; replayed: boolean }> {
+    @Body() body: { duplicateUuids?: unknown }
+  ): Promise<{ told: number; claimed: number; skipped: number }> {
     assertInternalSecret(secret);
     const list = body?.duplicateUuids;
     if (
       !Array.isArray(list) ||
       list.length === 0 ||
       list.length > MAX_FOUND ||
-      !list.every((u) => typeof u === 'string' && UUID_RE.test(u)) ||
-      typeof body.batchId !== 'string' ||
-      !BATCH_ID_RE.test(body.batchId)
+      !list.every((u) => typeof u === 'string' && UUID_RE.test(u))
     ) {
       this.logger.warn('[ALUMNI_QUEUE] found notice refused: malformed body');
-      throw new BadRequestException(
-        `duplicateUuids must be 1 to ${MAX_FOUND} uuids and batchId a SHA-256 in hex`
-      );
+      throw new BadRequestException(`duplicateUuids must be 1 to ${MAX_FOUND} uuids`);
     }
-    return this.adminQueues.announceAlumniDuplicates(list as string[], body.batchId as string);
+    return this.adminQueues.announceAlumniDuplicates(list as string[]);
   }
 
   /**

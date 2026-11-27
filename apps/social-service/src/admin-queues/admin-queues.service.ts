@@ -162,44 +162,61 @@ export class AdminQueuesService {
 
   /**
    * Core-service found Alumni duplicates that wait for an attachment (`AlumniDuplicateQueue`, a
-   * sign-in's one or a reading's backlog - ONCE per duplicate, never again): EVERY global admin is
-   * told - no one asked for it, so no one is excluded - by ONE push and ONE bell row for the whole
-   * batch, however many it holds (a backlog found at once is not a flood in every admin's bell). The
-   * row is keyed on the batch's first duplicate, lists the batch in its `meta` and stays while ANY
-   * of them still waits (`BELL_ROW_GATE`); the live count carries the rest.
+   * sign-in's flush or a reading's backlog - ONCE per duplicate, never again): EVERY global admin is
+   * told - no one asked for it, so no one is excluded - by ONE push and ONE bell row for the batch,
+   * however many it holds (a backlog found at once is not a flood in every admin's bell). The row is
+   * keyed on the batch's first duplicate, lists the batch in its `meta` and stays while ANY of them
+   * still waits (`BELL_ROW_GATE`); the live count carries the rest.
    *
-   * IDEMPOTENT ON `batchId` (`alumni_duplicate_announcements`): a batch already told is not told
-   * again, so an answer lost on the way never rings the admins' phones twice. The ledger row is
-   * written AFTER the notice, so a crash in between tells again rather than never. Throws on a failed
-   * write: the internal caller keeps the notice owed and tells again at its next reading.
-   * Answers how many admins have the bell row (0 for a replay).
+   * ONCE PER DUPLICATE, whatever the caller does (`alumni_duplicate_announcements`, ONE ROW PER
+   * DUPLICATE): the duplicates are CLAIMED before anything is told - one INSERT ... ON CONFLICT DO
+   * NOTHING RETURNING - and ONLY the newly claimed are announced. A lost answer replayed, a set that
+   * grew, two flushes at once: a duplicate already claimed is never told again. A notice that throws
+   * RELEASES exactly the rows this call claimed (so a retry tells them) and is logged at error. The
+   * ledger is swept of the duplicates whose flag is gone, in the same transaction as the claim.
+   * Throws on a failed write: the internal caller keeps the notice owed. Answers how many admins have
+   * the bell row, and how many duplicates were claimed here or already told.
    */
   async announceAlumniDuplicates(
-    duplicateUuids: readonly string[],
-    batchId: string
-  ): Promise<{ told: number; replayed: boolean }> {
-    this.logger.log(
-      `[ADMIN_QUEUES] ${duplicateUuids.length} Alumni duplicate(s) to announce (batch ${batchId.slice(0, 8)})`
-    );
+    duplicateUuids: readonly string[]
+  ): Promise<{ told: number; claimed: number; skipped: number }> {
+    this.logger.log(`[ADMIN_QUEUES] ${duplicateUuids.length} Alumni duplicate(s) to announce`);
     try {
-      const known = (await this.reports.manager.query(
-        `SELECT 1 FROM alumni_duplicate_announcements WHERE "batchId" = $1`,
-        [batchId]
-      )) as unknown[];
-      if (known.length > 0) {
-        this.logger.warn(
-          `[ADMIN_QUEUES] Alumni batch ${batchId.slice(0, 8)} was already told: not told again (a lost answer was replayed)`
+      const claimed = await this.reports.manager.transaction(async (tx) => {
+        await tx.query(
+          `DELETE FROM alumni_duplicate_announcements a
+            WHERE NOT EXISTS (SELECT 1 FROM alumni_duplicate_flags f WHERE f."duplicateUuid" = a."duplicateUuid")`
         );
-        return { told: 0, replayed: true };
-      }
-      const told = await this.announce('alumni-duplicates', duplicateUuids[0], null, {
-        duplicateUuids: [...duplicateUuids],
+        return (
+          (await tx.query(
+            `INSERT INTO alumni_duplicate_announcements ("duplicateUuid")
+             SELECT unnest($1::uuid[]) ON CONFLICT DO NOTHING RETURNING "duplicateUuid"::text AS uuid`,
+            [[...duplicateUuids]]
+          )) as { uuid: string }[]
+        ).map((r) => r.uuid);
       });
-      await this.reports.manager.query(
-        `INSERT INTO alumni_duplicate_announcements ("batchId") VALUES ($1) ON CONFLICT DO NOTHING`,
-        [batchId]
-      );
-      return { told, replayed: false };
+      const skipped = new Set(duplicateUuids).size - claimed.length;
+      if (skipped > 0) {
+        this.logger.debug(
+          `[ADMIN_QUEUES] ${skipped} Alumni duplicate(s) were already told: not told again`
+        );
+      }
+      if (claimed.length === 0) return { told: 0, claimed: 0, skipped };
+      try {
+        const told = await this.announce('alumni-duplicates', claimed[0], null, {
+          duplicateUuids: claimed,
+        });
+        return { told, claimed: claimed.length, skipped };
+      } catch (err) {
+        this.logger.error(
+          `[ADMIN_QUEUES] the notice of ${claimed.length} Alumni duplicate(s) FAILED, their claim is released so the retry tells them: ${String(err)}`
+        );
+        await this.reports.manager.query(
+          `DELETE FROM alumni_duplicate_announcements WHERE "duplicateUuid" = ANY($1::uuid[])`,
+          [claimed]
+        );
+        throw err;
+      }
     } finally {
       await this.signal.changed({ queue: 'alumni-duplicates' });
     }

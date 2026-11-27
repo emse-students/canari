@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { createHash } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { socialUrl } from '../internal/service-urls';
 
@@ -12,17 +11,6 @@ const SOCIAL_TIMEOUT_MS = 5_000;
  * (`MAX_FOUND`, `internal-alumni-duplicates.controller.ts`), so a backlog goes out in batches.
  */
 export const ALUMNI_FOUND_BATCH = 200;
-
-/**
- * A batch's id for social-service's replay guard: a digest of its sorted uuids, so the SAME batch
- * sent again (an answer lost on the way) is told ONCE. A batch that gained or lost a duplicate in
- * between is another batch: at worst one extra notice, never a notice lost.
- */
-export function batchIdOf(duplicateUuids: readonly string[]): string {
-  return createHash('sha256')
-    .update([...duplicateUuids].sort().join(','))
-    .digest('hex');
-}
 
 /** What {@link AlumniDuplicateQueue.flag} did with a duplicate. */
 export type FlagOutcome = 'created' | 'reopened' | 'known' | 'failed';
@@ -87,11 +75,13 @@ export class AlumniDuplicateQueue {
    * "Pas un doublon": the admins' TERMINAL answer. The row is written if the duplicate was never
    * flagged, resolved either way, and `dismissedAt` is set once and never cleared - {@link flag}
    * and {@link reconcile} leave it alone for good. Throws on a failed write (the admin acted and
-   * must be told it did not land); the badges are told only after it did.
+   * must be told it did not land); the badges are told only after it did. With `tx` the write joins
+   * the caller's transaction (the dismissal's check and write are ONE step, `AlumniMergeService.dismiss`)
+   * and the caller tells the badges ({@link changed}) after its commit.
    */
-  async dismiss(duplicateUuid: string): Promise<void> {
+  async dismiss(duplicateUuid: string, tx?: { query: DataSource['query'] }): Promise<void> {
     this.logger.log(`[ALUMNI_QUEUE] dismissing duplicate ${duplicateUuid.slice(0, 8)}`);
-    await this.dataSource.query(
+    await (tx ?? this.dataSource).query(
       `INSERT INTO alumni_duplicate_flags ("duplicateUuid", "resolvedAt", "dismissedAt")
        VALUES ($1, now(), now())
        ON CONFLICT ("duplicateUuid") DO UPDATE
@@ -99,7 +89,7 @@ export class AlumniDuplicateQueue {
              "resolvedAt" = COALESCE(alumni_duplicate_flags."resolvedAt", now())`,
       [duplicateUuid]
     );
-    await this.changed();
+    if (!tx) await this.changed();
   }
 
   /**
@@ -265,7 +255,7 @@ export class AlumniDuplicateQueue {
       try {
         await axios.post(
           socialUrl('internal/notifications/alumni-duplicates-found'),
-          { duplicateUuids: batch, batchId: batchIdOf(batch) },
+          { duplicateUuids: batch },
           { headers: { 'X-Internal-Secret': this.internalSecret }, timeout: SOCIAL_TIMEOUT_MS }
         );
       } catch (err) {

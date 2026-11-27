@@ -251,18 +251,59 @@ describe('AlumniMergeService and the admin queue', () => {
   describe('"Pas un doublon" (dismiss) refuses what it must not hide', () => {
     it('dismisses an Alumni-shaped duplicate no merge names', async () => {
       await make([DUP, TARGET]).service.dismiss(DUP_UUID);
-      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID);
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.anything());
     });
 
-    it('refuses (409, in progress) a duplicate a merge that is not cancelled names, and writes nothing', async () => {
-      const query = jest.fn(async (sql: string) =>
-        sql.includes('FROM alumni_merges') && sql.includes('"cancelledAt" IS NULL') ? [{}] : []
-      );
-      await expect(make([DUP, TARGET], query).service.dismiss(DUP_UUID)).rejects.toMatchObject({
-        status: 409,
-        response: { code: 'ALUMNI_MERGE_IN_PROGRESS' },
-      });
+    it('refuses (409, in progress) a duplicate an OPEN merge names, and (409, already merged) one a COMPLETED merge names - writing nothing', async () => {
+      const rowsOf = (completedAt: Date | null) =>
+        jest.fn(async (sql: string) =>
+          sql.includes('SELECT "completedAt" FROM alumni_merges') ? [{ completedAt }] : []
+        );
+      await expect(
+        make([DUP, TARGET], rowsOf(null)).service.dismiss(DUP_UUID)
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_IN_PROGRESS' } });
+      await expect(
+        make([DUP, TARGET], rowsOf(new Date())).service.dismiss(DUP_UUID)
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_ALREADY_MERGED' } });
       expect(queue.dismiss).not.toHaveBeenCalled();
+      expect(queue.changed).not.toHaveBeenCalled();
+    });
+
+    it('the check and the write are ONE step: under the duplicate advisory lock, the one a mark takes, and on the same transaction', async () => {
+      const query = jest.fn(async () => []);
+      await make([DUP, TARGET], query).service.dismiss(DUP_UUID);
+      const sqls = query.mock.calls.map((c) => String((c as unknown[])[0]));
+      expect(sqls[0]).toContain('pg_advisory_xact_lock');
+      expect((query.mock.calls[0] as unknown[])[1]).toEqual([`alumni-merge-duplicate:${DUP_UUID}`]);
+      expect(sqls[1]).toContain('FROM alumni_merges');
+      // The write joins the transaction (its manager is passed), the badges follow the commit.
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.objectContaining({ query }));
+      expect(queue.changed).toHaveBeenCalledTimes(1);
+    });
+
+    it('a mark takes the SAME advisory lock before it writes its row', async () => {
+      const query = jest.fn(async (sql: string) =>
+        sql.includes('INSERT INTO alumni_merges') ? [{ id: 'row-1' }] : []
+      );
+      const { service } = make([DUP, TARGET], query);
+      await (
+        service as unknown as { openMerge: (t: string, m: unknown) => Promise<string> }
+      ).openMerge('t', {
+        actorId: 'a',
+        dup: DUP,
+        target: TARGET,
+        targetUserId: null,
+        held: {},
+        mode: 'auto',
+        reason: null,
+      });
+      const calls = query.mock.calls.map((c) => [String((c as unknown[])[0]), (c as unknown[])[1]]);
+      const lock = calls.findIndex(
+        ([, p]) => Array.isArray(p) && p[0] === `alumni-merge-duplicate:${DUP_UUID}`
+      );
+      const insert = calls.findIndex(([sql]) => String(sql).includes('INSERT INTO alumni_merges'));
+      expect(lock).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeLessThan(insert);
     });
 
     it('refuses (404) an account MiConnect does not have, and (409) one that is not duplicate-shaped', async () => {

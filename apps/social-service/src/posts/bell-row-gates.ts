@@ -235,8 +235,9 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   // duplicate it is keyed on.
   admin_alumni_duplicate: ({ reader, target, meta }) => `(${isGlobalAdminSql(reader)}
     AND EXISTS (SELECT 1 FROM alumni_duplicate_flags bell_adf
-      WHERE (bell_adf."duplicateUuid"::text = (${target})::text
-          OR jsonb_exists(COALESCE(${meta}->'duplicateUuids', '[]'::jsonb), bell_adf."duplicateUuid"::text))
+      WHERE bell_adf."duplicateUuid" = ANY(
+          ARRAY(SELECT jsonb_array_elements_text(COALESCE(${meta}->'duplicateUuids', '[]'::jsonb))::uuid)
+          || ARRAY[(${target})::uuid])
         AND ${alumniDuplicatePendingSql('bell_adf')}))`,
   // The question put to a form left open (owner, 2026-11-21): shown to the recipients the sweep
   // chose (`staleOpenRecipients`: the MANAGE_FORMS holders of an association's form, the owner of a

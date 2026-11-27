@@ -1,11 +1,7 @@
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
-import {
-  ALUMNI_FOUND_BATCH,
-  AlumniDuplicateQueue,
-  batchIdOf,
-} from './alumni-duplicate-queue.service';
+import { ALUMNI_FOUND_BATCH, AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 
 jest.mock('axios');
 
@@ -98,7 +94,7 @@ const posted = () => (axios.post as jest.Mock).mock.calls.map((c) => c[0] as str
 const foundCalls = () =>
   (axios.post as jest.Mock).mock.calls
     .filter((c) => String(c[0]).includes('alumni-duplicates-found'))
-    .map((c) => c[1] as { duplicateUuids: string[]; batchId: string });
+    .map((c) => c[1] as { duplicateUuids: string[] });
 const found = () => foundCalls().map((b) => b.duplicateUuids);
 const NOW = () => new Date(Date.now() + 1000);
 
@@ -118,6 +114,14 @@ describe('AlumniDuplicateQueue', () => {
     await queue.flag(DUP);
     expect(found()).toEqual([[DUP]]);
     expect(flags[0].announced).toBe(true);
+  });
+
+  it('a dismissal joined to the caller transaction writes on IT and leaves the badges to the caller', async () => {
+    const { queue } = make();
+    const tx = { query: jest.fn(async () => []) };
+    await queue.dismiss(DUP, tx as never);
+    expect(tx.query).toHaveBeenCalledTimes(1);
+    expect(posted()).toEqual([]);
   });
 
   it('reads the database clock for a reading start', async () => {
@@ -195,21 +199,6 @@ describe('AlumniDuplicateQueue', () => {
     await queue.flag(OTHER);
     expect(found().map((b) => b.length)).toEqual([ALUMNI_FOUND_BATCH]);
     expect(flags.filter((f) => !f.announced).length).toBe(51);
-  });
-
-  it('names each batch by a digest of its sorted uuids, the same batch by the same id, so social can tell a replay from news', async () => {
-    const first = make([
-      { uuid: DUP, announced: false },
-      { uuid: OTHER, announced: false },
-    ]);
-    (axios.post as jest.Mock).mockRejectedValueOnce(new Error('answer lost'));
-    await first.queue.reconcile([DUP, OTHER], NOW());
-    await first.queue.reconcile([DUP, OTHER], NOW());
-    const [a, b] = foundCalls();
-    expect(a.batchId).toBe(b.batchId);
-    expect(a.batchId).toMatch(/^[0-9a-f]{64}$/);
-    expect(a.batchId).toBe(batchIdOf([OTHER, DUP]));
-    expect(batchIdOf([DUP])).not.toBe(batchIdOf([DUP, OTHER]));
   });
 
   it('keeps the flag a merge stands for out of the resolution, whatever the page lists', async () => {
