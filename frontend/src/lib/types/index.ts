@@ -221,7 +221,7 @@ export interface ChatMessage {
   /**
    * A salon row whose `@tous` the SERVER vouched for (see {@link AddMessageToChatOptions.everyoneVouched}):
    * the bubble draws that token as a call only then, as plain text otherwise (`everyoneMentionOf`).
-   * Memory only: a salon row is read back from the server on every open. Absent is not vouched.
+   * Stored with the row (sealed in its payload), so a page drawn from the device copy already knows it. Absent is not vouched.
    */
   everyoneVouched?: boolean;
   /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */

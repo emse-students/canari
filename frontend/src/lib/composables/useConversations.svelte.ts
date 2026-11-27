@@ -844,6 +844,7 @@ export function useConversations() {
       ...(m.isEdited ? { isEdited: true } : {}),
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
+      ...(m.everyoneVouched ? { everyoneVouched: true } : {}),
     }));
     // THE PARENT ROW FIRST: the salon listing builds a salon's conversation in MEMORY only
     // (`useChannelWorkspaces`), so the row of a salon this device meets for the first time is not on
