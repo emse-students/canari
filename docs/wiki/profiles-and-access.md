@@ -1004,8 +1004,8 @@ claim and calls the editor account.
   promo of the cursus (two cursus: the first one due reminds; no cursus: never). Its button opens
   `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources` and records nothing; the cross records the help
   `prompt-alumni-link` in `help_seen`, so it never returns on any device (session-only before). A
-  test or bench account is NOT exempted: no profile value means "test" today, see
-  [the backlog entry](backlog.d/alumni-link-card-test-category.md). The blocking half from 1 February P+2 and the
+  bench account dismisses the card once: the dismissal is per account, on the server, so no
+  "test" category and no MiConnect change is needed (owner, 2026-11-27). The blocking half from 1 February P+2 and the
   2027-02-01 grace are MiConnect's stage, not Canari's.
 - **The duplicates list (D47)** is `/admin/alumni-duplicates` (global admin, beside the profile
   corrections), served by `GET /users/admin/alumni-duplicates` (`AlumniMergeService.listDuplicates`):
