@@ -3,9 +3,8 @@ import * as crypto from 'crypto';
 
 /**
  * THE ONE CREDENTIAL LE CERCLE PRESENTS TO CANARI: `X-Api-Key`, matched against `CERCLE_API_KEY`
- * (Le Cercle's `CANARI_API_KEY`). Read at each call, so a rotated key needs no rebuild of a
- * controller. Shared by the two Cercle -> Canari routes (`cotisant-status`, `cercle/topup-credited`)
- * so they cannot drift on how a key is compared.
+ * (Le Cercle's `CANARI_API_KEY`), the gate of the read-only `cotisant-status`. Read at each call,
+ * so a rotated key needs no restart, and kept out of the controller so it is tested on its own.
  *
  * Timing-safe, and CLOSED on an unset key: an empty expected value refuses everything.
  *

@@ -2866,7 +2866,8 @@ export async function listWebhookFailures(associationId: string): Promise<Webhoo
 
 /**
  * Lists the PARKED Cercle deliveries (requires MANAGE_PRODUCTS): top-ups Le Cercle accepted for a
- * member who has not signed in there yet, and credits at their first sign-in. Shown, never retried.
+ * member who has not signed in there yet, and credits at their first sign-in. The server re-sends each
+ * on a slow cadence and settles it delivered once Le Cercle answers 200; until then it is listed here.
  */
 export async function listParkedDeliveries(associationId: string): Promise<WebhookDelivery[]> {
   return request<WebhookDelivery[]>(
@@ -2878,11 +2879,11 @@ export async function listParkedDeliveries(associationId: string): Promise<Webho
 export const LONG_PARKED_DAYS = 7;
 
 /**
- * Whole days a parked delivery has waited at `now`: since its park, which is its last attempt (the
- * send Le Cercle answered 202), or its creation for a row that carries none. Never negative.
+ * Whole days a parked delivery has waited at `now`, since the payment (`createdAt`) - the same age
+ * the daily report reads. Not the last attempt, which every re-send moves. Never negative.
  */
 export function parkedAgeDays(delivery: WebhookDelivery, now: number): number {
-  const since = Date.parse(delivery.lastAttemptAt ?? delivery.createdAt);
+  const since = Date.parse(delivery.createdAt);
   return Math.max(0, Math.floor((now - since) / (24 * 60 * 60 * 1000)));
 }
 

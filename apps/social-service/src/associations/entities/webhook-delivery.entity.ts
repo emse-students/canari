@@ -8,8 +8,13 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
  * and left the original `failed` one in the list, and a failed retry simply added a second failure.
  *
  * `parked` is a delivery the Cercle ACCEPTED for a member who has never signed in there: it holds the
- * top-up and credits it at their first sign-in. Terminal on this side - never retried, never in the
- * failure list, and garbage-collected like `delivered`.
+ * top-up and credits it at their first sign-in. Not a failure - off the failure ladder and out of the
+ * failure list - but not settled either: the sweep re-sends it every `CERCLE_PARKED_RESEND_MS` until
+ * the Cercle answers 200 (the credit is on the balance, new or duplicate), which makes it
+ * `delivered`. Never garbage-collected while parked.
+ *
+ * Every status change is a CONDITIONAL write (`ProductsService.settleDelivery`): nothing ever writes
+ * over `delivered`.
  *
  * Failures are retried automatically on a backoff (`nextAttemptAt`), and manually from the admin
  * dashboard once the reason has been fixed.

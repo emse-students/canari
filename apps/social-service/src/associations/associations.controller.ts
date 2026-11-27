@@ -1992,7 +1992,8 @@ export class AssociationsController {
 
   /**
    * Lists the PARKED Cercle deliveries: accepted by Le Cercle for a member who has not signed in
-   * there yet, credited at their first sign-in. Shown, never retried. Requires MANAGE_PRODUCTS flag.
+   * there yet, credited at their first sign-in; re-sent slowly by the sweep until Le Cercle answers it
+   * credited. Requires MANAGE_PRODUCTS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)

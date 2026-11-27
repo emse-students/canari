@@ -193,6 +193,19 @@ const CERCLE_AUTO_RETRY_BACKOFF = [
   24 * 3_600_000,
 ];
 
+/**
+ * How long a PARKED delivery waits before the sweep sends it again (ms). A park ends only by Le
+ * Cercle's own answer to a re-send - `200` (new or duplicate) once the member's first sign-in has
+ * credited it - so this cadence bounds how long a credited top-up still reads as waiting here, and
+ * nothing else. Six hours: well inside the daily `[CERCLE_PARKED]` report's seven days, so a row
+ * that report names has really not been credited as of a few hours ago; at most four requests a day
+ * per parked row, and parked rows are the few members who paid before ever opening Le Cercle.
+ */
+export const CERCLE_PARKED_RESEND_MS = 6 * 3_600_000;
+
+/** The statuses a delivery attempt may settle: everything but `delivered`, which is final. */
+const UNSETTLED_DELIVERY: WebhookDelivery['status'][] = ['pending', 'failed', 'parked'];
+
 /** How many due deliveries one scheduler tick takes, so a backlog cannot stall the service. */
 const CERCLE_AUTO_RETRY_BATCH = 20;
 
@@ -4843,6 +4856,9 @@ export class ProductsService {
     delivery: WebhookDelivery,
     delays: number[]
   ): Promise<boolean> {
+    // What the row was when this run read it: a parked row stays parked whatever a re-send meets,
+    // short of Le Cercle's 200 - its money is held there, it is not a failure to ladder.
+    const wasParked = delivery.status === 'parked';
     let lastError = '';
 
     for (let i = 0; i < delays.length; i++) {
@@ -4855,17 +4871,24 @@ export class ProductsService {
       delivery.lastAttemptAt = new Date();
 
       const outcome = await this.sendCercleWebhook(product, delivery);
-      if (outcome.kind !== 'failed') {
+      if (outcome.kind === 'delivered') {
+        // Le Cercle's 200, new or duplicate: the money is on the balance. Final.
+        await this.settleDelivery(delivery, UNSETTLED_DELIVERY, {
+          status: 'delivered',
+          lastError: null,
+          nextAttemptAt: null,
+        });
+        return true;
+      }
+      if (outcome.kind === 'parked') {
         // `parked` is a state of its own, not `delivered`: the money is NOT on the member's balance
-        // yet, and the daily reading of "what reached the Cercle" must be able to tell the two.
-        delivery.status = outcome.kind;
-        delivery.lastError = null;
-        delivery.nextAttemptAt = null;
-        await this.deliveryRepo.save(delivery);
-        this.logger.log(
-          `[CERCLE] webhook ${outcome.kind}${outcome.kind === 'parked' ? ' (member not yet on the Cercle, credited at their first sign-in)' : ''}: product=${product.id.slice(0, 8)} intent=${delivery.paymentIntentId} attempts=${delivery.attemptCount}`
-        );
-
+        // yet. Sent again on the slow cadence until Le Cercle answers 200 - its answer, never a
+        // clock, is what ends the park.
+        await this.settleDelivery(delivery, UNSETTLED_DELIVERY, {
+          status: 'parked',
+          lastError: null,
+          nextAttemptAt: new Date(Date.now() + CERCLE_PARKED_RESEND_MS),
+        });
         return true;
       }
 
@@ -4873,19 +4896,74 @@ export class ProductsService {
       this.logger.warn(`[CERCLE] webhook attempt ${delivery.attemptCount} failed: ${lastError}`);
     }
 
-    delivery.status = 'failed';
-    delivery.lastError = lastError;
-    delivery.nextAttemptAt = this.nextAutoRetryAt(delivery.autoRetryCount);
-    await this.deliveryRepo.save(delivery);
-    this.logger.error(
-      `[CERCLE] delivery failed for intent=${delivery.paymentIntentId}: ${
-        delivery.nextAttemptAt
-          ? `next automatic attempt at ${delivery.nextAttemptAt.toISOString()}`
-          : 'automatic retries exhausted, needs a human'
-      }`
-    );
+    if (wasParked) {
+      // A re-send that did not get through leaves the park as it is: the top-up is held by Le Cercle
+      // (it answered 202 before), so it is neither lost nor a failure for a human. Sent again at the
+      // next slow step; a park that never ends is what the daily `[CERCLE_PARKED]` WARN names.
+      await this.settleDelivery(delivery, ['parked'], {
+        status: 'parked',
+        lastError,
+        nextAttemptAt: new Date(Date.now() + CERCLE_PARKED_RESEND_MS),
+      });
+      return false;
+    }
+
+    const nextAttemptAt = this.nextAutoRetryAt(delivery.autoRetryCount);
+    const written = await this.settleDelivery(delivery, ['pending', 'failed'], {
+      status: 'failed',
+      lastError,
+      nextAttemptAt,
+    });
+    if (written) {
+      this.logger.error(
+        `[CERCLE] delivery failed for intent=${delivery.paymentIntentId}: ${
+          nextAttemptAt
+            ? `next automatic attempt at ${nextAttemptAt.toISOString()}`
+            : 'automatic retries exhausted, needs a human'
+        }`
+      );
+    }
 
     return false;
+  }
+
+  /**
+   * THE ONE WRITE OF A DELIVERY'S STATUS, CONDITIONAL ON WHAT IT IS EXPECTED TO BE:
+   * `UPDATE webhook_deliveries SET ... WHERE id = $1 AND status IN (<from>)`. A full-entity save of
+   * a row read before an attempt could write `parked` or `failed` over the `delivered` another
+   * attempt had just written - the manual retry and the sweep overlap on the same row - and
+   * `delivered` is never in any `from`, so nothing overwrites it.
+   *
+   * The attempt's counters travel in the same statement. On a match the in-memory row takes the
+   * written values; on NONE it is left as read, and the miss is said at WARN: expected when two
+   * attempts overlapped or an admin deleted the row meanwhile, and the row is then whatever the
+   * other writer made it.
+   *
+   * @returns whether the row was written
+   */
+  private async settleDelivery(
+    delivery: WebhookDelivery,
+    from: WebhookDelivery['status'][],
+    change: Pick<WebhookDelivery, 'status' | 'lastError' | 'nextAttemptAt'>
+  ): Promise<boolean> {
+    const fields = {
+      ...change,
+      attemptCount: delivery.attemptCount,
+      autoRetryCount: delivery.autoRetryCount,
+      lastAttemptAt: delivery.lastAttemptAt,
+    };
+    const result = await this.deliveryRepo.update({ id: delivery.id, status: In(from) }, fields);
+    if (!result.affected) {
+      this.logger.warn(
+        `[CERCLE] delivery ${delivery.id.slice(0, 8)} intent=${delivery.paymentIntentId}: not set ${change.status} - its status was no longer ${from.join('/')} (another attempt settled it, or it was deleted); left as the other writer made it`
+      );
+      return false;
+    }
+    Object.assign(delivery, fields);
+    this.logger.log(
+      `[CERCLE] webhook ${change.status}${change.status === 'parked' ? ` (member not yet on the Cercle; sent again at ${change.nextAttemptAt?.toISOString()})` : ''}: intent=${delivery.paymentIntentId} attempts=${delivery.attemptCount}`
+    );
+    return true;
   }
 
   /**
@@ -4930,57 +5008,19 @@ export class ProductsService {
 
   /**
    * The association's PARKED deliveries: top-ups Le Cercle accepted (202) for a member who has never
-   * signed in there, and holds until their first sign-in. Nothing on this side moves them on, so they
-   * are listed for the admin to SEE (with their age, `lastAttemptAt` being the moment of the park),
-   * never retried, and never swept by the GC (`purgeDeliveredWebhooks`).
+   * signed in there, and holds until their first sign-in. The sweep re-sends each on a slow cadence
+   * (`CERCLE_PARKED_RESEND_MS`) until Le Cercle answers 200, which settles it `delivered`; until then
+   * it is listed for the admin to SEE, with its age since the payment (`createdAt`), and never swept
+   * by the GC (`purgeDeliveredWebhooks`).
    */
   async listParkedDeliveries(associationId: string): Promise<FailedDelivery[]> {
     return this.listDeliveriesInState(associationId, 'parked');
   }
 
   /**
-   * LE CERCLE SAYS IT CREDITED THIS TOP-UP (`POST /api/public/cercle/topup-credited`): a parked
-   * delivery becomes `delivered` - the one way Canari learns the end of a park, sent by Le Cercle
-   * when the member's first sign-in applies it. Keyed on the payment intent, the key both sides
-   * share; idempotent: a row already `delivered` is answered as it is.
-   *
-   * A `failed` or `pending` row for the same payment is ALSO settled: Le Cercle holds the credit, so
-   * a further retry could only be answered as a duplicate. Said at WARN, since this side believed
-   * otherwise. An unknown intent changes nothing and is said at WARN too - it names no top-up this
-   * service sent.
-   *
-   * @returns the row's status after the call, or `unknown`
-   */
-  async markCercleTopupCredited(
-    paymentIntentId: string
-  ): Promise<{ status: WebhookDelivery['status'] | 'unknown' }> {
-    const delivery = await this.deliveryRepo.findOne({ where: { paymentIntentId } });
-    if (!delivery) {
-      this.logger.warn(
-        `[CERCLE] credited notice for an unknown top-up intent=${paymentIntentId} - nothing changed`
-      );
-      return { status: 'unknown' };
-    }
-    if (delivery.status === 'delivered') {
-      this.logger.log(
-        `[CERCLE] credited notice repeated: intent=${paymentIntentId} already delivered`
-      );
-      return { status: 'delivered' };
-    }
-    const was = delivery.status;
-    delivery.status = 'delivered';
-    delivery.nextAttemptAt = null;
-    delivery.lastError = null;
-    await this.deliveryRepo.save(delivery);
-    const line = `[CERCLE] credited by Le Cercle at the member's first sign-in: intent=${paymentIntentId} ${was} -> delivered`;
-    if (was === 'parked') this.logger.log(line);
-    else this.logger.warn(`${line} (this side had it ${was})`);
-    return { status: 'delivered' };
-  }
-
-  /**
-   * How many deliveries are parked, and how many of them since before `olderThan` - the daily
+   * How many deliveries are parked, and how many of them were paid before `olderThan` - the daily
    * report's reading (`CercleDeliveryScheduler.reportLongParked`). Counts only: no member is named.
+   * Aged by `createdAt`, the payment: `lastAttemptAt` moves at every re-send.
    */
   async countParkedDeliveries(olderThan: Date): Promise<{ parked: number; old: number }> {
     const parked = await this.deliveryRepo
@@ -4990,7 +5030,7 @@ export class ProductsService {
     const old = await this.deliveryRepo
       .createQueryBuilder('d')
       .where("d.status = 'parked'")
-      .andWhere('COALESCE(d.lastAttemptAt, d.createdAt) < :olderThan', { olderThan })
+      .andWhere('d.createdAt < :olderThan', { olderThan })
       .getCount();
     return { parked, old };
   }
@@ -5079,7 +5119,8 @@ export class ProductsService {
     );
     await this.runDeliveryAttempts(product, delivery, [0]);
 
-    return delivery;
+    // As stored: a write this retry lost to another attempt left the row as that one made it.
+    return (await this.deliveryRepo.findOne({ where: { id: deliveryId } })) ?? delivery;
   }
 
   /**
@@ -5092,35 +5133,46 @@ export class ProductsService {
    * @returns how many were delivered, out of how many were due
    */
   async retryDueWebhookDeliveries(): Promise<{ delivered: number; attempted: number }> {
+    // A failure on its ladder, or a park due for its slow re-send. A parked row with no step at all
+    // is due too: one parked before the re-send existed (#4177) carries none, and must not wait for
+    // ever on a step nobody will write.
     const due = await this.deliveryRepo
       .createQueryBuilder('d')
-      .where("d.status = 'failed'")
-      .andWhere('d.nextAttemptAt IS NOT NULL')
-      .andWhere('d.nextAttemptAt <= :now', { now: new Date() })
-      .orderBy('d.nextAttemptAt', 'ASC')
+      .where(
+        "(d.status = 'failed' AND d.nextAttemptAt IS NOT NULL AND d.nextAttemptAt <= :now) OR (d.status = 'parked' AND (d.nextAttemptAt IS NULL OR d.nextAttemptAt <= :now))",
+        { now: new Date() }
+      )
+      .orderBy('d.nextAttemptAt', 'ASC', 'NULLS FIRST')
       .take(CERCLE_AUTO_RETRY_BATCH)
       .getMany();
 
     if (due.length === 0) return { delivered: 0, attempted: 0 };
 
-    this.logger.log(`[CERCLE] ${due.length} failed deliveries due for an automatic retry`);
+    this.logger.log(
+      `[CERCLE] ${due.length} deliveries due for an automatic retry or a parked re-send`
+    );
 
     let delivered = 0;
     for (const delivery of due) {
       const product = await this.productRepo.findOne({ where: { id: delivery.productId } });
       if (!product?.webhookUrl || !product.webhookSecret) {
-        delivery.nextAttemptAt = null;
-        delivery.lastError = 'Product webhook is not configured';
-        await this.deliveryRepo.save(delivery);
+        // A failure leaves the ladder for a human; a park keeps its slow step, since its money is
+        // held by Le Cercle and the daily report watches it.
+        const parked = delivery.status === 'parked';
+        await this.settleDelivery(delivery, [delivery.status], {
+          status: delivery.status,
+          lastError: 'Product webhook is not configured',
+          nextAttemptAt: parked ? new Date(Date.now() + CERCLE_PARKED_RESEND_MS) : null,
+        });
         this.logger.warn(
-          `[CERCLE] delivery ${delivery.id.slice(0, 8)} taken off the ladder: no webhook configured`
+          `[CERCLE] delivery ${delivery.id.slice(0, 8)} not sent: no webhook configured${parked ? ' - still parked' : ' - taken off the ladder'}`
         );
         continue;
       }
 
       // Counted BEFORE the attempt, so a crash mid-retry cannot leave the row looping on the same
-      // backoff step forever.
-      delivery.autoRetryCount += 1;
+      // backoff step forever. A park is not on the failure ladder, so it does not count.
+      if (delivery.status === 'failed') delivery.autoRetryCount += 1;
       if (await this.runDeliveryAttempts(product, delivery, [0])) {
         delivered += 1;
       }
@@ -5148,7 +5200,14 @@ export class ProductsService {
       throw new BadRequestException('Only a failed delivery can be deleted');
     }
 
-    await this.deliveryRepo.remove(delivery);
+    // Conditional, like every status write: a retry that delivered it since the read keeps it.
+    const result = await this.deliveryRepo.delete({ id: deliveryId, status: 'failed' });
+    if (!result.affected) {
+      this.logger.warn(
+        `[CERCLE] failed delivery ${deliveryId.slice(0, 8)} not deleted: it was settled or deleted meanwhile`
+      );
+      throw new BadRequestException('Only a failed delivery can be deleted');
+    }
     this.logger.log(
       `[CERCLE] deleted failed delivery ${deliveryId.slice(0, 8)} intent=${delivery.paymentIntentId}`
     );

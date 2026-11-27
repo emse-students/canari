@@ -61,7 +61,6 @@ roster's.
 | `GET /api/public/posts/:id/preview`, `/preview-image` | **kept - owner decision** | the link preview of one shared association post |
 | `GET /api/public/forms/:id`, `POST .../submit`, `POST .../receipts/confirm`, `POST .../receipts/switch-to-cash` | kept - capability | a form its association chose to make public, answered by a guest on its shared link; the reply is an allowlist naming no owner and no association ([forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)); the receipt routes take the guest's RECEIPT and nothing else ([cash switch](frontend/modules/forms.md#a-failed-card-payment-is-settled-in-person-instead-owner-decision-of-2026-11-23)) |
 | `GET /api/public/cotisant-status` | kept - not anonymous | Le Cercle's server-to-server check, refused without its API key |
-| `POST /api/public/cercle/topup-credited` | kept - not anonymous | Le Cercle's server-to-server notice that it credited a parked top-up, refused without the same API key; it can only settle a Cercle delivery as delivered ([cotisations](cotisations.md#outbound-canari---cercle-balance_topup-webhook)) |
 | `GET /api/external/profile/:sub` | kept - not anonymous | Sky's server-to-server read, refused without its API key |
 | `GET /api/bookings/:bookingId/calendar.ics` | kept - capability | an HMAC bound to one of the booking's people |
 | `GET /api/media/public/:id` | kept - capability | association logos and group/community pictures, by unguessable id |

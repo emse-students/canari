@@ -1212,26 +1212,35 @@ product's `webhookUrl`:
   the first sign-in ([Le Cercle side](https://gitlab.emse.fr/rootz/le-cercle) `canari-integration.md`,
   "A top-up for a member not yet here"). Canari records the row as **`parked`**, a state of its
   own rather than `delivered`: the money is not yet on the balance, and a reading of "what reached
-  the Cercle" must be able to tell the two apart. It is terminal here - `nextAttemptAt` null, never
-  retried, not in the `/admin/cercle` failure list. A `404`
+  the Cercle" must be able to tell the two apart. It is off the failure ladder and out of the
+  `/admin/cercle` failure list, and re-sent slowly until it ends (below). A `404`
   stays a failure: it now means a route or host that is not the receiver.
-- **A parked top-up is SEEN, not swept (2026-11-27, review of #4177).** Nothing on this side moves
-  a `parked` row on - Le Cercle never says when the credit lands - so a member who never signs in
-  there would leave paid money waiting where nobody looks. So `/admin/cercle` lists the parked rows
-  in their own section (`GET /associations/:id/webhook-parked`), each with its age since the park
-  (`lastAttemptAt`), amber past `LONG_PARKED_DAYS` (7); the weekly GC never deletes them; and
+- **A park ends by Le Cercle's answer to a re-send (2026-11-27, review of #4177).** The sweep
+  (`CercleDeliveryScheduler`, every 5 minutes) also picks `parked` rows whose `nextAttemptAt` is due
+  - or null, as rows parked before this carry - and re-sends the SAME signed payload and payment
+  intent: `202` (still parked, a duplicate there) keeps the row parked with its next step
+  `CERCLE_PARKED_RESEND_MS` (6 h) on; `200`, new or duplicate (the first sign-in applied it), settles
+  it `delivered`. A re-send that does not get through keeps the park, with its `lastError`: the money
+  is held there, so it is never laddered as a failure. Termination comes from Le Cercle's answer,
+  never from a clock; the six hours only bound how long a credited top-up still reads as waiting,
+  well inside the report's seven days, at four requests a day per parked row. Le Cercle never calls
+  Canari for this (a push sent once, after its pending row was deleted, could not be recovered).
+- **Every status change is conditional** (`ProductsService.settleDelivery`):
+  `UPDATE ... SET status = $new WHERE id = $1 AND status IN (<expected>)`, the counters in the same
+  statement. A manual retry and the sweep can hold the same row; a full-entity save of a stale copy
+  wrote `parked` or `failed` over `delivered`. `delivered` is in no expected set, so nothing
+  overwrites it; a write matching no row is said at WARN (another attempt settled it, or it was
+  deleted) and leaves the row as that writer made it. The delete of a failed row is conditional the
+  same way.
+- **A parked top-up is SEEN, not swept.** `/admin/cercle` lists the parked rows
+  in their own section (`GET /associations/:id/webhook-parked`), each with its age since the payment
+  (`createdAt`; `lastAttemptAt` moves at every re-send), amber past `LONG_PARKED_DAYS` (7); the weekly
+  GC never deletes them; and
   `CercleDeliveryScheduler.reportLongParked` prints one line daily at 03:25, counts only
   (`[CERCLE_PARKED] parked=N older_than_7d=M`): `log` at zero, `warn` while any has waited longer,
   `error` when it cannot count. The seven days are a reading threshold, not a timeout: nothing is
-  retried or moved when they elapse.
-- **Le Cercle says when a park ends** (`POST /api/public/cercle/topup-credited`, body
-  `{ "paymentIntentId" }`, `X-Api-Key: <CERCLE_API_KEY>` - the key of `cotisant-status`, the only
-  credential Le Cercle holds for Canari; same throttle). Le Cercle calls it right after the
-  first-sign-in transaction that credits the parked top-up commits, best-effort and logged on
-  failure; `ProductsService.markCercleTopupCredited` turns the row `delivered`, idempotently (a
-  `failed` row for the same payment too, at WARN). Without it a credited park stayed "waiting" on
-  the admin page and in the 7-day line for ever - a false report. A lost notice loses nothing: the
-  row stays parked and the 7-day WARN then names a wait worth checking on Le Cercle's side.
+  retried or moved when they elapse. Since a credited park turns `delivered` at its next re-send,
+  a row the WARN names has really not been credited.
   **Deploy order does not matter**: an old Canari reads the `202` as a 2xx (delivered), and an old
   Le Cercle keeps answering `404`, which this client still retries.
 

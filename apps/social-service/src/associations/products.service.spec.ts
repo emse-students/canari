@@ -11,7 +11,7 @@ import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
-import { ProductsService } from './products.service';
+import { CERCLE_PARKED_RESEND_MS, ProductsService } from './products.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { ProductCheckout } from './entities/product-checkout.entity';
@@ -215,6 +215,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       }),
       findOne: jest.fn(() => Promise.resolve(lastDelivery)),
       remove: jest.fn(() => Promise.resolve()),
+      // The conditional writes (`settleDelivery`, the delete): matched by default; a test of a lost
+      // race makes them answer from a stored row instead.
+      update: jest.fn((_criteria: any, _fields: any) => Promise.resolve({ affected: 1 })),
+      delete: jest.fn((_criteria: any) => Promise.resolve({ affected: 1 })),
       manager,
       createQueryBuilder: jest.fn(() => {
         const qb: any = {};
@@ -2287,7 +2291,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(service.deleteWebhookDelivery('other-asso', 'd1')).rejects.toThrow(
         NotFoundException
       );
-      expect(deliveryRepo.remove).not.toHaveBeenCalled();
+      expect(deliveryRepo.delete).not.toHaveBeenCalled();
     });
 
     it('refuses to delete a delivered row, which records a real credit', async () => {
@@ -2298,17 +2302,23 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(service.deleteWebhookDelivery('asso1', 'd1')).rejects.toThrow(
         BadRequestException
       );
-      expect(deliveryRepo.remove).not.toHaveBeenCalled();
+      expect(deliveryRepo.delete).not.toHaveBeenCalled();
     });
 
-    it('deletes a failed delivery of its own association', async () => {
+    it('deletes a failed delivery of its own association, only while it is still failed', async () => {
       const { service, productRepo, deliveryRepo } = makeService();
       const row = { id: 'd1', productId: 'prod1', status: 'failed', paymentIntentId: 'pi_x' };
       deliveryRepo.findOne.mockResolvedValue(row);
       productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
 
       await service.deleteWebhookDelivery('asso1', 'd1');
-      expect(deliveryRepo.remove).toHaveBeenCalledWith(row);
+      expect(deliveryRepo.delete).toHaveBeenCalledWith({ id: 'd1', status: 'failed' });
+
+      // A retry delivered it between the read and the delete: the credit's record is kept.
+      deliveryRepo.delete.mockResolvedValueOnce({ affected: 0 });
+      await expect(service.deleteWebhookDelivery('asso1', 'd1')).rejects.toThrow(
+        BadRequestException
+      );
     });
   });
 
@@ -2381,22 +2391,156 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(options.headers['X-Canari-Signature']).toBe(`sha256=${expected}`);
     });
 
-    it('a 202 from the Cercle is PARKED: accepted, off the ladder, never retried', async () => {
+    it('a 202 from the Cercle is PARKED: off the failure ladder, sent again on the slow cadence', async () => {
       // The member has not signed in to the Cercle yet. It holds the top-up and credits it at their
-      // first sign-in, so retrying would only repeat the answer and nothing needs a human.
+      // first sign-in; the slow re-send is how this side learns that.
       const { service, productRepo, deliveryRepo, httpService } = makeService();
       deliveryRepo.findOne.mockResolvedValue(failedRow());
       productRepo.findOne.mockResolvedValue(topupProduct());
       (httpService.post as jest.Mock).mockImplementation(() =>
         of({ status: 202, data: { ok: true, parked: true } })
       );
+      const before = Date.now();
 
       const updated = await service.retryWebhookDelivery('asso1', 'd1');
 
       expect(updated.status).toBe('parked');
-      expect(updated.nextAttemptAt).toBeNull();
       expect(updated.lastError).toBeNull();
+      expect(updated.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(
+        before + CERCLE_PARKED_RESEND_MS
+      );
       expect((httpService.post as jest.Mock).mock.calls).toHaveLength(1);
+    });
+
+    /** A parked row, as the sweep finds it due for its re-send. */
+    const parkedRow = (overrides: Record<string, unknown> = {}) =>
+      failedRow({
+        status: 'parked',
+        lastError: null,
+        nextAttemptAt: new Date('2026-08-04T10:00:00Z'),
+        ...overrides,
+      });
+
+    it('a parked row re-sent and answered 200 duplicate is settled delivered', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = parkedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() =>
+        of({ status: 200, data: { ok: true, duplicate: true } })
+      );
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      expect(row).toMatchObject({ status: 'delivered', nextAttemptAt: null, lastError: null });
+      expect(deliveryRepo.update).toHaveBeenCalledWith(
+        { id: 'd1', status: expect.anything() },
+        expect.objectContaining({ status: 'delivered' })
+      );
+      expect(result).toEqual({ delivered: 1, attempted: 1 });
+      // The failure ladder is not the park's: its count is untouched.
+      expect(row.autoRetryCount).toBe(0);
+    });
+
+    it('a parked row answered 202 again stays parked, its next re-send six hours on', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = parkedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() =>
+        of({ status: 202, data: { ok: true, parked: true, duplicate: true } })
+      );
+      const before = Date.now();
+
+      await service.retryDueWebhookDeliveries();
+
+      expect(row.status).toBe('parked');
+      expect(row.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + CERCLE_PARKED_RESEND_MS);
+    });
+
+    it('a parked re-send that does not get through stays parked - never failed, never laddered', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = parkedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('connect ECONNREFUSED');
+      });
+
+      await service.retryDueWebhookDeliveries();
+
+      expect(row.status).toBe('parked');
+      expect(row.lastError).toContain('ECONNREFUSED');
+      expect(row.autoRetryCount).toBe(0);
+      expect(deliveryRepo.update).toHaveBeenCalledWith(
+        { id: 'd1', status: expect.objectContaining({ _value: ['parked'] }) },
+        expect.objectContaining({ status: 'parked' })
+      );
+    });
+
+    it('the sweep picks parked rows on their step, and a parked row with no step at all', async () => {
+      const { service, deliveryRepo } = makeService();
+      deliveryRepo.__setRows([]);
+
+      await service.retryDueWebhookDeliveries();
+
+      const qb = deliveryRepo.createQueryBuilder.mock.results[0].value;
+      const [where] = qb.where.mock.calls[0];
+      expect(where).toContain("d.status = 'parked' AND (d.nextAttemptAt IS NULL");
+      expect(where).toContain("d.status = 'failed' AND d.nextAttemptAt IS NOT NULL");
+    });
+
+    it('a cron batch settles each row by its own answer', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const credited = parkedRow({ id: 'd1', paymentIntentId: 'pi_1' });
+      const waiting = parkedRow({ id: 'd2', paymentIntentId: 'pi_2' });
+      const failing = failedRow({ id: 'd3', paymentIntentId: 'pi_3' });
+      deliveryRepo.__setRows([credited, waiting, failing]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation((_url: string, payload: string) => {
+        const intent = JSON.parse(payload).paymentIntentId;
+        if (intent === 'pi_1') return of({ status: 200, data: { duplicate: true } });
+        if (intent === 'pi_2') return of({ status: 202, data: { parked: true } });
+        throw new Error('Request failed with status code 503');
+      });
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      expect(credited.status).toBe('delivered');
+      expect(waiting.status).toBe('parked');
+      expect(failing.status).toBe('failed');
+      expect(failing.autoRetryCount).toBe(1);
+      expect(result).toEqual({ delivered: 2, attempted: 3 });
+    });
+
+    it('an attempt finishing after the row turned delivered leaves it delivered', async () => {
+      // The race a full-entity save lost: the sweep and a manual retry read the same parked row;
+      // the manual one is answered 200 first, and the sweep's re-send then meets a Cercle hiccup.
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const stored: any = parkedRow();
+      deliveryRepo.update.mockImplementation(async (criteria: any, fields: any) => {
+        const allowed: string[] = criteria.status._value;
+        if (!allowed.includes(stored.status)) return { affected: 0 };
+        Object.assign(stored, fields);
+        return { affected: 1 };
+      });
+      // The sweep's copy, read before the other attempt settled the row.
+      const staleCopy = parkedRow();
+      deliveryRepo.__setRows([staleCopy]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      stored.status = 'delivered';
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('socket hang up');
+      });
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+
+      await service.retryDueWebhookDeliveries();
+
+      expect(stored.status).toBe('delivered');
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('its status was no longer parked'))
+      ).toBe(true);
+      warn.mockRestore();
     });
 
     it('is told apart by the status alone: a 200 stays delivered whatever its body says', async () => {
@@ -2562,37 +2706,6 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       await service.listWebhookFailures('asso1');
       expect(whereArgs(deliveryRepo)).toContainEqual({ status: 'failed' });
-    });
-
-    it('Le Cercle crediting a parked top-up settles it delivered, keyed on the payment intent', async () => {
-      const { service, deliveryRepo } = makeService();
-      const row = failedRow({ status: 'parked', nextAttemptAt: null, lastError: null });
-      deliveryRepo.findOne.mockResolvedValue(row);
-
-      expect(await service.markCercleTopupCredited('pi_1')).toEqual({ status: 'delivered' });
-      expect(deliveryRepo.findOne).toHaveBeenCalledWith({ where: { paymentIntentId: 'pi_1' } });
-      expect(row.status).toBe('delivered');
-      expect(deliveryRepo.save).toHaveBeenCalledTimes(1);
-    });
-
-    it('is idempotent: a repeated notice saves nothing', async () => {
-      const { service, deliveryRepo } = makeService();
-      deliveryRepo.findOne.mockResolvedValue(failedRow({ status: 'delivered' }));
-
-      expect(await service.markCercleTopupCredited('pi_1')).toEqual({ status: 'delivered' });
-      expect(deliveryRepo.save).not.toHaveBeenCalled();
-    });
-
-    it('settles a failed row too, off the ladder, and changes nothing for an unknown intent', async () => {
-      const { service, deliveryRepo } = makeService();
-      const row = failedRow();
-      deliveryRepo.findOne.mockResolvedValueOnce(row);
-      await service.markCercleTopupCredited('pi_1');
-      expect(row).toMatchObject({ status: 'delivered', nextAttemptAt: null, lastError: null });
-
-      deliveryRepo.findOne.mockResolvedValueOnce(null);
-      expect(await service.markCercleTopupCredited('pi_x')).toEqual({ status: 'unknown' });
-      expect(deliveryRepo.save).toHaveBeenCalledTimes(1);
     });
 
     it('counts the parked deliveries, and those parked since before the cutoff', async () => {

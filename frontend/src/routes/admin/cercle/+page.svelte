@@ -568,7 +568,7 @@
                       : 'text-text-muted'}"
                   >
                     {m.admin_cercle_parked_age({
-                      moment: formatMoment(delivery.lastAttemptAt ?? delivery.createdAt),
+                      moment: formatMoment(delivery.createdAt),
                       days,
                     })}
                   </p>

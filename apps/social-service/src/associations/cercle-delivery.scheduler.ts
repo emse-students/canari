@@ -3,7 +3,9 @@ import { Cron } from '@nestjs/schedule';
 import { ProductsService } from './products.service';
 
 /**
- * Re-sends Cercle top-up webhooks that failed, on a backoff.
+ * Re-sends Cercle top-up webhooks that failed, on a backoff - and the PARKED ones on a slow cadence,
+ * since Le Cercle's answer to a re-send (200 once the member's first sign-in credited it) is the one
+ * way this side learns a park ended.
  *
  * Every failure this catches is money a member paid Canari and never received on the Cercle. Until
  * now the only recovery was an admin noticing the row in the dashboard and pressing retry, so an
@@ -37,7 +39,7 @@ export class CercleDeliveryScheduler {
     try {
       const { delivered, attempted } = await this.products.retryDueWebhookDeliveries();
       if (attempted > 0) {
-        this.logger.log(`[CERCLE] automatic retry: ${delivered}/${attempted} delivered`);
+        this.logger.log(`[CERCLE] automatic retry: ${delivered}/${attempted} delivered or parked`);
       }
     } catch (e) {
       // Swallowed rather than thrown: an unhandled rejection in a cron handler takes the process
@@ -48,8 +50,10 @@ export class CercleDeliveryScheduler {
 
   /**
    * Daily at 03:25 - THE PARKED TOP-UPS, REPORTED. A parked delivery is money a member paid that Le
-   * Cercle holds until their first sign-in there; nothing on this side moves it on, so a member who
-   * never signs in would leave it waiting unseen. One line, counts only (no member, no amount):
+   * Cercle holds until their first sign-in there. The sweep re-sends it every six hours and settles
+   * it `delivered` once Le Cercle answers 200, so a row still parked after seven days is a member who
+   * has really not signed in (or a re-send that keeps failing, its `lastError` on the admin page) -
+   * money waiting that nobody would otherwise see. One line, counts only (no member, no amount):
    * `log` with the counts, `warn` while any has waited more than {@link LONG_PARKED_DAYS} days. It
    * prints on zero too - that line is the report's own proof it ran.
    */

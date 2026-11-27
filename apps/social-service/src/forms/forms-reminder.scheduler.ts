@@ -494,9 +494,9 @@ export class FormReminderScheduler {
 
   /**
    * Weekly (Sunday 04:00) - deletes delivered webhooks after 30 days.
-   * Failed deliveries are kept for manual retry, and PARKED ones for good: the money may not be on
-   * the member's balance yet, nothing on this side learns when it lands, and the row is what
-   * `/admin/cercle` and the daily report (`CercleDeliveryScheduler`) read it from.
+   * Failed deliveries are kept for manual retry, and PARKED ones until a re-send turns them
+   * `delivered`: the money is not on the member's balance yet, and the row is what the sweep
+   * re-sends, and what `/admin/cercle` and the daily report (`CercleDeliveryScheduler`) read.
    */
   @Cron('0 4 * * 0')
   async purgeDeliveredWebhooks() {
