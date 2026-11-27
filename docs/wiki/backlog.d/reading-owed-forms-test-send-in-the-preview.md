@@ -13,6 +13,12 @@ What is built, in three parts:
 - **A free comment and "Autre : precisez"** on choice questions
   ([forms](../frontend/modules/forms.md#a-choice-questions-free-comment-and-its-autre-owner-2026-11-21-180)).
 
+**Reading of 2026-11-27 on 1.8.3-alpha.1: the format half FAILED.** In the preview, a number above its maximum or
+an invalid e-mail followed by "Tester l'envoi" showed nothing, while the real send was refused by the server. The
+cause was the question card, which hid a format fault as soon as the question held an answer
+(`questionError` in `forms/[id]/+page.svelte`); fixed by the pull request "the test send says a format fault on its
+card", with vitest coverage. The reading stays owed on the next alpha, formats included.
+
 **The reading that closes it, on a dev pre-release, with a real form**: open the preview of a draft with a
 required question; press "Tester l'envoi" empty (the question is flagged, no report), fill it, press again (the
 report names the total and says nothing was saved); change an answer (the report goes); check that no answer
