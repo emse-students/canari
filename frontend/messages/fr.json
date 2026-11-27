@@ -7387,5 +7387,11 @@
   "form_seat_hold_released": "Place libérée.",
   "form_seat_hold_expired": "Votre réservation a expiré : la place a peut-être été prise.",
   "form_seat_hold_failed": "Impossible de réserver une place pour le moment.",
-  "form_seat_hold_release_failed": "Impossible de libérer la place pour le moment."
+  "form_seat_hold_release_failed": "Impossible de libérer la place pour le moment.",
+  "mail_quote_attribution": "Le {date}, {sender} a écrit :",
+  "mail_forward_header": "---------- Message transféré ----------",
+  "mail_forward_from": "De : {value}",
+  "mail_forward_date": "Date : {value}",
+  "mail_forward_subject": "Objet : {value}",
+  "mail_forward_to": "À : {value}"
 }

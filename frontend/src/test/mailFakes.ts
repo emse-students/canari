@@ -153,3 +153,106 @@ export class FakeStream implements PlaintextStream {
     }
   }
 }
+
+/** One request the {@link FakeZimbra} received. */
+export interface FakeZimbraRequest {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  /** The body as text (a SOAP envelope, an upload's bytes decoded). */
+  body: string;
+  /** For a SOAP call: the request's name (`SearchRequest`), its element, and the session token. */
+  soap: { name: string; element: Record<string, unknown>; token: string | null } | null;
+}
+
+/** What the fake answers: a status and a body (JSON is stringified). */
+export interface FakeZimbraAnswer {
+  status?: number;
+  body: unknown;
+}
+
+/** A SOAP fault envelope with `code`, as Zimbra answers it (HTTP 500). */
+export function zimbraFault(code: string): FakeZimbraAnswer {
+  return {
+    status: 500,
+    body: {
+      Body: {
+        Fault: {
+          Code: { Value: 'soap:Sender' },
+          Reason: { Text: `fault ${code}` },
+          Detail: { Error: { Code: code, _jsns: 'urn:zimbra' } },
+        },
+      },
+    },
+  };
+}
+
+/** A SOAP success envelope around `body`. */
+export function zimbraBody(body: Record<string, unknown>): FakeZimbraAnswer {
+  return { status: 200, body: { Body: body } };
+}
+
+/**
+ * A fake partage.emse.fr at the HTTP level: it reads each request the client writes on a
+ * {@link FakeStream}, records it, and answers with what `answer` returns. Its `openStream` is the
+ * `StreamOpener` a `ZimbraSoapClient` is built with.
+ */
+export class FakeZimbra {
+  requests: FakeZimbraRequest[] = [];
+  streams: FakeStream[] = [];
+
+  constructor(public answer: (request: FakeZimbraRequest) => FakeZimbraAnswer) {}
+
+  /** The SOAP requests received, by name, in order. */
+  get soapNames(): string[] {
+    return this.requests.flatMap((r) => (r.soap ? [r.soap.name] : []));
+  }
+
+  readonly openStream = async (): Promise<PlaintextStream> => {
+    const stream = new FakeStream();
+    stream.onWrite = (raw) => {
+      const request = FakeZimbra.parse(raw);
+      this.requests.push(request);
+      const answer = this.answer(request);
+      const payload =
+        answer.body instanceof Uint8Array
+          ? answer.body
+          : bytes(typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body));
+      const head = bytes(
+        `HTTP/1.1 ${answer.status ?? 200} X\r\nContent-Length: ${payload.length}\r\n\r\n`
+      );
+      const out = new Uint8Array(head.length + payload.length);
+      out.set(head, 0);
+      out.set(payload, head.length);
+      stream.push(out);
+    };
+    this.streams.push(stream);
+    return stream;
+  };
+
+  private static parse(raw: string): FakeZimbraRequest {
+    const split = raw.indexOf('\r\n\r\n');
+    const [requestLine, ...headerLines] = raw.slice(0, split).split('\r\n');
+    const [method, path] = requestLine.split(' ');
+    const headers: Record<string, string> = {};
+    for (const line of headerLines) {
+      const colon = line.indexOf(':');
+      headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+    }
+    const body = raw.slice(split + 4);
+    let soap: FakeZimbraRequest['soap'] = null;
+    if (path === '/service/soap') {
+      const envelope = JSON.parse(body) as {
+        Header?: { context?: { authToken?: { _content?: string } } };
+        Body: Record<string, Record<string, unknown>>;
+      };
+      const name = Object.keys(envelope.Body)[0];
+      soap = {
+        name,
+        element: envelope.Body[name],
+        token: envelope.Header?.context?.authToken?._content ?? null,
+      };
+    }
+    return { method, path, headers, body, soap };
+  }
+}

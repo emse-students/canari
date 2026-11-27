@@ -193,6 +193,12 @@ export const ACCOUNT_KEY = {
    */
   backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
   /**
+   * `mail/sealedMailPassword.ts`: the school mailbox's password, SEALED under the device key, kept
+   * only when the user ticked "remember" (docs/wiki/mail-client.md D6). Erased with the mail data
+   * when the mailbox is closed (D8, `mail/mailLocalData.ts`).
+   */
+  mailSealedPassword: (userId: string) => `canari_mail_sealed_password:v1:${userId}`,
+  /**
    * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
    * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
    * truth; this is the optimistic copy that keeps a help from replaying offline.
@@ -312,6 +318,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
     ACCOUNT_KEY.backupOwedAfterKeyMove(userId),
+    ACCOUNT_KEY.mailSealedPassword(userId),
   ];
 }
 

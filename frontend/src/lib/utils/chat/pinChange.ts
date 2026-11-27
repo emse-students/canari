@@ -20,6 +20,7 @@
  */
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { resealDeviceRecoveryCode } from '$lib/crypto/deviceRecoveryCode';
+import { resealMailPassword } from '$lib/mail/sealedMailPassword';
 import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
 import {
   KeyChangeSupersededError,
@@ -338,6 +339,27 @@ export async function moveDeviceRecoveryCode(
 }
 
 /**
+ * Moves the remembered school-mailbox password to the new device key (`mail/sealedMailPassword.ts`,
+ * docs/wiki/mail-client.md D6), beside the sealed stores. NEVER FATAL to the key change: a password
+ * that could not be re-sealed is logged at ERROR and costs one password prompt at the next mail
+ * session renewal - failing the change here would leave the stores half moved for it.
+ */
+export async function moveRememberedMailPassword(
+  userId: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  try {
+    await resealMailPassword(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+  } catch (e) {
+    log(
+      `[DEVICEKEY_CHANGE] ERROR: the remembered mailbox password was not re-sealed: ${String(e)}`
+    );
+  }
+}
+
+/**
  * Takes the OLD device key out of this device's vault - the first thing {@link performPinChange}
  * writes, BEFORE the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
  *
@@ -525,6 +547,7 @@ export async function performPinChange(
           // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
           await dropStoredFeedPages(store, log);
           await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+          await moveRememberedMailPassword(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
           return report;
         });
         setDeviceKey(newDeviceKeyB64);
@@ -581,6 +604,7 @@ export async function moveSealedStoresOnly(
         });
         await dropStoredFeedPages(store, log);
         await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+        await moveRememberedMailPassword(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
         return report;
       });
     });
