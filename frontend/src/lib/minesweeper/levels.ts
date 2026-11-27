@@ -72,6 +72,20 @@ export function loadMinesweeperUnranked(): boolean {
   }
 }
 
+/**
+ * Whether a mode was ever chosen on this device (the ranked / unranked choice is stored). The mode modal opens
+ * by itself only while this is false: a first game, never a later one (owner, 2026-11-27).
+ */
+export function hasStoredMinesweeperMode(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    return localStorage.getItem(UNRANKED_STORAGE_KEY) !== null;
+  } catch (err) {
+    console.warn('[minesweeper] could not read the stored mode, treating it as a first game', err);
+    return false;
+  }
+}
+
 /** Persists the ranked / unranked choice; a storage that refuses is logged, never fatal. */
 export function saveMinesweeperUnranked(unranked: boolean): void {
   if (typeof localStorage === 'undefined') return;

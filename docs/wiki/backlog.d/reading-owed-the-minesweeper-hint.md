@@ -4,6 +4,8 @@ target: 1.8.3
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
+_2026-11-27: items 11 to 14 (the tutorial list, the catalogue route, the bottom sheet) are superseded by [the path reading](reading-owed-the-minesweeper-tutorial-path.md): those screens were redesigned. Items 1 to 10 stand; read "Libre" as "Entraînement" and the bulb as the miner's lamp._
+
 _The bulb and the levels ship in 1.8.2 (owner, 2026-11-25); moved to 1.8.2 when 1.8.1 shipped. The same day the owner moved the levels from sizes to generations, made the game and its replay full-screen pages, and asked for a tutorial: their readings are items 9 to 12._
 
 **Built and tested in jsdom, never seen on a device** ([bulb](../frontend/modules/minesweeper.md#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25), [levels](../frontend/modules/minesweeper.md#three-levels-in-an-unranked-game-owner-2026-11-25); owner decisions of 2026-11-25, items 6 and 7). What the hint DEDUCES is pinned by `hint.test.ts`; what no gate here sees is how the highlight reads on a real board.

@@ -18,6 +18,7 @@ import {
   LEVELS,
   LEVEL_SPECS,
   LEVEL_STORAGE_KEY,
+  hasStoredMinesweeperMode,
   loadMinesweeperLevel,
   PLAY_MODES,
   loadMinesweeperUnranked,
@@ -80,7 +81,7 @@ describe('the modes and their stored choices', () => {
   });
 
   it('plays a newcomer unranked, and keeps what a player chose, ranked included', () => {
-    // No stored choice: the ranked board is the barrier to entry, so the newcomer starts in Libre.
+    // No stored choice: the ranked board is the barrier to entry, so the newcomer starts in Entrainement.
     expect(loadMinesweeperUnranked()).toBe(true);
     expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
     saveMinesweeperUnranked(false);
@@ -88,6 +89,18 @@ describe('the modes and their stored choices', () => {
     saveMinesweeperUnranked(true);
     expect(loadMinesweeperUnranked()).toBe(true);
     expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
+  });
+
+  it('knows a first game from a later one: a mode is stored once chosen, and the default alone stores nothing', () => {
+    expect(hasStoredMinesweeperMode()).toBe(false);
+    // Reading the default answers and writes nothing, so the first game stays a first game until a choice.
+    loadMinesweeperUnranked();
+    expect(hasStoredMinesweeperMode()).toBe(false);
+    saveMinesweeperUnranked(true);
+    expect(hasStoredMinesweeperMode()).toBe(true);
+    localStorage.clear();
+    saveMinesweeperUnranked(false);
+    expect(hasStoredMinesweeperMode()).toBe(true);
   });
 
   it('starts a newcomer on Debutant, and keeps Expert for a player who already chose a mode', () => {
