@@ -67,7 +67,10 @@ describe('AlumniMergeService and the admin queue', () => {
   function make(accounts: MiconnectUserListing[], query: jest.Mock = jest.fn(async () => [])) {
     const editor = {
       assertAvailable: jest.fn(),
-      userByUuid: jest.fn(async (uuid: string) => accounts.find((a) => a.uuid === uuid) ?? null),
+      userByUuid: jest.fn(
+        async (uuid: string) =>
+          accounts.find((a) => a.uuid.toLowerCase() === uuid.toLowerCase()) ?? null
+      ),
       searchUsers: jest.fn(async (q: string) =>
         accounts.filter(
           (a) =>
@@ -251,6 +254,15 @@ describe('AlumniMergeService and the admin queue', () => {
   describe('"Pas un doublon" (dismiss) refuses what it must not hide', () => {
     it('dismisses an Alumni-shaped duplicate no merge names', async () => {
       await make([DUP, TARGET]).service.dismiss(DUP_UUID);
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.anything());
+    });
+
+    it('keys its lock and its reads on the uuid MiConnect answers, so an uppercase route parameter cannot get past the lock a mark takes', async () => {
+      const query = jest.fn(async () => []);
+      await make([DUP, TARGET], query).service.dismiss(DUP_UUID.toUpperCase());
+      const calls = query.mock.calls as unknown as [string, unknown[]][];
+      expect(calls[0][1]).toEqual([`alumni-merge-duplicate:${DUP_UUID}`]);
+      expect(calls[1][1]).toEqual([DUP_UUID]);
       expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.anything());
     });
 

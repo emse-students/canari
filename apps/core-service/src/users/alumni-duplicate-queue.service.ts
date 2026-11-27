@@ -252,15 +252,25 @@ export class AlumniDuplicateQueue {
     for (let at = 0; at < duplicateUuids.length; at += ALUMNI_FOUND_BATCH) {
       const batch = duplicateUuids.slice(at, at + ALUMNI_FOUND_BATCH);
       this.logger.log(`[ALUMNI_QUEUE] telling the admins of ${batch.length} new duplicate(s)`);
+      let noAdmin = false;
       try {
-        await axios.post(
+        const res = await axios.post<{ noAdmin?: boolean }>(
           socialUrl('internal/notifications/alumni-duplicates-found'),
           { duplicateUuids: batch },
           { headers: { 'X-Internal-Secret': this.internalSecret }, timeout: SOCIAL_TIMEOUT_MS }
         );
+        noAdmin = res?.data?.noAdmin === true;
       } catch (err) {
         this.logger.error(
           `[ALUMNI_QUEUE] ${batch.length} new duplicate(s): the announcement to the admins was NOT confirmed (social refused, failed or outran the timeout), it is tried again at the next reading: ${String(err)}`
+        );
+        continue;
+      }
+      if (noAdmin) {
+        // Social had no global admin to tell and claimed nothing (a typed field of its answer, never
+        // its prose): the notice stays OWED, so an admin added later is told by a later flush.
+        this.logger.warn(
+          `[ALUMNI_QUEUE] ${batch.length} new duplicate(s): no global admin to tell, the notice stays owed`
         );
         continue;
       }

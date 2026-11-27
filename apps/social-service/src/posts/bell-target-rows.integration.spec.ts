@@ -755,10 +755,24 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
 
   it("keeps the bell's one statement walking the reader's index with no sort", async () => {
     await row('f1', 'event_open', E);
-    const [sql, params] = bell.bellPageQuery('f1', 30).getQueryAndParameters();
-    const plan = JSON.stringify(
-      (await q(`EXPLAIN (FORMAT JSON) ${sql}`, params))[0]['QUERY PLAN'][0].Plan
+    // The plan must not depend on whether autoanalyze happened to run: seed other readers' rows in
+    // bulk, then ANALYZE, as bell-page.integration.spec does (deterministic statistics).
+    await q(
+      `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", text, "createdAt")
+         SELECT 'plan-fill-' || (g % 40), 'event_open', $1, 'someone', 'A title',
+                now() - make_interval(mins => g)
+           FROM generate_series(1, 4000) g`,
+      [E]
     );
-    expect(plan).not.toContain('"Node Type":"Sort"');
+    try {
+      await q('ANALYZE post_notifications');
+      const [sql, params] = bell.bellPageQuery('f1', 30).getQueryAndParameters();
+      const plan = JSON.stringify(
+        (await q(`EXPLAIN (FORMAT JSON) ${sql}`, params))[0]['QUERY PLAN'][0].Plan
+      );
+      expect(plan).not.toContain('"Node Type":"Sort"');
+    } finally {
+      await q(`DELETE FROM post_notifications WHERE "recipientId" LIKE 'plan-fill-%'`);
+    }
   });
 });

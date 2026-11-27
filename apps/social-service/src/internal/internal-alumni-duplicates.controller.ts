@@ -40,7 +40,7 @@ export class InternalAlumniDuplicatesController {
   async found(
     @Headers('x-internal-secret') secret: string | undefined,
     @Body() body: { duplicateUuids?: unknown }
-  ): Promise<{ told: number; claimed: number; skipped: number }> {
+  ): Promise<{ told: number; claimed: number; skipped: number; noAdmin: boolean }> {
     assertInternalSecret(secret);
     const list = body?.duplicateUuids;
     if (

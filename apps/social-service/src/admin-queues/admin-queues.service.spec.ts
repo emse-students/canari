@@ -163,6 +163,7 @@ describe('AdminQueuesService', () => {
         told: 2,
         claimed: 1,
         skipped: 0,
+        noAdmin: false,
       });
       expect(notifications.createNotificationRows).toHaveBeenCalledTimes(1);
       expect(notifications.createNotificationRows).toHaveBeenCalledWith({
@@ -224,6 +225,7 @@ describe('AdminQueuesService', () => {
         told: 1,
         claimed: 1,
         skipped: 1,
+        noAdmin: false,
       });
       expect(notifications.createNotificationRows.mock.calls.map((c) => c[0].postId)).toEqual([
         A,
@@ -237,6 +239,7 @@ describe('AdminQueuesService', () => {
         told: 0,
         claimed: 0,
         skipped: 2,
+        noAdmin: false,
       });
       expect(notifications.createNotificationRows).not.toHaveBeenCalled();
       expect(notifications.pushNotice).not.toHaveBeenCalled();
@@ -264,6 +267,7 @@ describe('AdminQueuesService', () => {
         told: 1,
         claimed: 1,
         skipped: 0,
+        noAdmin: false,
       });
       expect([...ledger]).toEqual([A]);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('PUSH failed'));
@@ -278,7 +282,7 @@ describe('AdminQueuesService', () => {
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });
 
-    it('with no global admin nothing is claimed: the notice is not lost to a ledger row nobody was told by', async () => {
+    it('with no global admin nothing is claimed and the answer says so in a typed field (noAdmin), so the caller keeps the notice owed', async () => {
       const { service, notifications, ledger } = make({ admins: [] });
       expect(
         await service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
@@ -286,6 +290,7 @@ describe('AdminQueuesService', () => {
         told: 0,
         claimed: 0,
         skipped: 1,
+        noAdmin: true,
       });
       expect([...ledger]).toEqual([]);
       expect(notifications.createNotificationRows).not.toHaveBeenCalled();

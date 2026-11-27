@@ -100,12 +100,14 @@ const NOW = () => new Date(Date.now() + 1000);
 
 describe('AlumniDuplicateQueue', () => {
   let error: jest.SpyInstance;
+  let warn: jest.SpyInstance;
 
   beforeEach(() => {
     (axios.post as jest.Mock).mockReset().mockResolvedValue({ data: {} });
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -222,6 +224,19 @@ describe('AlumniDuplicateQueue', () => {
     expect(flags[0].announced).toBe(true);
     await queue.reconcile([DUP], NOW());
     expect(found()).toHaveLength(2);
+  });
+
+  it('social answering noAdmin (nobody to tell, nothing claimed) leaves the notice OWED, and a later flush tells the admin added since', async () => {
+    (axios.post as jest.Mock).mockResolvedValueOnce({
+      data: { told: 0, claimed: 0, skipped: 1, noAdmin: true },
+    });
+    const { queue, flags } = make();
+    await expect(queue.flag(DUP)).resolves.toBe('created');
+    expect(flags[0].announced).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no global admin to tell'));
+    await queue.reconcile([DUP], NOW());
+    expect(found()).toEqual([[DUP], [DUP]]);
+    expect(flags[0].announced).toBe(true);
   });
 
   it('a backlog goes out in batches of at most ALUMNI_FOUND_BATCH, and a failing batch drops neither the others nor itself for good', async () => {

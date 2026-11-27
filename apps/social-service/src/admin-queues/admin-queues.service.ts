@@ -182,7 +182,7 @@ export class AdminQueuesService {
    */
   async announceAlumniDuplicates(
     duplicateUuids: readonly string[]
-  ): Promise<{ told: number; claimed: number; skipped: number }> {
+  ): Promise<{ told: number; claimed: number; skipped: number; noAdmin: boolean }> {
     const { type, target } = ANNOUNCED['alumni-duplicates'];
     const distinct = [...new Set(duplicateUuids)];
     this.logger.log(`[ADMIN_QUEUES] ${distinct.length} Alumni duplicate(s) to announce`);
@@ -192,7 +192,9 @@ export class AdminQueuesService {
       );
       if (admins.length === 0) {
         this.logger.warn(`[ADMIN_QUEUES] ${type}: no global admin to tell`);
-        return { told: 0, claimed: 0, skipped: distinct.length };
+        // The typed answer "nobody to tell": nothing was claimed, so the caller must NOT record the
+        // duplicates as told - an admin added later is told by the next flush.
+        return { told: 0, claimed: 0, skipped: distinct.length, noAdmin: true };
       }
       const { claimed, told } = await this.reports.manager.transaction(async (tx) => {
         await tx.query(
@@ -250,7 +252,7 @@ export class AdminQueuesService {
           `[ADMIN_QUEUES] ${type} ${claimed.length} duplicate(s) told to ${told} of ${admins.length} admin(s)`
         );
       }
-      return { told, claimed: claimed.length, skipped };
+      return { told, claimed: claimed.length, skipped, noAdmin: false };
     } finally {
       await this.signal.changed({ queue: 'alumni-duplicates' });
     }

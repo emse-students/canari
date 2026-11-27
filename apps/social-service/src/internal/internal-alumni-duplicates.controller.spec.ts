@@ -4,7 +4,9 @@ import type { AdminQueuesService } from '../admin-queues/admin-queues.service';
 
 describe('InternalAlumniDuplicatesController', () => {
   const env = { ...process.env };
-  const announceAlumniDuplicates = jest.fn().mockResolvedValue({ told: 2, claimed: 2, skipped: 0 });
+  const announceAlumniDuplicates = jest
+    .fn()
+    .mockResolvedValue({ told: 2, claimed: 2, skipped: 0, noAdmin: false });
   const queueChanged = jest.fn().mockResolvedValue(undefined);
   const controller = new InternalAlumniDuplicatesController({
     announceAlumniDuplicates,
@@ -26,7 +28,7 @@ describe('InternalAlumniDuplicatesController', () => {
   it('a reading that found several announces them together, and refuses an empty, oversized or malformed list', async () => {
     const other = '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11';
     expect(await controller.found('shared-secret', { duplicateUuids: [duplicate, other] })).toEqual(
-      { told: 2, claimed: 2, skipped: 0 }
+      { told: 2, claimed: 2, skipped: 0, noAdmin: false }
     );
     expect(announceAlumniDuplicates).toHaveBeenCalledWith([duplicate, other]);
     for (const bad of [[], ['nope'], Array(201).fill(duplicate), 'x', undefined]) {

@@ -492,13 +492,13 @@ export class AlumniMergeService {
     // never both land. The refusal reads the rows INSIDE the lock.
     await this.dataSource.transaction(async (tx) => {
       await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-        `alumni-merge-duplicate:${duplicateUuid}`,
+        `alumni-merge-duplicate:${dup.uuid}`,
       ]);
       const merges = (await tx.query(
         `SELECT "completedAt" FROM alumni_merges
           WHERE "duplicateUuid"::text = $1 AND "cancelledAt" IS NULL
           ORDER BY "completedAt" NULLS LAST LIMIT 1`,
-        [duplicateUuid]
+        [dup.uuid]
       )) as { completedAt: Date | null }[];
       if (merges.length > 0) {
         const merged = merges[0].completedAt != null;
@@ -507,7 +507,7 @@ export class AlumniMergeService {
         );
         throw merged ? new AlumniMergeAlreadyMergedError() : new AlumniMergeInProgressError();
       }
-      await this.queue?.dismiss(duplicateUuid, tx);
+      await this.queue?.dismiss(dup.uuid, tx);
     });
     await this.queue?.changed();
   }
