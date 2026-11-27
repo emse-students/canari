@@ -305,6 +305,14 @@ map $request_method $lydia_callback_key {\n\
     POST $binary_remote_addr;\n\
 }\n\
 limit_req_zone $lydia_callback_key zone=lydia_callback:1m rate=5r/s;\n\
+# MICONNECT'S ALUMNI-MERGE PUSH (D54) is one POST per merge, from one host: 1 r/s burst 20 per client\n\
+# address is far above that, and bounds what a flood of guesses at the shared secret can cost (each\n\
+# is a constant-time compare, and a matching one makes core-service read MiConnect).\n\
+map $request_method $miconnect_hook_key {\n\
+    default "";\n\
+    POST $binary_remote_addr;\n\
+}\n\
+limit_req_zone $miconnect_hook_key zone=miconnect_hook:1m rate=1r/s;\n\
 \n\
 include /etc/nginx/targets/frontend.conf;\n\
 \n\
@@ -1311,6 +1319,27 @@ server {\n\
     \n\
     location /api/auth {\n\
     # Unauthenticated - strip the full client-supplied trust-header set (no server-level inheritance).\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    # MiConnect's push of a completed Alumni merge (D54): no session, a shared secret core-service checks\n\
+    # in constant time, rate-limited here (zone miconnect_hook). The body is a hint only - core-service\n\
+    # re-reads MiConnect before it acts.\n\
+    location = /api/hooks/miconnect/alumni-merge {\n\
+    limit_req zone=miconnect_hook burst=20 nodelay;\n\
+    client_max_body_size 4k;\n\
+    limit_req_status 429;\n\
+    # No session - strip the full client-supplied trust-header set.\n\
     proxy_set_header X-User-Id "";\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\

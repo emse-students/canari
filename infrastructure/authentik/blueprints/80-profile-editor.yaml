@@ -116,7 +116,9 @@ entries:
         from authentik.core.models import User
 
         EDITOR = "miconnect-canari-editor"
-        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at")
+        # The merge mark (D48), with the four keys of D55: a contract with core-service (MERGE_MARK) and
+        # with the merge policy (30-sources.yaml, `miconnect-alumni-merge-or-refuse`).
+        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at", "alumni_merge_mode", "alumni_merge_id", "alumni_merge_seen_alumni_name", "alumni_merge_seen_target_name")
         ALLOWED = ("profile",) + MARK
         # 2 x NAME_MAX (apps/core-service/src/users/miconnect-profile.ts) + the space between the two
         # names: core-service's profile-write.contract.spec.ts holds the two numbers together.

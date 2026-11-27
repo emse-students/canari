@@ -284,12 +284,15 @@ export async function drainPendingGroupExits(params: {
     for (const entry of owed) {
       const short = entry.groupId.slice(0, 8);
       try {
-        if (entry.kind === 'delete') {
+        if (entry.kind === 'delete' || entry.kind === 'delete-self') {
           // Resolves only on the delivery service's own answer (an absent group is answered
           // `deleted` too). A throw lands below: only the service's own 403 clears the row
-          // (`classifyExitFailure`), every other refusal and every non-answer keeps it.
-          await mlsService.deleteGroupOnServer(entry.groupId);
-          log(`[EXIT] ${short}... delete replayed - server deleted it`);
+          // (`classifyExitFailure`), every other refusal and every non-answer keeps it. "Mes notes"
+          // says it knows its kind, or the server refuses it (`SELF_CONVERSATION_KIND_UNSTATED`).
+          if (entry.kind === 'delete-self')
+            await mlsService.deleteGroupOnServer(entry.groupId, 'self');
+          else await mlsService.deleteGroupOnServer(entry.groupId);
+          log(`[EXIT] ${short}... ${entry.kind} replayed - server deleted it`);
         } else {
           await mlsService.removeMemberFromServer(entry.groupId, userId);
           log(`[EXIT] ${short}... leave replayed - server removed this user`);

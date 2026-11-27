@@ -93,6 +93,11 @@ export const ACCOUNT_KEY = {
    */
   registerOwed: (userId: string) => `mls_register_owed:v1:${userId}`,
   /**
+   * `chat/notepadMigration.ts`: the server has said this account holds no notepad (moved, or never
+   * written), so later sessions ask nothing. Wiped with the account: the next sign-in asks once more.
+   */
+  notepadMoved: (userId: string) => `canari.notepad-moved.${userId}`,
+  /**
    * `chat/historyGrant.ts`: the history grants this device ISSUED to a newcomer (owner, 2026-11-25) -
    * what it answers the newcomer's grant ask from, so a reload between the press and the ask still
    * answers it.
@@ -284,6 +289,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.registerOwed(userId),
+    ACCOUNT_KEY.notepadMoved(userId),
     ACCOUNT_KEY.historyGrantsIssued(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),

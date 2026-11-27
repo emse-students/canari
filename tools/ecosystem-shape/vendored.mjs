@@ -12,6 +12,25 @@ export const HANDOFF_VENDORED = [
 ];
 
 /**
+ * The Alumni merge call's verifier (Canari's profiles-and-access.md, D54): each MiConnect site copies
+ * it BESIDE its `handoff-verify.ts`, whose leeway and lifetime it imports (`./handoff-verify.js`) -
+ * `src/lib/server/handoff/alumni-merge-verify.ts` in Sky (#195) and MiGallery (#487). Le Cercle is on
+ * GitLab, outside this tool: its copy lives at `src/lib/server/auth/handoff/alumni-merge-verify.ts`
+ * and is pinned by a sha256 test in its own CI, so a change here is re-vendored there by hand, the
+ * new sha256 with it.
+ */
+export const ALUMNI_MERGE_VENDORED = [
+  [
+    'libs/handoff/alumni-merge-verify.ts',
+    {
+      Sky: 'src/lib/server/handoff/alumni-merge-verify.ts',
+      MiGallery: 'src/lib/server/handoff/alumni-merge-verify.ts',
+    },
+  ],
+];
+
+
+/**
  * The Meta in-app browser gate (owner decision of 2026-11-25, docs/wiki/frontend/leaving-in-app-browsers.md
  * section 6): the detector, the server gate, the interstitial and the user-agent fixtures, in Sky,
  * MiGallery and Portail-etu. Le Cercle is on GitLab, outside this tool, and holds its copies by a

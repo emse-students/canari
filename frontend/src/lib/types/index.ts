@@ -218,6 +218,12 @@ export interface ChatMessage {
   renderKey?: string;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
+  /**
+   * A salon row whose `@tous` the SERVER vouched for (see {@link AddMessageToChatOptions.everyoneVouched}):
+   * the bubble draws that token as a call only then, as plain text otherwise (`everyoneMentionOf`).
+   * Stored with the row (sealed in its payload), so a page drawn from the device copy already knows it. Absent is not vouched.
+   */
+  everyoneVouched?: boolean;
   /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */
   mediaPurgedAt?: number;
   /** Where the store's page read found this row (`StoredMessage.pageKey`); absent on a row that did not come from one. */

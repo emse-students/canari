@@ -1,48 +1,38 @@
-## P2 - The Alumni merge, Canari side: completed by MiConnect's push, the subjects captured, the manual merge, the sibling jobs
+## P2 - The Alumni merge, Canari and MiConnect sides: deployed, the pre-1.8.3 merge repaired, and read
 
 target: 1.8.3
 
-The design is D52-D58 in [profiles-and-access](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)
-([decisions](../decisions/owner-decisions-of-2026-11-26-alumni.md)). Nothing built. In `core-service`
-(`AlumniMergeService`, `alumni-merge.controller`) and `frontend/src/routes/admin/alumni-duplicates`.
+BUILT in `1.8.3` (D54, D55, D57; "As built" in
+[profiles-and-access](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
+the subjects stored at the mark and backfilled, MiConnect's push and its endpoint, the reconciler's
+warning, the manual merge with its reason, the sibling-site jobs, the merge Event that survives the
+duplicate; after the review of 2026-11-27, jobs that never cascade (a target erased meanwhile turns
+them into erases), "merged" decided from the target's Alumni link alone, both subjects in the push, the
+push dispatched only after the merge commits, an unready site waiting quietly, the reason counted in
+code points on both sides, the hook rate-limited. Its tests: `alumni-merge.service.spec.ts`, `alumni-merge-site-jobs.spec.ts`,
+`alumni-merge-hook.e2e.spec.ts`, `account-erasure.integration.spec.ts` (against PostgreSQL),
+`AlumniManualMerge.svelte.test.ts`, `alumniMerge.test.ts`, and step M of `test-enrollment-flow.py`.
 
-What it builds:
+What is still owed, and by whom:
 
-- **Migration core**: `alumni_merges` gains `mode` (`auto` | `manual`), `reason`, `duplicateSubject`,
-  `targetSubject`, `completedBy` (`push` | `reconciler`); a new table `alumni_merge_site_jobs` (one row
-  per merge and site, unique index), erased with its merge under the existing rules
-  ([register](../compliance/register-of-processing.md), M1). Both entities, so a `synchronize` stack has them.
-- **The subjects (D54)**: `merge` stores both accounts' `uid` from the editor API; an open row with no
-  subject is backfilled at its next reading while the duplicate exists.
-- **The push (D54)**: `POST /api/hooks/miconnect/alumni-merge`, the shared secret
-  `MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET` (constant-time, added to `infrastructure/MIGRATION.md`), runs
-  `complete` for the one open row of that duplicate; completes only when the duplicate is gone and the
-  target holds the Alumni link of its `af_id`, else `409 ALUMNI_MERGE_NOT_MERGED` at error; a closed
-  or unknown row answers `200 { already: true }`. The edge routes that one path to core-service.
-- **The reconciler (D54)**: the page read keeps calling `complete`; a row it closes is `completedBy =
-  reconciler` and logs `[ALUMNI_MERGE] completed by the reconciler, not the push` at warning.
-- **The site jobs (D54)**: `complete` writes the three jobs in the transaction that closes the row; the
-  worker is the account-erasure queue's, factorized (one claim/backoff/report implementation, two job
-  kinds); the call is a 60 s ES256 `canari-merge+jwt` signed with the handoff key; `2xx` completes,
-  a typed `409` blocks (error, no retry), anything else retries. The daily report and the admin page
-  show pending and blocked jobs.
-- **The manual merge (D55)**: `{ targetUuid, reason }`, the mode decided by the server, the reason
-  required for `manual` (20-1000 characters, `ALUMNI_MERGE_REASON_REQUIRED`), `ALUMNI_MERGE_TARGET_BUSY`
-  for both modes, the four new mark keys; the admin page's "Rattacher à un autre compte" with its
-  eligible-target search and the reason field, every string in `messages/fr.json` and `en.json`
-  (`admin_alumni_manual_*`).
-- **The one-off repair**: the merge completed before `1.8.3` gets its three jobs written by hand from
-  the subject in the private operations notes, under [the four conditions](../decisions/owner-decisions-of-2026-11-18.md).
-
-The tests that prove it:
-
-- `alumni-merge.service.spec.ts`: subjects stored at the mark and backfilled; the push completes a
-  merged row (`completedBy = push`, three jobs written, the erasure requested) and refuses a duplicate
-  still present, a target without the Alumni link, a wrong secret (401, nothing read); a replayed push
-  is a no-op; the reconciler completes with `completedBy = reconciler` and the warning; manual: the
-  reason required, too short, too long, the target busy, every D55 guard refused in both modes.
-- `alumni-merge-site-jobs.spec.ts` (and the factorized queue's spec): one job per site, a `409` blocks
-  without retry, a transport failure retries with backoff, the report names a job pending over 24 h.
-- `alumni-merge-hook.e2e-spec.ts`: the route through the edge with and without the secret.
-- Frontend vitest for the manual form (reason counter, disabled until valid) and Paraglide keys present
-  in both locales (`messages-parity`).
+- **The secret, by the lead**: `MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET`, ONE value, set as the GitHub
+  production secret (core-service) and in the MiConnect stack's `.env` (the worker reads it), then the
+  worker recreated ([MIGRATION](../../../infrastructure/MIGRATION.md)). Until both hold it, every push
+  is refused (401, at error) and the page's reconciler completes the merges, at warning.
+- **The one-off repair, by the lead**: the merge completed before `1.8.3` has no subject left in
+  MiConnect; its three site jobs are written once, by hand, from the subject the private operations
+  notes recovered, under [the four conditions](../decisions/owner-decisions-of-2026-11-18.md).
+- **The backfill, by the lead, right after the deploy**: open `/admin/alumni-duplicates` once. The
+  merge still waiting from 2026-11-26 has no subject on its row, and its reading stores both while
+  the duplicate exists; if the person signs in first, the push carries both subjects and the row
+  takes them from it.
+- **The reading, in production, by the lead** (dev and production share ONE MiConnect and dev holds
+  no editor token, so no merge can be read on dev): at the next Alumni sign-in of a marked duplicate -
+  the merge still waiting from 2026-11-26 is one, its pre-1.8.3 mark read as `auto` - ONE
+  `custom_alumni_merge` Event whose user is the target, and the row closed `completedBy = push` with
+  no reconciler warning in core-service's log. A manual merge is read on the admin page (the search,
+  the reason counter, the mode and reason on the open merge). The site jobs stay UNREADY (404) until
+  the [Sky](alumni-merge-sky-transfers-then-erases-the-duplicate.md),
+  [MiGallery](alumni-merge-migallery-transfers-then-erases-the-duplicate.md) and
+  [Le Cercle](alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md) endpoints ship, asked
+  again daily; the daily report says ONE warning per such site with its count, never an overdue error.

@@ -7214,6 +7214,9 @@ export class ChannelService implements OnApplicationBootstrap {
       // Poll state (label-free) so the client can render results on load.
       poll: this.servedPoll((m.metadata as { poll?: ChannelPollMeta } | null)?.poll),
       silent: m.silent,
+      // The server's word that this row's `@tous` came from a moderator: the client draws it as a
+      // call only then (`everyoneMentionOf`), and plain text otherwise.
+      mentionsEveryone: rowMentionsEveryone(m),
     }));
   }
 

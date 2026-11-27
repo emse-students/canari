@@ -1,9 +1,10 @@
+import { ALUMNI_MERGE_SUBJECT_MAX_LENGTH } from '../../auth/handoff/handoff-token';
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import type { AlumniHoldings } from '../alumni-merge.service';
 
 /**
  * One Alumni merge an admin asked for (D48): the trace and the durable state of "Rattacher"
- * (migrations 028 and 029). `AlumniMergeService` owns every read and write, in raw SQL; this class
+ * (migrations 028, 029 and 030). `AlumniMergeService` owns every read and write, in raw SQL; this class
  * exists so the table is registered and built by `synchronize` outside production - the account
  * erasure deletes from it (`CORE_ERASURE_STATEMENTS`), and a stack without the SQL migrations would
  * otherwise fail every erasure on a missing table.
@@ -60,4 +61,24 @@ export class AlumniMerge {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   cancelledBy!: string | null;
+
+  /** `auto` (the unique name-and-promo match, D47) or `manual` (the admin decided identity, D55). */
+  @Column({ type: 'varchar', length: 8, default: 'auto' })
+  mode!: 'auto' | 'manual';
+
+  /** The admin's written reason, required for a manual merge (D55); never sent to MiConnect. */
+  @Column({ type: 'text', nullable: true })
+  reason!: string | null;
+
+  /** The duplicate's MiConnect `uid` (its OIDC subject on every site), read at the mark (D54). */
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH, nullable: true })
+  duplicateSubject!: string | null;
+
+  /** The target's MiConnect `uid`, read at the mark (D54); blanked by the target's erasure. */
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH, nullable: true })
+  targetSubject!: string | null;
+
+  /** What completed it: `push` (MiConnect's webhook) or `reconciler` (the admin page's reading). */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  completedBy!: 'push' | 'reconciler' | null;
 }

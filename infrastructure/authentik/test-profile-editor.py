@@ -283,6 +283,16 @@ try:
     duplicate.refresh_from_db()
     check(not any(key in duplicate.attributes for key in mark) and duplicate.attributes.get("profile") == {"version": 1}, "the mark is gone and the profile kept")
     check(written(write(duplicate.uuid, {"attributes": mark})), "the flow writes the mark again")
+    # D55: a manual mark carries four more keys - the mode, Canari's merge id and the two names the
+    # admin saw - and the token writes them, and still nothing outside the allowlist.
+    manual = {**mark, "alumni_merge_mode": "manual", "alumni_merge_id": "00000000-0000-4000-8000-000000000001", "alumni_merge_seen_alumni_name": "Jean Dupont", "alumni_merge_seen_target_name": "Jean-Marie DUPONT"}
+    check(written(write(duplicate.uuid, {"attributes": manual})), "the flow writes the four keys of a manual mark")
+    duplicate.refresh_from_db()
+    check(all(duplicate.attributes.get(key) == value for key, value in manual.items()), f"the manual mark is stored whole ({sorted(duplicate.attributes)})")
+    check(refused(write(duplicate.uuid, {"attributes": {"alumni_merge_reason": "x" * 20}})), "the flow refuses a key outside the allowlist (the reason never goes to MiConnect)")
+    check(written(write(duplicate.uuid, {"attributes": {key: None for key in manual if key not in mark}})), "the flow removes the four keys (null)")
+    duplicate.refresh_from_db()
+    check(not any(key in duplicate.attributes for key in manual if key not in mark) and duplicate.attributes.get("alumni_merge_into") == str(target.uuid), "the four keys are gone, the mark kept")
 
     for victim, label in ((duplicate, "the duplicate"), (target, "the target")):
         removed = call("delete", f"/api/v3/core/users/{victim.pk}/")

@@ -29,6 +29,13 @@ import {
 } from './miconnect-profile';
 import { socialUrl } from '../internal/service-urls';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
+import {
+  HELD_NOTEPAD_SQL,
+  NotepadChangedException,
+  NotepadMovedException,
+  heldNotepad,
+  notepadDigest,
+} from './notepad';
 import { assertMintableUserId } from './user-id';
 import { UserIdTakenError, UserRowGoneError, updateUserColumns } from './user-write';
 import {
@@ -146,11 +153,17 @@ export class UsersService implements OnModuleInit {
   /**
    * Returns the caller's personal notepad as stored: the ciphertext, plus the
    * legacy plaintext when the note predates encryption and has not been
-   * re-saved yet. Only one of the two is ever meaningful - the client re-saves
-   * a legacy note immediately, which clears it.
+   * re-saved yet. Only one of the two is ever meaningful.
+   *
+   * A caller holding NO notepad is answered 410 `NOTEPAD_MOVED` (`notepad.ts`): the notepad has moved
+   * into "Mes notes", so an empty one is not an empty notepad to edit but a route that has retired.
    */
   async getNotes(id: string): Promise<{ ciphertext: string; legacyNotes: string }> {
     const user = await this.findOne(id);
+    if (!heldNotepad(user)) {
+      this.logger.debug(`[NOTES] read by ${id.slice(0, 8)} - none held, answered NOTEPAD_MOVED`);
+      throw new NotepadMovedException();
+    }
     return {
       ciphertext: user.notesCiphertext ?? '',
       legacyNotes: user.notesCiphertext ? '' : (user.notes ?? ''),
@@ -161,15 +174,68 @@ export class UsersService implements OnModuleInit {
    * Persists the caller's notepad ciphertext, and drops the legacy plaintext:
    * once an encrypted copy exists, keeping the readable one would defeat the
    * whole change.
+   *
+   * ONLY OVER A NOTEPAD STILL HELD: an older build may keep editing one that has not moved yet, but
+   * none is CREATED any more, and none is written back after its move - the condition is in the same
+   * statement as the write, so a save racing the move either lands first (and the move, naming the
+   * digest it read, is refused `NOTEPAD_CHANGED`) or finds nothing and is answered `NOTEPAD_MOVED`.
    */
   async setNotes(id: string, ciphertext: string): Promise<void> {
-    await updateUserColumns(
-      this.userRepository,
-      id,
-      { notesCiphertext: ciphertext, notes: null },
-      'notes.set',
-      this.logger
-    );
+    const user = await this.findOne(id);
+    const [rows] = (await this.userRepository.query(
+      `UPDATE users SET "notesCiphertext" = $2, notes = NULL WHERE id = $1 AND ${HELD_NOTEPAD_SQL} IS NOT NULL RETURNING id`,
+      [user.id, ciphertext]
+    )) as [Array<{ id: string }>, number];
+    if (rows.length === 0) {
+      // Nothing written: the row went since its read (as `updateUserColumns` answers it), or it
+      // holds no notepad - moved, or never written.
+      if (!(await this.userRepository.findOne({ where: { id: user.id } }))) {
+        this.logger.warn(`[NOTES] user row gone since its read user=${id.slice(0, 8)} - not saved`);
+        throw new UserRowGoneError(id);
+      }
+      this.logger.log(
+        `[NOTES] save by ${id.slice(0, 8)} refused - no notepad held (moved, or never written)`
+      );
+      throw new NotepadMovedException();
+    }
+  }
+
+  /**
+   * Deletes the caller's notepad once it has been posted into "Mes notes" - only when `digest` names
+   * the notepad held NOW (`notepadDigest` of what `getNotes` served). The notepad, its legacy
+   * plaintext and its key go in ONE conditional statement: a save that lands between the mover's
+   * read and this call changes the held value, the condition fails, and nothing is deleted
+   * (`NOTEPAD_CHANGED`). None held is `NOTEPAD_MOVED` - another device of the account moved it first,
+   * which is the answer the mover wanted too.
+   *
+   * @returns once the notepad is gone; throws a typed refusal otherwise
+   */
+  async moveNotes(id: string, digest: string): Promise<void> {
+    const user = await this.findOne(id);
+    const held = heldNotepad(user);
+    if (!held) {
+      this.logger.log(`[NOTES] move by ${id.slice(0, 8)} - none held any more (moved already)`);
+      throw new NotepadMovedException();
+    }
+    if (notepadDigest(held) !== digest) {
+      this.logger.warn(
+        `[NOTES] move by ${id.slice(0, 8)} REFUSED - the digest names another notepad than the one held (saved since its read); nothing deleted`
+      );
+      throw new NotepadChangedException();
+    }
+    const [rows] = (await this.userRepository.query(
+      `UPDATE users SET notes = NULL, "notesCiphertext" = NULL, "notesKey" = NULL WHERE id = $1 AND ${HELD_NOTEPAD_SQL} = $2 RETURNING id`,
+      [user.id, held]
+    )) as [Array<{ id: string }>, number];
+    if (rows.length === 0) {
+      // Changed or moved between the read and the write: the re-read says which.
+      const again = heldNotepad(await this.findOne(id));
+      this.logger.warn(
+        `[NOTES] move by ${id.slice(0, 8)} lost a race - ${again ? 'saved since' : 'moved since'}; nothing deleted by this call`
+      );
+      throw again ? new NotepadChangedException() : new NotepadMovedException();
+    }
+    this.logger.log(`[NOTES] notepad of ${id.slice(0, 8)} moved into "Mes notes" - deleted here`);
   }
 
   /**
@@ -184,6 +250,13 @@ export class UsersService implements OnModuleInit {
    */
   async getOrCreateNotesKey(id: string): Promise<string> {
     const user = await this.findOne(id);
+    // No notepad held, no key served or minted: the notepad has moved (`notepad.ts`).
+    if (!heldNotepad(user)) {
+      this.logger.debug(
+        `[NOTES] key asked by ${id.slice(0, 8)} - none held, answered NOTEPAD_MOVED`
+      );
+      throw new NotepadMovedException();
+    }
     if (user.notesKey) return user.notesKey;
 
     const minted = randomBytes(32).toString('hex');

@@ -1151,6 +1151,32 @@ describe('ChannelService security hardening', () => {
     expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
   });
 
+  it('listMessages says which rows carry a VOUCHED `@tous`, so a reader draws only those as a call', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const body = (id: string, ms: number, metadata: object) => ({
+      id,
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(ms),
+      silent: false,
+      metadata,
+    });
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true
+        ? []
+        : [body('vouched', 200, { mentionsEveryone: true }), body('plain', 100, {})]
+    );
+
+    const page = await service.listMessages('ch1', 'u1', 50);
+
+    expect(page.map((m) => [m.id, m.mentionsEveryone])).toEqual([
+      ['vouched', true],
+      ['plain', false],
+    ]);
+  });
+
   // A membership notice is sent silent (it must not count as unread nor ring a phone), so a salon
   // holding nothing else would otherwise open on an empty history.
   it('listMessages returns the silent rows of a salon that has no body at all', async () => {

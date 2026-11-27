@@ -6,6 +6,10 @@
    * encrypted (principle 1), so nothing on the server can bring them back. Read once per opening of
    * the conversation; an unreadable device list or seat list says nothing
    * (`readSelfConversationDeviceCover`).
+   *
+   * AND THE RETENTION LINE, ALWAYS (owner, 2026-11-22, item 13): the media of "Mes notes" are
+   * ordinary conversation media, purged by the server after 90 days unopened by default, and the
+   * conversation says so - notes are where a member would least expect a photo to expire.
    */
   import { HardDriveDownload } from '@lucide/svelte';
   import { resolve } from '$app/paths';
@@ -55,3 +59,10 @@
     </a>
   </div>
 {/if}
+
+<p
+  class="text-text-muted text-2xs mx-auto my-2 max-w-xl px-4 text-center leading-snug"
+  data-self-conversation-retention
+>
+  {m.conversation_self_retention()}
+</p>

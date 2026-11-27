@@ -714,6 +714,23 @@ deleting this paragraph and the "older editors" sentence of the forms page.
   admitted build lacks the capability: the gates and the `?kind=self` check go, and the column with
   them. The capability itself stays the way the next kind is introduced.
 
+### Removal once no row holds a notepad - the personal notepad routes, answering `410 NOTEPAD_MOVED` (2026-11-26)
+
+- **The shim.** `GET /users/me/notes`, `GET /users/me/notes-key` and `PUT /users/me/notes` stay, for
+  two readers: the `1.8.2` client moving a notepad into "Mes notes" (`notepadMigration.ts`), and a build
+  older than `1.8.2`, whose profile page still shows the notepad. To an account holding NO notepad -
+  moved, or never written - all three answer `410 NOTEPAD_MOVED` (`apps/core-service/src/users/notepad.ts`):
+  no notepad is read, no key minted, none created. A save is accepted only over a notepad still held,
+  in the statement that checks it, so an older build may finish editing one that has not moved yet.
+- **What the older build sees once the notepad moved.** Its notepad page shows its load error, and a
+  save shows its save error; the notes are in "Mes notes" on the account's `1.8.2` devices. Nothing is
+  lost: the move deletes only the notepad whose digest it read (`409 NOTEPAD_CHANGED` otherwise), so an
+  edit an older build made in between is moved by the next run, as a second message.
+- **Removal condition.** No row holding a notepad (the count in
+  [the entry](backlog.d/p3-drop-the-notepad-columns-once-every-notepad-moved.md)) AND `minClientVersion`
+  past `1.8.2`: the three routes, `POST /users/me/notes/moved`, `users/notepad.ts`, the client's
+  `notepadMigration.ts` and the three columns go together (a held migration).
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
