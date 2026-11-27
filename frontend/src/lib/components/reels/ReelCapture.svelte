@@ -422,6 +422,13 @@
         void discardTakeAfterAsking();
         return;
       }
+      if (capture.kind === 'recording' && capture.locked) {
+        // A LOCKED take has no finger holding it: Back ends it and KEEPS it, as the cap does - the
+        // member filmed. The review's own entry is armed when the take reaches it.
+        console.debug('[reel-capture] Back on a locked take: the take is ended and kept');
+        send({ type: 'stop' });
+        return;
+      }
       dismissTake();
     };
     pushHistoryOverlay(takeEntry);

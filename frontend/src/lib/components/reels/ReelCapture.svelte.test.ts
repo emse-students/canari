@@ -496,6 +496,57 @@ describe('ReelCapture', () => {
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
+  describe('a LOCKED take (owner, 2026-11-27)', () => {
+    // The padlock's rectangle is stubbed per test and must not leak into the others.
+    let rectSpy: ReturnType<typeof vi.spyOn> | null = null;
+    afterEach(() => rectSpy?.mockRestore());
+    /** Holds past the threshold, then lifts the finger over the (stubbed) padlock: the take is locked. */
+    async function locked() {
+      rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        right: 40,
+        top: 0,
+        bottom: 40,
+        width: 40,
+        height: 40,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+      const r = await render();
+      r.pointer('pointerdown', 1000);
+      vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+      await settle();
+      // The finger is at (0,0), over the padlock; its lift locks the take.
+      r.pointer('pointerup', 4000);
+      await settle();
+      return r;
+    }
+
+    it('lifting over the padlock keeps recording: the recorder is not stopped', async () => {
+      await locked();
+      const recorder = Recorder.instances[0];
+      expect(recorder.state).toBe('recording');
+      expect(recorder.stop).not.toHaveBeenCalled();
+    });
+
+    it('one tap on stop ends the take exactly once', async () => {
+      const { tap } = await locked();
+      const recorder = Recorder.instances[0];
+      await tap();
+      expect(recorder.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('Back ends AND KEEPS the take (like the cap), it reaches the review', async () => {
+      const { target } = await locked();
+      const recorder = Recorder.instances[0];
+      backHandler()('back');
+      await settle();
+      expect(recorder.stop).toHaveBeenCalledTimes(1);
+      expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    });
+  });
+
   it('Back on a review asks first, and keeping the take re-arms Back', async () => {
     const { target, hold } = await render();
     await hold();

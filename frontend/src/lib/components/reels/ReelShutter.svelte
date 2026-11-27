@@ -18,7 +18,13 @@
    * button. Lifting the finger while it is over the padlock reports `onlock` INSTEAD of a release, the
    * take carries on hands-free, and the button then shows stop: one tap on it reports `onstop`. Sliding
    * back off the padlock before lifting locks nothing. The decision is read at the lift, from the
-   * pointer and the padlock's rectangle (`overPadlock`); no timer is involved.
+   * pointer and the padlock's rectangle (`overPadlock`); no timer is involved. ONLY THE FINGER THAT
+   * STARTED THE TAKE CAN LOCK IT: a press that lands while a take already runs (a volume-key take) is
+   * recorded at `down` (`lockable`), is offered no padlock and never locks. While that finger travels
+   * left toward the padlock (past `AIM_FREEZE_PX`) its vertical slide stops zooming, so aiming does not
+   * change the zoom; once locked the zoom stays where it was (no finger, no slide). The padlock shows
+   * only while recording, when the gallery slot to its left is empty, so the two never overlap.
+   * The lock is announced to a screen reader through a polite live line.
    */
   import { Lock } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -72,6 +78,30 @@
   let padlockEl: HTMLElement | undefined = $state();
   /** Margin around the padlock, in CSS px, so a thumb need not land on its exact pixels. */
   const PADLOCK_SLOP_PX = 12;
+  /** Leftward travel after which the held finger is aiming at the padlock and stops zooming. */
+  const AIM_FREEZE_PX = 24;
+  /** Where the followed pointer came down, horizontally. */
+  let pressX = 0;
+  /** The followed press began with no take running: only such a finger may lock one. */
+  let lockable = $state(false);
+
+  /** Forgets the followed pointer: nothing of a gesture may outlive its pointer. */
+  function resetGesture() {
+    pointerId = null;
+    stopTap = false;
+    holding = false;
+    overLock = false;
+    lockable = false;
+  }
+
+  // A disabled button gets no pointerup (the take is finishing, the cap or a camera error raced a
+  // stop tap): the gesture it was following is over, so the shutter can never stay dead.
+  $effect(() => {
+    if (disabled && pointerId !== null) {
+      console.debug('[reel-shutter] disabled under a followed pointer: gesture reset');
+      resetGesture();
+    }
+  });
 
   function padlockHit(event: PointerEvent): boolean {
     if (!padlockEl) return false;
@@ -87,12 +117,14 @@
   const CIRCUMFERENCE = 2 * Math.PI * 45;
 
   function down(event: PointerEvent) {
-    if (disabled || pointerId !== null) return;
+    if (disabled || pointerId !== null || event.button > 0) return;
     pointerId = event.pointerId;
+    pressX = event.clientX;
     pressY = event.clientY;
     stopTap = locked;
     holding = !locked;
     overLock = false;
+    lockable = !recording && !locked;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     event.preventDefault();
     if (stopTap) return;
@@ -101,7 +133,9 @@
 
   function move(event: PointerEvent) {
     if (event.pointerId !== pointerId || stopTap) return;
-    if (recording) overLock = padlockHit(event);
+    if (recording && lockable) overLock = padlockHit(event);
+    // Aiming at the padlock (left of the button) is not a zoom.
+    if (pressX - event.clientX > AIM_FREEZE_PX && lockable) return;
     onmove?.(pressY - event.clientY);
   }
 
@@ -114,9 +148,10 @@
       onstop?.();
       return;
     }
-    const lock = recording && padlockHit(event);
+    const lock = recording && lockable && padlockHit(event);
     holding = false;
     overLock = false;
+    lockable = false;
     if (lock) {
       console.debug('[reel-shutter] lifted over the padlock: the take is locked');
       onlock?.();
@@ -127,9 +162,10 @@
 
   function cancel(event: PointerEvent) {
     if (event.pointerId !== pointerId) return;
-    pointerId = null;
     holding = false;
     overLock = false;
+    lockable = false;
+    pointerId = null;
     if (stopTap) {
       // The system took a would-be stop tap: the take stays locked, nothing was decided.
       stopTap = false;
@@ -137,6 +173,19 @@
     }
     console.debug('[reel-shutter] pointer cancelled');
     oncancel();
+  }
+
+  /**
+   * The captured pointer was released by the engine without an up or a cancel (a stop tap racing the
+   * cap, the element torn down under the finger): the gesture is over. A hold is ended like a
+   * cancelled touch; a would-be stop tap decides nothing.
+   */
+  function lostCapture(event: PointerEvent) {
+    if (event.pointerId !== pointerId) return;
+    const wasStopTap = stopTap;
+    console.warn('[reel-shutter] pointer capture lost with no up: gesture reset');
+    resetGesture();
+    if (!wasStopTap) oncancel();
   }
 
   /** The keyboard's press is a tap: Enter or Space down and up at once takes a photo. */
@@ -162,8 +211,11 @@
   >
     {timeLabel}
   </span>
+  <span class="sr-only" aria-live="polite" data-reel-lock-live>
+    {locked ? m.reels_shutter_locked() : ''}
+  </span>
   <div class="relative">
-    {#if holding && recording && !locked}
+    {#if holding && lockable && recording && !locked}
       <span
         bind:this={padlockEl}
         role="img"
@@ -188,6 +240,7 @@
       onpointermove={move}
       onpointerup={up}
       onpointercancel={cancel}
+      onlostpointercapture={lostCapture}
       onkeydown={key}
       oncontextmenu={(e) => e.preventDefault()}
     >
