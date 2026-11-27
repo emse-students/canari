@@ -24,15 +24,22 @@
 --    `items` - hold formation values inside buckets and conditions of several shapes. The JSON
 --    STRING `"FSSS"` (a whole value, quotes included, never a substring) is respelt `"FISA"` in the
 --    text of each such document. Left as FSSS, a price bucket would stop matching the people it
---    priced and they would fall into "everyone else" - a wrong price, in silence;
+--    priced and they would fall into "everyone else" - a wrong price, in silence. The forms are
+--    rewritten in ONE statement that also re-bases each open revision built on the form as it stood
+--    (`form_drafts."baseFingerprint"` equal to `FORM_FINGERPRINT_SQL`, `forms/form-draft-revision.ts`,
+--    spelt the same way here, as 164 and 185 spell it): this rewrite is no edit made "outside" the
+--    revision, and must not make its publication ask "the form changed since" (409
+--    `FORM_CHANGED_SINCE_REVISION`). And the unpublished revisions themselves (`form_drafts.document`,
+--    the editor's whole payload) are respelt the same way: left as FSSS, publishing one would be
+--    refused by the criteria's own validation (`names a formation no profile carries`);
 -- 7. the second BDE of saint-etienne, renamed by 130 "BDE FSSS - Bureau des Élèves", becomes
 --    "BDE FISA - Bureau des Élèves" - matched on its slug AND that exact name, so a name an admin
 --    changed since is left as they wrote it;
 -- 8. the three CHECKs are NARROWED to the new list, which also PROVES the rewrite: a row still
 --    saying FSSS fails the ADD CONSTRAINT and rolls the whole file back.
 --
--- LEFT ALONE, deliberately: `users_pre_wp3` (a backup table) and `profile_changes` (a history: what
--- an edit said on its day), the answers and identities a submission recorded (a record of what was
+-- LEFT ALONE, deliberately: `users_pre_wp3` (a backup table), `profile_changes` (a history: what
+-- an edit said on its day) and `read_grant_journal` (the same, for a reader's cells), the answers and identities a submission recorded (a record of what was
 -- true when it was given), and free-text messages.
 --
 -- Read-only count before it runs (each line one number; all of them say what this file rewrites):
@@ -43,6 +50,7 @@
 --   SELECT count(*) FROM users WHERE formation = 'FSSS' OR cursus @> '[{"formation": "FSSS"}]';
 --   SELECT count(*) FROM posts WHERE "reachSpaces" @> '[{"formation": "FSSS"}]';
 --   SELECT count(*) FROM forms WHERE concat("priceMatrix"::text, "submitCondition"::text, items::text) LIKE '%"FSSS"%';
+--   SELECT count(*) FROM form_drafts WHERE document::text LIKE '%"FSSS"%';
 --
 -- ONE TRANSACTION, IDEMPOTENT: a re-run widens, finds nothing to rewrite and narrows again.
 -- LOCKS: the three ALTERs take ACCESS EXCLUSIVE on `spaces` (10 rows), `association_audiences` and
@@ -98,12 +106,31 @@ UPDATE users u SET cursus = (
     WHERE u.cursus @> '[{"formation": "FSSS"}]';
 
 -- 6. The criteria a manager saved: the whole JSON string "FSSS", never a substring of another.
-UPDATE forms SET "priceMatrix" = replace("priceMatrix"::text, '"FSSS"', '"FISA"')::jsonb
-    WHERE "priceMatrix"::text LIKE '%"FSSS"%';
-UPDATE forms SET "submitCondition" = replace("submitCondition"::text, '"FSSS"', '"FISA"')::jsonb
-    WHERE "submitCondition"::text LIKE '%"FSSS"%';
-UPDATE forms SET items = replace(items::text, '"FSSS"', '"FISA"')::jsonb
-    WHERE items::text LIKE '%"FSSS"%';
+-- The forms and the open revisions built on them, in ONE statement: the CTEs read one snapshot, so
+-- `at_base` compares against the forms BEFORE the rewrite, and the last UPDATE fingerprints the rows
+-- `updated` RETURNS, the forms AFTER it. A revision whose base had already moved is left as it was.
+WITH at_base AS (
+  SELECT d."formId"
+    FROM form_drafts d
+    JOIN forms f ON f.id = d."formId"
+   WHERE d.document IS NOT NULL
+     AND d."baseFingerprint" = md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId', 'staleAskedAt', 'staleKeptAt'])::text)
+), updated AS (
+  UPDATE forms f
+     SET "priceMatrix" = replace(f."priceMatrix"::text, '"FSSS"', '"FISA"')::jsonb,
+         "submitCondition" = replace(f."submitCondition"::text, '"FSSS"', '"FISA"')::jsonb,
+         items = replace(f.items::text, '"FSSS"', '"FISA"')::jsonb
+   WHERE concat(f."priceMatrix"::text, f."submitCondition"::text, f.items::text) LIKE '%"FSSS"%'
+  RETURNING f.*
+)
+UPDATE form_drafts d
+   SET "baseFingerprint" = md5((to_jsonb(u) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId', 'staleAskedAt', 'staleKeptAt'])::text)
+  FROM updated u
+ WHERE d."formId" = u.id
+   AND d."formId" IN (SELECT "formId" FROM at_base);
+-- The unpublished revisions: the editor's whole payload, criteria included.
+UPDATE form_drafts SET document = replace(document::text, '"FSSS"', '"FISA"')::jsonb
+    WHERE document::text LIKE '%"FSSS"%';
 UPDATE association_products SET "priceMatrix" = replace("priceMatrix"::text, '"FSSS"', '"FISA"')::jsonb
     WHERE "priceMatrix"::text LIKE '%"FSSS"%';
 UPDATE booking_spaces SET audience = replace(audience::text, '"FSSS"', '"FISA"')::jsonb

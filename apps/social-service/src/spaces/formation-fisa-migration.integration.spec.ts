@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { FORM_FINGERPRINT_SQL } from '../forms/form-draft-revision';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -24,6 +25,8 @@ const MIGRATION = readFileSync(
 );
 
 const OLD = "('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')";
+/** The application's own draft fingerprint, the one a publication compares (`form-draft-revision.ts`). */
+const FINGERPRINT = FORM_FINGERPRINT_SQL;
 const SPACE_SE = '00000000-0000-4000-8000-000000000001';
 const SPACE_ICM = '00000000-0000-4000-8000-000000000002';
 const BDE_FSSS = '00000000-0000-4000-8000-0000000000b1';
@@ -61,6 +64,8 @@ maybe('migration 187 against PostgreSQL (FSSS is FISA)', () => {
       CREATE TABLE users_pre_wp3 (id varchar(255) PRIMARY KEY, formation varchar(32) NULL);
       CREATE TABLE forms (id serial PRIMARY KEY, "priceMatrix" jsonb NULL, "submitCondition" jsonb NULL,
         items jsonb NOT NULL DEFAULT '[]'::jsonb);
+      CREATE TABLE form_drafts ("formId" int PRIMARY KEY REFERENCES forms(id), document jsonb NULL,
+        "baseFingerprint" text NULL);
       CREATE TABLE association_products (id serial PRIMARY KEY, "priceMatrix" jsonb NULL);
       CREATE TABLE booking_spaces (id serial PRIMARY KEY, audience jsonb NULL, items jsonb NOT NULL DEFAULT '[]'::jsonb);
       CREATE TABLE associations (id uuid PRIMARY KEY, slug varchar(255) NOT NULL, name varchar(255) NOT NULL);
@@ -88,10 +93,24 @@ maybe('migration 187 against PostgreSQL (FSSS is FISA)', () => {
          '{"formation":{"values":["FSSS"]}}',
          '[{"id":"q1","title":"FSSSX or FSSS?","showIf":{"formation":{"values":["FSSS"]}}}]'),
         (NULL, NULL, '[{"id":"q2","title":"untouched"}]');
+      INSERT INTO forms ("priceMatrix", "submitCondition", items) VALUES
+        ('{"cells":{"b1":"FSSS"}}', NULL, '[]'), (NULL, NULL, '[{"id":"q3","title":"stays"}]');
       INSERT INTO association_products ("priceMatrix") VALUES
         ('{"dimensions":[{"id":"d1","kind":"formation","buckets":[{"id":"b1","values":["FSSS"]}]}],"cells":{}}');
       INSERT INTO booking_spaces (audience, items) VALUES
         ('{"formation":{"values":["ICM","FSSS"]}}', '[{"id":"i1","showIf":{"formation":{"values":["FSSS"]}}}]');
+    `);
+    // Open revisions: form 1 built on the form as it stands (its base must follow the rewrite),
+    // form 3 built on a form changed since (its base must stay stale), form 4 untouched by the
+    // rewrite but whose own document names FSSS (the document must be respelt).
+    await client.query(`
+      INSERT INTO form_drafts ("formId", document, "baseFingerprint")
+        SELECT f.id, '{"submitCondition":{"formation":{"values":["FSSS"]}},"title":"FSSSX"}'::jsonb, ${FINGERPRINT}
+          FROM forms f WHERE f.id = 1;
+      INSERT INTO form_drafts ("formId", document, "baseFingerprint") VALUES (3, '{"title":"t"}', 'stale-base');
+      INSERT INTO form_drafts ("formId", document, "baseFingerprint")
+        SELECT f.id, '{"items":[{"id":"q3","showIf":{"formation":{"values":["FSSS"]}}}]}'::jsonb, ${FINGERPRINT}
+          FROM forms f WHERE f.id = 4;
     `);
     await client.query(
       `INSERT INTO associations VALUES ($1, 'bde-bureau-des-eleves', 'BDE FSSS - Bureau des Élèves'),
@@ -178,6 +197,7 @@ maybe('migration 187 against PostgreSQL (FSSS is FISA)', () => {
       { id: 'q1', title: 'FSSSX or FSSS?', showIf: { formation: { values: ['FISA'] } } },
     ]);
     expect(forms[1]).toEqual({ m: null, c: null, items: [{ id: 'q2', title: 'untouched' }] });
+    expect(forms[2].m).toEqual({ cells: { b1: 'FISA' } });
     await expect(one(`SELECT "priceMatrix" FROM association_products`)).resolves.toMatchObject({
       dimensions: [{ buckets: [{ values: ['FISA'] }] }],
     });
@@ -186,6 +206,29 @@ maybe('migration 187 against PostgreSQL (FSSS is FISA)', () => {
       audience: { formation: { values: ['ICM', 'FISA'] } },
       items: [{ id: 'i1', showIf: { formation: { values: ['FISA'] } } }],
     });
+  });
+
+  it('respells the open revisions and re-bases those built on the form as it stood', async () => {
+    const { rows } = await client.query(
+      `SELECT d."formId" AS id, d.document AS doc, d."baseFingerprint" = ${FINGERPRINT} AS "atBase"
+         FROM form_drafts d JOIN forms f ON f.id = d."formId" ORDER BY d."formId"`
+    );
+    expect(rows).toEqual([
+      // Built on form 1 before the rewrite: still at base after it, so publishing is no 409.
+      {
+        id: 1,
+        doc: { submitCondition: { formation: { values: ['FISA'] } }, title: 'FSSSX' },
+        atBase: true,
+      },
+      // Built on a form changed since: its base stays stale, as it was.
+      { id: 3, doc: { title: 't' }, atBase: false },
+      // Its form held no FSSS, its document did: respelt, base untouched (and still current).
+      {
+        id: 4,
+        doc: { items: [{ id: 'q3', showIf: { formation: { values: ['FISA'] } } }] },
+        atBase: true,
+      },
+    ]);
   });
 
   it('renames the second BDE by slug AND 130s exact name, and no other', async () => {
@@ -217,6 +260,7 @@ maybe('migration 187 against PostgreSQL (FSSS is FISA)', () => {
           `SELECT (SELECT json_agg(s ORDER BY id) FROM spaces s) AS s,
                   (SELECT json_agg(u ORDER BY id) FROM users u) AS u,
                   (SELECT json_agg(f ORDER BY id) FROM forms f) AS f,
+                  (SELECT json_agg(d ORDER BY "formId") FROM form_drafts d) AS d,
                   (SELECT json_agg(a ORDER BY id) FROM associations a) AS a`
         )
       ).rows[0];
