@@ -71,6 +71,13 @@ interface CachedImage {
  * than written off for six hours.
  */
 const PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * What a preview answer tells the caches between the reader and this service. PRIVATE, not public:
+ * the request is authenticated, and a MiGallery card carries a private album's title and place, so
+ * only the reader's own browser may keep it - never a shared cache on the way.
+ */
+const PREVIEW_CACHE_CONTROL = `private, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`;
 const PREVIEW_FAILURE_TTL_MS = 10 * 60 * 1000;
 const IMAGE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -614,7 +621,7 @@ export class SecurityController {
     if (cached) {
       this.logger.debug(`[LINK_PREVIEW] cache hit ${targetUrl.hostname} ok=${cached.ok}`);
       if (cached.ok === false) throw new BadRequestException(cached.message);
-      res.setHeader('Cache-Control', `public, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`);
+      res.setHeader('Cache-Control', PREVIEW_CACHE_CONTROL);
       return cached.payload;
     }
 
@@ -626,7 +633,7 @@ export class SecurityController {
     try {
       const payload = await this.resolveLinkPreview(targetUrl, abortController.signal);
       SecurityController.previewCache.set(cacheKey, { ok: true, payload }, PREVIEW_TTL_MS);
-      res.setHeader('Cache-Control', `public, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`);
+      res.setHeader('Cache-Control', PREVIEW_CACHE_CONTROL);
       return payload;
     } catch (error) {
       // ONLY AN ANSWER MAY BE CACHED, AND ONLY AN ANSWER MAY BE A 400.

@@ -2995,7 +2995,7 @@ accuses, at a level and with the status:
 | MiGallery answered | Logged |
 | --- | --- |
 | `401`/`403` | ERROR, `refused the album preview (<status>): MIGALLERY_API_KEY must hold the read scope` |
-| `404` carrying `code: album_not_found` | WARN, `MiGallery knows no album <id>` |
+| `404` carrying `code: album_not_found` | WARN, `MiGallery knows no such album` - never the id: for an unlisted album the id IS the link |
 | `404` without that code | WARN, `MiGallery has no preview route yet` - a MiGallery older than the route (it 404s the ROUTE, not the album; the code is the discriminator, never the message) |
 | any other status, a body with no name, or nothing at all | WARN, with the status or the transport cause |
 | no `MIGALLERY_API_KEY` in the environment | WARN, once per process |
@@ -3105,8 +3105,10 @@ that actually fired (`ConnectTimeoutError ... timeout: 10000ms`). A stated budge
 that fires is a comment, not a rule. `fetchYouTubeOEmbed` was outside both - no signal reached it at
 all, on the FIRST outbound request the preview path makes - and it now takes the same signal.
 
-The endpoint answers cached entries with a matching `Cache-Control: public, max-age=`, which is the
-only way to stop the browser asking at all. Before this, every render of every message re-downloaded
+The endpoint answers cached entries with a matching `Cache-Control: private, max-age=`, which is the
+only way to stop the browser asking at all. PRIVATE since 2026-11-27, public before: the request is
+authenticated and a MiGallery card names a private album's title and place, so only the reader's own
+browser may keep it, never a shared cache on the way. Before this, every render of every message re-downloaded
 the remote page: a conversation scrolled back through hammered a site that never agreed to any of
 it, and each of those requests announced that somebody was reading.
 

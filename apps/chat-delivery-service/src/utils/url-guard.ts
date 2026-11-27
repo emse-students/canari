@@ -780,7 +780,8 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   if (!match) return null;
 
   const albumId = match[1];
-  galleryLogger.debug(`[LINK_PREVIEW] MiGallery album ${albumId}`);
+  // NEVER THE ALBUM ID IN A LOG LINE: for an unlisted album the id IS the bearer link, and a log
+  // is read by people the link was never sent to. The host and the outcome say all a reader needs.
   const galleryBaseUrl = (process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`).replace(
     /\/$/,
     ''
@@ -825,7 +826,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
         `[LINK_PREVIEW] MiGallery refused the album preview (${res.status}): MIGALLERY_API_KEY must hold the read scope - falling back to the page`
       );
     } else if (res.status === 404 && data.code === MIGALLERY_ALBUM_NOT_FOUND) {
-      galleryLogger.warn(`[LINK_PREVIEW] MiGallery knows no album ${albumId}`);
+      galleryLogger.warn('[LINK_PREVIEW] MiGallery knows no such album (/albums/{uuid}, 404)');
     } else if (res.status === 404) {
       // A 404 WITHOUT the route's own code is the 404 of a MiGallery that has no such route yet.
       galleryLogger.warn(
@@ -841,7 +842,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
 
   if (!data.name) {
     galleryLogger.warn(
-      `[LINK_PREVIEW] MiGallery album preview for ${albumId} carried no name - falling back to the page`
+      '[LINK_PREVIEW] MiGallery album preview carried no name - falling back to the page'
     );
     return null;
   }

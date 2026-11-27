@@ -201,7 +201,14 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
     };
     galleryMock.mockResolvedValueOnce(card);
 
-    expect(await controller.getLinkPreview(album, makeRes() as never)).toEqual(card);
+    const res = makeRes();
+    expect(await controller.getLinkPreview(album, res as never)).toEqual(card);
+    // An authenticated answer that may name a private album: the reader's browser may keep it, a
+    // shared cache may not - on the first answer and on the cached one alike.
+    expect(res.headers['Cache-Control']).toBe('private, max-age=21600');
+    const again = makeRes();
+    await controller.getLinkPreview(album, again as never);
+    expect(again.headers['Cache-Control']).toBe('private, max-age=21600');
     // The page of a private album sends an anonymous reader to sign in: reading it is what drew
     // the generic MiGallery card for every album, so a card the API gave must never touch it.
     expect(fetchMock).not.toHaveBeenCalled();

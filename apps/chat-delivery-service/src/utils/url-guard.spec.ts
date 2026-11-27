@@ -394,6 +394,7 @@ describe('MiGallery album cover', () => {
     const realBase = process.env.MIGALLERY_API_URL;
     let warn: jest.SpyInstance;
     let error: jest.SpyInstance;
+    let debug: jest.SpyInstance;
     let fetchMock: jest.Mock;
 
     beforeEach(() => {
@@ -401,11 +402,13 @@ describe('MiGallery album cover', () => {
       delete process.env.MIGALLERY_API_URL;
       warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     });
     afterEach(() => {
       global.fetch = realFetch;
       warn.mockRestore();
       error.mockRestore();
+      debug.mockRestore();
       if (realKey === undefined) delete process.env.MIGALLERY_API_KEY;
       else process.env.MIGALLERY_API_KEY = realKey;
       if (realBase === undefined) delete process.env.MIGALLERY_API_URL;
@@ -463,7 +466,7 @@ describe('MiGallery album cover', () => {
       warn.mockClear();
       answerWith(404, { code: 'album_not_found', message: 'Album not found' });
       expect(await preview()).toBeNull();
-      expect(logged(warn)).toContain(`MiGallery knows no album ${ID}`);
+      expect(logged(warn)).toContain('MiGallery knows no such album');
       expect(logged(warn)).not.toContain('no preview route');
     });
 
@@ -481,6 +484,21 @@ describe('MiGallery album cover', () => {
       }) as unknown as typeof fetch;
       expect(await preview()).toBeNull();
       expect(logged(warn)).toContain('unreachable');
+    });
+
+    it('never writes the album id into a log line: for an unlisted album it is the link itself', async () => {
+      for (const [status, body] of [
+        [200, { name: 'Gala' }],
+        [200, {}],
+        [403, {}],
+        [404, {}],
+        [404, { code: 'album_not_found' }],
+        [502, {}],
+      ] as const) {
+        answerWith(status, body);
+        await preview();
+      }
+      for (const spy of [warn, error, debug]) expect(logged(spy)).not.toContain(ID);
     });
 
     it('leaves a URL that is not an album link to the page path, without a request', async () => {
