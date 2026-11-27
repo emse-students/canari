@@ -20,10 +20,18 @@ export interface MiconnectUserRecord {
  */
 export interface MiconnectUserListing extends MiconnectUserRecord {
   uuid: string;
+  /**
+   * The account's `uid`: the OIDC subject every provider of the estate gives it (`hashed_user_id`),
+   * Canari's `users.id` and each sibling site's key. Gone with the account, so the Alumni merge
+   * captures it at the mark (D54).
+   */
+  uid: string;
   username: string;
   type: string;
   email: string;
   is_active: boolean;
+  /** A superuser is never a merge target (D55). */
+  is_superuser?: boolean;
   /** ISO time of the last sign-in at MiConnect, null when it never signed in. */
   last_login: string | null;
 }
@@ -45,7 +53,7 @@ export const WRITE_FLOW = 'miconnect-profile-write';
 
 /**
  * What one write may change: the display name, and the allowlisted attribute keys (`profile`, the
- * merge mark's three) - a key set to `null` is removed. MiConnect refuses anything else.
+ * merge mark's seven) - a key set to `null` is removed. MiConnect refuses anything else.
  */
 export interface MiconnectUserWrite {
   name?: string;
@@ -159,7 +167,7 @@ export class MiconnectEditorClient {
    * another writer taking that lock (the Alumni merge policy) is lost.
    *
    * MiConnect refuses - nothing written - a field other than `name` and `attributes`, an attribute
-   * other than `profile` and the merge mark's three keys, a mark on an account that is not `alumni-`,
+   * other than `profile` and the merge mark's seven keys, a mark on an account that is not `alumni-`,
    * a service account and a superuser. A refusal, an access-denied answer or anything but the flow's
    * end is a {@link ProfileEditUpstreamError} carrying the refusal's stable code (`refusal`, read
    * from the `refused:<code>:` prefix the policy writes, never from its prose). A refusal the

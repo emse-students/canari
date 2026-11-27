@@ -14,9 +14,19 @@ Two traps met writing it, both about the TEST and not the flow:
   * authentik's session cookie is a signed JWT; the bare session key is accepted only under TEST, so
     a hand-made cookie is ignored and the executor quietly PLANS ANEW, with an empty context;
   * a completed POST is answered with a redirect to the next challenge, which must be followed.
+
+THE ROLLED-BACK MERGE (D54: `transaction.on_commit(merged.save)` - no Event, so no push, for a merge
+that rolls back) is driven by raising INSIDE the policy's own atomic block, after the merge registered
+its Event: `django.db.transaction.on_commit` is wrapped for that one sign-in. The other form - the
+whole sign-in inside an OUTER `transaction.atomic()` here, rolled back after - CANNOT RUN: on
+2026-11-27 the step never returned and was killed after about six hours, the executor planning again
+and again inside the open outer transaction. Do not reintroduce it.
 """
 import json
+import os
+import threading
 from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -25,7 +35,11 @@ from django.contrib.auth.models import AnonymousUser
 from django.test import Client, RequestFactory
 
 from authentik.core.models import Group, User
-from authentik.events.models import Event
+from authentik.events.models import Event, Notification, NotificationRule, NotificationTransport
+from authentik.events.tasks import gdpr_cleanup
+from authentik.policies.engine import PolicyEngine
+from authentik.policies.models import PolicyEngineMode
+from guardian.shortcuts import get_anonymous_user
 from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
 from authentik.lib.merge import MERGE_LIST_UNIQUE
 from authentik.policies.utils import delete_none_values
@@ -241,6 +255,82 @@ def profile(user):
     return user.attributes.get("profile")
 
 
+PUSH = "miconnect-alumni-merge-push"
+PUSH_SECRET_HEADER = "X-MiConnect-Alumni-Merge-Secret"
+
+
+class PushStub:
+    """Canari's `POST /api/hooks/miconnect/alumni-merge`, stubbed: a receiver on the worker's loopback
+    that records every POST with its path (85-alumni-merge-push.yaml).
+
+    THE PUSH IS DELIVERED SYNCHRONOUSLY, never awaited from the worker. Every Event of this run is
+    dispatched to every rule (`event_trigger_dispatch`), thousands of tasks the worker drains in its
+    own time - measured on a fresh instance, the merge's tasks were still queued two minutes after
+    the sign-in. `deliver` therefore runs what authentik's `notification_transport` runs, for the
+    rule's own destination, from this process, to `/sync`. The stored transport is pointed at
+    `/worker` for the whole run and NEVER given its production URL back: this instance is thrown
+    away, and the worker, still draining after the run, would otherwise send the test's merges to
+    production."""
+
+    def __init__(self):
+        self.received = []
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                stub.received.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": json.loads(self.rfile.read(length) or b"{}")})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"completed":true}')
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        NotificationTransport.objects.filter(name=PUSH).update(webhook_url=f"{self.base}/worker")
+
+    def deliver(self, event):
+        """What `notification_transport` does for this rule, synchronously: one Notification per
+        destination user (`send_once` stops at the first), sent by the stored transport - its body
+        and header mappings, its secret - to `/sync`. Returns how many were sent."""
+        rule = NotificationRule.objects.get(name=PUSH)
+        transport = NotificationTransport.objects.get(name=PUSH)
+        transport.webhook_url = f"{self.base}/sync"
+        sent = 0
+        for destination in rule.destination_users(event):
+            notification = Notification(severity=rule.severity, body=event.summary, event=event, user=User.objects.get(pk=destination.pk))
+            transport.send(notification)
+            sent += 1
+            if transport.send_once:
+                break
+        return sent
+
+    def for_duplicate(self, duplicate_uuid):
+        return [r for r in self.received if r["path"] == "/sync" and r["body"].get("duplicateUuid") == duplicate_uuid]
+
+    def close(self):
+        self.server.shutdown()
+
+
+def rule_sends(event):
+    """Whether the push rule's policies pass `event`, decided as authentik's `event_trigger_handler`
+    decides it - synchronously, so a refusal is proven NOT pushed without waiting on the worker."""
+    rule = NotificationRule.objects.get(name=PUSH)
+    user = User.objects.filter(pk=(event.user or {}).get("pk")).first() or get_anonymous_user()
+    engine = PolicyEngine(rule, user)
+    engine.mode = PolicyEngineMode.MODE_ANY
+    engine.empty_result = False
+    engine.use_cache = False
+    engine.request.obj = event
+    engine.request.context["event"] = event
+    engine.build()
+    return engine.result.passing
+
+
 with Tenant.objects.get(ready=True):
     flow = Flow.objects.get(slug=SLUG)
     for source in (OAuthSource.objects.get(slug="cas-emse"), SAMLSource.objects.get(slug="alumni")):
@@ -248,6 +338,7 @@ with Tenant.objects.get(ready=True):
     for gone in ("miconnect-enrollment-cas", "miconnect-enrollment-alumni"):
         assert not Flow.objects.filter(slug=gone).exists(), f"{gone} still exists"
 
+    stub = None
     try:
         # A - a student: both pages, the legacy attributes still written for the old claims.
         user = enrol("e2e-a", "Jean DUPONT", {"campus": "saint-etienne", "is_student": True, **BOXES_OFF}, {"attributes.formation": "ICM", "attributes.promo": 2024})
@@ -394,10 +485,19 @@ with Tenant.objects.get(ready=True):
         # mark whose target no longer exists is an orphan: cleared, and the sign-in is an ordinary one.
         cas_source = OAuthSource.objects.get(slug="cas-emse")
         admins = Group.objects.create(name="e2e-merge-superusers", is_superuser=True)
+        check(Tenant.objects.get(ready=True).gdpr_compliance is True, "the tenant keeps gdpr_compliance on (D57 fixes the Event, not the setting)")
+        rule = NotificationRule.objects.get(name=PUSH)
+        check(rule.destination_event_user and list(rule.transports.values_list("name", flat=True)) == [PUSH], "the push rule sends to the event's user through its one transport")
+        check([b.policy.name for b in rule.bindings.all()] == ["miconnect-alumni-merge-is-the-event"], "the push rule is bound to its one policy")
+        transport = NotificationTransport.objects.get(name=PUSH)
+        check(transport.mode == "webhook" and transport.send_once and transport.webhook_url.endswith("/api/hooks/miconnect/alumni-merge") and transport.webhook_mapping_body and transport.webhook_mapping_headers, f"the push transport is a send-once webhook to Canari's hook ({transport.mode}, {transport.webhook_url})")
+        stub = PushStub()
+        secret = os.environ["MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET"]
+        pushed = []
 
         asserted = ("Jean Marie", "Dupont")
 
-        def merge_case(af_id, target_kwargs=None, duplicate_name="Jean Marie Dupont", duplicate_username=None, into=None, extra=None, cas=True):
+        def merge_case(af_id, target_kwargs=None, duplicate_name="Jean Marie Dupont", duplicate_username=None, into=None, extra=None, cas=True, mark=None):
             """A CAS target, an `alumni-<af_id>` duplicate holding the Alumni link, the mark; `extra`
             bends one fact to make a refusal."""
             target = User.objects.create(**{"username": f"e2e-merge-{af_id}", "name": "Jean-Marie DUPONT", **(target_kwargs or {})})
@@ -407,13 +507,15 @@ with Tenant.objects.get(ready=True):
             link = UserSAMLSourceConnection.objects.create(user=duplicate, source=source, identifier=af_id)
             if extra:
                 extra(target, duplicate)
-            duplicate.attributes = {"alumni_merge_into": into or str(target.uuid), "alumni_merge_marked_by": "e2e-admin", "alumni_merge_marked_at": "2026-11-23T12:00:00Z"}
+            duplicate.attributes = {"alumni_merge_into": into or str(target.uuid), "alumni_merge_marked_by": "e2e-admin", "alumni_merge_marked_at": "2026-11-23T12:00:00Z", **(mark or {})}
             duplicate.save()
             return target, duplicate, link
 
         # The target's "Jean-Marie DUPONT" is the asserted "Jean Marie" "Dupont", folded.
         target, duplicate, link = merge_case("90020")
         duplicate_pk = duplicate.pk
+        duplicate_uuid = str(duplicate.uuid)
+        duplicate_subject_before = duplicate.uid
         last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
         link.refresh_from_db()
         check(signed_in_as == target.username, f"a marked duplicate's sign-in signs the TARGET in ({signed_in_as}, {last.get('component')})")
@@ -422,6 +524,21 @@ with Tenant.objects.get(ready=True):
         check(not User.objects.filter(attributes__alumni_merge_into=str(target.uuid)).exists(), "no account carries the mark any more")
         merged = Event.objects.filter(action="custom_alumni_merge", context__target_pk=target.pk, context__duplicate_pk=duplicate_pk).first()
         check(merged is not None and merged.context.get("marked_by") == "e2e-admin" and merged.context.get("af_id") == "90020", f"the merge is journalled as an Event naming both accounts, who marked it and the af_id ({merged and merged.context})")
+        # D57: the Event survives the duplicate. authentik's `gdpr_compliance` deletes EVERY Event of a
+        # deleted user (`event_user_pre_delete_cleanup` -> `gdpr_cleanup`, run by the worker); it is run
+        # HERE, synchronously, for the duplicate's pk, so the assertion does not wait on the worker.
+        gdpr_cleanup.fn(duplicate_pk)
+        survivors = list(Event.objects.filter(action="custom_alumni_merge", context__duplicate_pk=duplicate_pk))
+        check(len(survivors) == 1, f"EXACTLY ONE merge Event exists after the duplicate's GDPR cleanup ({len(survivors)})")
+        check(survivors[0].user.get("pk") == target.pk, f"its user is the TARGET, not the deleted duplicate ({survivors[0].user})")
+        check(survivors[0].context.get("duplicate_uuid") == duplicate_uuid and survivors[0].context.get("target_uuid") == str(target.uuid) and survivors[0].context.get("mode") == "auto", f"its context names both uuids and the mode ({survivors[0].context})")
+        # D54: both OIDC subjects, the duplicate's read before its delete (it derives from the pk).
+        check(survivors[0].context.get("target_subject") == target.uid, f"its context names the target's subject ({survivors[0].context.get('target_subject')})")
+        check(duplicate_subject_before and survivors[0].context.get("duplicate_subject") == duplicate_subject_before, f"its context names the DUPLICATE's subject as it was before the delete ({survivors[0].context.get('duplicate_subject')})")
+        check(survivors[0].client_ip, "it carries the client's address")
+        check(rule_sends(survivors[0]), "the push rule sends the merge's Event")
+        pushed.append(survivors[0])
+
         target.refresh_from_db()
         check((target.attributes.get("alumni") or {}).get("cotisant") is True, f"the membership read is written on the target ({target.attributes.get('alumni')})")
         _, again = sign_in_to_the_end(target, link, asserted)
@@ -458,13 +575,49 @@ with Tenant.objects.get(ready=True):
             )
             refusal = Event.objects.filter(action="custom_alumni_merge_refused", context__af_id=af_id).first()
             check(refusal is not None and refusal.client_ip, f"the refusal when {why} is journalled as an Event with the client's address ({refusal and refusal.client_ip})")
+            check(not rule_sends(refusal), f"the refusal when {why} is never pushed")
         check("name_mismatch" in Event.objects.get(action="custom_alumni_merge_refused", context__af_id="90024").context["reasons"], "an asserted name that differs is refused as name_mismatch")
 
         # A hyphenated, particled name: "Marie-Claire DE LA TOUR" is the asserted "Marie Claire" "de la Tour".
         target, duplicate, link = merge_case("90036", target_kwargs={"name": "Marie-Claire DE LA TOUR"}, duplicate_name="Marie Claire de la Tour")
+        hyphenated_uuid = str(duplicate.uuid)
         _, signed_in_as = sign_in_to_the_end(duplicate, link, ("Marie Claire", "de la Tour"))
         link.refresh_from_db()
         check(signed_in_as == target.username and link.user_id == target.pk, f"a hyphenated name matches the asserted one, folded ({signed_in_as})")
+        pushed.append(Event.objects.get(action="custom_alumni_merge", context__duplicate_uuid=hyphenated_uuid))
+
+        # D55 - THE MANUAL MARK: an admin decided identity, with a reason Canari keeps. The names differ
+        # between Alumnforce and the target, and the merge goes through, because what the admin SAW is
+        # what is still true at the sign-in: the asserted name is the Alumni name the admin saw, the
+        # target's name is the one the admin saw.
+        def manual(seen_alumni="Jean Marie Dupont", seen_target="Jean-Marie MARTIN", **over):
+            return {"alumni_merge_mode": "manual", "alumni_merge_id": "00000000-0000-4000-8000-000000000055", "alumni_merge_seen_alumni_name": seen_alumni, "alumni_merge_seen_target_name": seen_target, **over}
+
+        target, duplicate, link = merge_case("90040", target_kwargs={"name": "Jean-Marie MARTIN"}, mark=manual())
+        manual_pk, manual_uuid = duplicate.pk, str(duplicate.uuid)
+        _, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        link.refresh_from_db()
+        check(signed_in_as == target.username and link.user_id == target.pk and not User.objects.filter(pk=manual_pk).exists(), f"a manual mark merges despite a different name ({signed_in_as})")
+        gdpr_cleanup.fn(manual_pk)
+        manual_event = Event.objects.get(action="custom_alumni_merge", context__duplicate_pk=manual_pk)
+        check(manual_event.context.get("mode") == "manual" and manual_event.context.get("merge_id") == "00000000-0000-4000-8000-000000000055", f"its Event names the mode and Canari's merge id ({manual_event.context})")
+        check(manual_event.context.get("duplicate_uuid") == manual_uuid, "the manual merge's Event names the duplicate")
+        pushed.append(manual_event)
+
+        manual_refusals = [
+            ("90041", "alumni_name_changed", "the name Alumnforce asserts is not the Alumni name the admin saw", dict(target_kwargs={"name": "Jean-Marie MARTIN"}, mark=manual(seen_alumni="Pierre Durand"))),
+            ("90042", "target_changed", "the target's name is not the one the admin saw", dict(target_kwargs={"name": "Jean-Marie MARTIN"}, mark=manual(seen_target="Paul MARTIN"))),
+            ("90043", "manual_mark_incomplete", "a manual mark misses the target name the admin saw", dict(target_kwargs={"name": "Jean-Marie MARTIN"}, mark={k: v for k, v in manual().items() if k != "alumni_merge_seen_target_name"})),
+            ("90044", "manual_mark_incomplete", "a manual mark misses its merge id", dict(target_kwargs={"name": "Jean-Marie MARTIN"}, mark={k: v for k, v in manual().items() if k != "alumni_merge_id"})),
+            ("90045", "mark_mode_unknown", "the mark's mode is neither auto nor manual", dict(mark={"alumni_merge_mode": "forced"})),
+        ]
+        for af_id, code, why, bend in manual_refusals:
+            target, duplicate, link = merge_case(af_id, **bend)
+            last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+            link.refresh_from_db()
+            refusal = Event.objects.filter(action="custom_alumni_merge_refused", context__af_id=af_id).first()
+            check(last.get("component") == "ak-stage-access-denied" and signed_in_as is None and link.user_id == duplicate.pk and refusal is not None and code in refusal.context["reasons"], f"refused as {code} when {why} ({last.get('component')}, {refusal and refusal.context.get('reasons')})")
+            check(not rule_sends(refusal), f"the refusal when {why} is never pushed")
 
         # The mark changed between the start of the sign-in and the merge: refused, the new mark kept.
         target, duplicate, link = merge_case("90035")
@@ -492,7 +645,55 @@ with Tenant.objects.get(ready=True):
         User.objects.filter(pk=duplicate.pk).update(attributes={**duplicate.attributes, "alumni_merge_into": str(other.uuid)})
         _, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
         check(User.objects.get(pk=duplicate.pk).attributes.get("alumni_merge_into") == str(other.uuid), f"an orphan clear keeps a mark that changed under it ({signed_in_as})")
+
+        # D54 - A MERGE THAT ROLLS BACK ANNOUNCES NOTHING (`transaction.on_commit(merged.save)`). The
+        # fault is raised INSIDE the policy's own atomic block, after the merge registered its Event's
+        # save: `django.db.transaction.on_commit` - which the policy reads at call time - is wrapped to
+        # register that ONE callback and then raise, so the block exits by an exception and Django
+        # discards its on-commit callbacks with the rollback. Every other on_commit of the sign-in is
+        # passed through untouched. (Why not an outer atomic around the sign-in: see the docstring.)
+        from django.db import transaction as django_transaction
+
+        real_on_commit = django_transaction.on_commit
+        injected = []
+
+        def on_commit_then_fail(func, *args, **kwargs):
+            real_on_commit(func, *args, **kwargs)
+            owner = getattr(func, "__self__", None)
+            if isinstance(owner, Event) and owner.action == "custom_alumni_merge":
+                injected.append(owner.context.get("duplicate_uuid"))
+                raise RuntimeError("e2e: a fault after the merge registered its Event")
+
+        target, duplicate, link = merge_case("90046")
+        rolled_pk, rolled_uuid = duplicate.pk, str(duplicate.uuid)
+        django_transaction.on_commit = on_commit_then_fail
+        try:
+            last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        finally:
+            django_transaction.on_commit = real_on_commit
+        link.refresh_from_db()
+        check(injected == [rolled_uuid], f"the fault was raised inside the merge's atomic block, after its Event was registered ({injected})")
+        check(User.objects.filter(pk=rolled_pk).exists() and link.user_id == rolled_pk, f"the merge rolled back: the duplicate and its Alumni link stand ({last.get('component')}, {signed_in_as})")
+        check(not Event.objects.filter(action="custom_alumni_merge", context__duplicate_uuid=rolled_uuid).exists(), "a rolled-back merge saves NO merge Event")
+        check(not [r for r in stub.received if r["body"].get("duplicateUuid") == rolled_uuid], "a rolled-back merge is never pushed")
+
+        # D54 - THE PUSH, RECEIVED: of every alumni Event of this run, the rule passes the merges and
+
+        # nothing else, and each merge is delivered EXACTLY once, to its target, carrying the
+        # duplicate's uuid, the target's and the shared secret.
+        passed = [e for e in Event.objects.filter(action__startswith="custom_alumni") if rule_sends(e)]
+        check(sorted(str(e.pk) for e in passed) == sorted(str(e.pk) for e in pushed), f"the rule passes the merges and nothing else ({len(passed)} Event(s) for {len(pushed)} merge(s))")
+        for event in pushed:
+            duplicate_uuid = event.context["duplicate_uuid"]
+            check(stub.deliver(event) == 1, f"the merge of {duplicate_uuid[:8]} has ONE destination, its target")
+            got = stub.for_duplicate(duplicate_uuid)
+            check(len(got) == 1, f"the merge of {duplicate_uuid[:8]} is pushed EXACTLY once ({len(got)})")
+            check(got[0]["headers"].get(PUSH_SECRET_HEADER.lower()) == secret, "the push carries the shared secret")
+            check(got[0]["body"] == {"duplicateUuid": duplicate_uuid, "targetUuid": event.context["target_uuid"], "mergeId": event.context.get("merge_id", ""), "duplicateSubject": event.context["duplicate_subject"], "targetSubject": event.context["target_subject"]}, f"the push names the duplicate, the target, the merge and both subjects ({got[0]['body']})")
+            check(event.context["duplicate_subject"] and event.context["target_subject"], "both subjects are pushed non-empty")
     finally:
+        if stub is not None:
+            stub.close()
         User.objects.filter(username__startswith="e2e-").delete()
         User.objects.filter(username__startswith="alumni-900").delete()
         User.objects.filter(username__startswith="alumni-e2e-").delete()

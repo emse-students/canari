@@ -685,6 +685,24 @@ export class UsersController {
     return this.alumniMerge.listOpenMerges();
   }
 
+  /** The latest closed Alumni merges, each with what its sibling sites did (D54). */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-merges/closed')
+  listClosedAlumniMerges() {
+    return this.alumniMerge.listClosedMerges();
+  }
+
+  /**
+   * "Rattacher à un autre compte" (D55): the MiConnect accounts matching `q` that may be this
+   * duplicate's target - eligible ones only, each with what tells homonyms apart.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-duplicates/:duplicateUuid/targets')
+  alumniMergeTargets(@Param('duplicateUuid') duplicateUuid: string, @Query('q') q: unknown) {
+    if (!UUID_RE.test(duplicateUuid)) throw new BadRequestException('duplicateUuid must be a uuid');
+    return this.alumniMerge.eligibleTargets(duplicateUuid, typeof q === 'string' ? q : '');
+  }
+
   /** "Annuler" an open merge: the mark is removed at MiConnect, the trace closed as cancelled. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post('admin/alumni-duplicates/:duplicateUuid/cancel')
@@ -697,10 +715,11 @@ export class UsersController {
   }
 
   /**
-   * "Rattacher" (D48): MARKS the duplicate MiConnect account for a merge into `{ targetUuid }`, which
-   * MiConnect carries out at its next Alumni sign-in, traced (`alumni_merges`). Its Canari account is
-   * erased only after that merge, when the open merges are next read. Calling it again resumes an
-   * interrupted one.
+   * "Rattacher" (D48, D55): MARKS the duplicate MiConnect account for a merge into
+   * `{ targetUuid, reason }`, which MiConnect carries out at its next Alumni sign-in, traced
+   * (`alumni_merges`). The mode is the server's: `manual` when the target is not the unique
+   * name-and-promo match, and then `reason` is required. Its Canari account is erased only after that
+   * merge, when MiConnect pushes it. Calling it again resumes an interrupted one.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post('admin/alumni-duplicates/:duplicateUuid/merge')
@@ -708,13 +727,16 @@ export class UsersController {
   mergeAlumniDuplicate(
     @Param('duplicateUuid') duplicateUuid: string,
     @Headers('x-user-id') actorId: string,
-    @Body() body: { targetUuid?: unknown }
+    @Body() body: { targetUuid?: unknown; reason?: unknown }
   ) {
     const targetUuid = body?.targetUuid;
     if (typeof targetUuid !== 'string' || !UUID_RE.test(targetUuid)) {
       throw new BadRequestException('targetUuid must be a uuid');
     }
-    return this.alumniMerge.merge(duplicateUuid, targetUuid, actorId);
+    if (body?.reason !== undefined && typeof body.reason !== 'string') {
+      throw new BadRequestException('reason must be a string');
+    }
+    return this.alumniMerge.merge(duplicateUuid, targetUuid, actorId, body?.reason);
   }
 
   /**

@@ -70,7 +70,10 @@ CANARI_ECOSYSTEM_ROOT=/path/to/parent bun tools/ecosystem-shape/shape.mjs
 ## Vendored copies
 
 `vendored.mjs` is the table of files copied byte-identically from Canari into a sibling (the sign-in
-handoff, and the Meta in-app browser gate in Sky, MiGallery and Portail-etu). `shape.mjs` compares
+handoff, the Alumni merge call verifier in Sky and MiGallery, and the Meta in-app browser gate in
+Sky, MiGallery and Portail-etu). Le Cercle is on GitLab, outside this tool: it pins its copy of
+`libs/handoff/alumni-merge-verify.ts` (at `src/lib/server/auth/handoff/alumni-merge-verify.ts`) with
+a sha256 test in its own CI, so a change to that file is re-vendored there with its new sha256. `shape.mjs` compares
 each copy; it reads the siblings' CHECKOUTS beside Canari (or `CANARI_ECOSYSTEM_ROOT`), never their
 `main` on GitHub, so it passes once each sibling's gate pull request is merged and pulled.
 `.github/scripts/tests/ecosystem-shape-vendored.test.mjs` (in `make test-ci-scripts`) needs no sibling.
