@@ -1,6 +1,6 @@
 ## Reading owed - a PRIVATE MiGallery album link draws its own card (title, date, place, wide cover)
 
-target: 1.8.2
+target: 1.8.3
 
 Built (2026-11-27): chat-delivery reads MiGallery's read-scoped `GET /api/albums/[id]/preview` instead of
 `/info`, which became the staff's in MiGallery v2.23.1 and had turned every album card generic
