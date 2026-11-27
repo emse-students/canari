@@ -1,127 +1,64 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
-import type { Repository } from 'typeorm';
-import { InternalMailController, mailDomainOf } from './internal-mail.controller';
-import type { User } from '../users/entities/user.entity';
-import {
-  MiconnectReadError,
-  type MiconnectAccount,
-  type MiconnectReaderClient,
-} from '../auth/handoff/miconnect-reader.client';
+import { Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { InternalMailController, MAIL_ACCOUNT_UNKNOWN } from './internal-mail.controller';
 
 /**
- * THE MAIL RELAY'S ELIGIBILITY SOURCE (docs/wiki/mail-client-transport.md#eligibility): the domain
- * of the MiConnect address, read when asked, and only the domain leaves. Each answer the gateway
- * tells apart (apps/chat-gateway/src/mail_relay.rs, `Eligibility::domain_of`) is pinned here.
+ * THE MAIL RELAY'S ELIGIBILITY SOURCE (docs/wiki/mail-client-transport.md#eligibility): the class
+ * stored at sign-in, read from the row - no MiConnect call, no address.
  */
-describe('InternalMailController.mailDomain', () => {
-  const SECRET = 'internal-secret-for-tests';
-  const saved = process.env.INTERNAL_SECRET;
-  beforeEach(() => {
+describe('InternalMailController', () => {
+  const SECRET = 'internal-test-secret';
+  let previous: string | undefined;
+
+  beforeAll(() => {
+    previous = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = SECRET;
   });
-  afterEach(() => {
-    if (saved === undefined) delete process.env.INTERNAL_SECRET;
-    else process.env.INTERNAL_SECRET = saved;
+  afterAll(() => {
+    if (previous === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previous;
   });
 
-  function account(overrides: Partial<MiconnectAccount> = {}): MiconnectAccount {
-    return {
-      pk: 1,
-      isActive: true,
-      uid: 'user-1',
-      cguVersion: null,
-      email: 'Prenom.Nom@ETU.EMSE.FR',
-      facts: {} as MiconnectAccount['facts'],
-      ...overrides,
-    };
+  function controller(row: { id: string; mailClass?: string | null } | null) {
+    const findOne = jest.fn().mockResolvedValue(row);
+    return { mail: new InternalMailController({ findOne } as never), findOne };
   }
 
-  function make(row: Partial<User> | null, found: MiconnectAccount | null | Error = account()) {
-    const findOne = jest.fn(() => Promise.resolve(row as User | null));
-    const findAccount = jest.fn(() =>
-      found instanceof Error ? Promise.reject(found) : Promise.resolve(found)
-    );
-    const controller = new InternalMailController(
-      { findOne } as unknown as Repository<User>,
-      { findAccount } as unknown as MiconnectReaderClient
-    );
-    return { controller, findOne, findAccount };
-  }
-
-  it('answers the domain only, lowercased, of an active linked account', async () => {
-    const { controller, findAccount } = make({ id: 'user-1', miconnectUuid: 'uuid-1' });
-    await expect(controller.mailDomain('user-1', SECRET)).resolves.toEqual({
-      domain: 'etu.emse.fr',
+  it.each([
+    ['student', 'student'],
+    ['staff', 'staff'],
+    [null, null],
+  ])('answers the stored class %s', async (stored, answered) => {
+    const { mail, findOne } = controller({ id: 'user-1', mailClass: stored });
+    await expect(mail.mailClass('user-1', SECRET)).resolves.toEqual({ mailClass: answered });
+    // The column and the id, nothing else of the row.
+    expect(findOne).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      select: { id: true, mailClass: true },
     });
-    expect(findAccount).toHaveBeenCalledWith('uuid-1');
   });
 
-  it('answers no domain for an inactive account or one with no address', async () => {
-    const inactive = make({ id: 'user-1', miconnectUuid: 'u' }, account({ isActive: false }));
-    await expect(inactive.controller.mailDomain('user-1', SECRET)).resolves.toEqual({
-      domain: null,
-    });
-    const none = make({ id: 'user-1', miconnectUuid: 'u' }, account({ email: null }));
-    await expect(none.controller.mailDomain('user-1', SECRET)).resolves.toEqual({ domain: null });
-  });
-
-  it('answers 404 for an account with no row, no link, or unknown to MiConnect', async () => {
-    for (const { controller } of [
-      make(null),
-      make({ id: 'user-1', miconnectUuid: null }),
-      make({ id: 'user-1', miconnectUuid: 'u' }, null),
-    ]) {
-      await expect(controller.mailDomain('user-1', SECRET)).rejects.toBeInstanceOf(
-        NotFoundException
-      );
-    }
-  });
-
-  it('answers 503, never "no domain", when MiConnect could not be read', async () => {
-    for (const failure of ['not_configured', 'unreachable', 'refused'] as const) {
-      const { controller } = make(
-        { id: 'user-1', miconnectUuid: 'u' },
-        new MiconnectReadError(failure, 'test')
-      );
-      await expect(controller.mailDomain('user-1', SECRET)).rejects.toBeInstanceOf(
-        ServiceUnavailableException
-      );
-    }
-  });
-
-  it("refuses to answer for a linked account that is another person's", async () => {
-    const { controller } = make(
-      { id: 'user-1', miconnectUuid: 'u' },
-      account({ uid: 'someone-else' })
+  it('answers 404 for an id with no row', async () => {
+    const err = await controller(null)
+      .mail.mailClass('user-1', SECRET)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect((err as NotFoundException).getResponse()).toEqual(
+      expect.objectContaining({ code: MAIL_ACCOUNT_UNKNOWN })
     );
-    await expect(controller.mailDomain('user-1', SECRET)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('refuses a caller without the internal secret, and reads nothing', async () => {
-    const { controller, findOne } = make({ id: 'user-1', miconnectUuid: 'u' });
-    await expect(controller.mailDomain('user-1', 'wrong')).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
-    expect(findOne).not.toHaveBeenCalled();
-  });
-});
-
-describe('mailDomainOf', () => {
-  it('reads what follows the last @, lowercased', () => {
-    expect(mailDomainOf('a@emse.fr')).toBe('emse.fr');
-    expect(mailDomainOf('"odd@name"@Etu.Emse.Fr')).toBe('etu.emse.fr');
+  it('answers an unknown stored value as not offered, and accuses it', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(
+      controller({ id: 'user-1', mailClass: 'admin' }).mail.mailClass('user-1', SECRET)
+    ).resolves.toEqual({ mailClass: null });
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
-  it('answers null for no address or no domain', () => {
-    expect(mailDomainOf(null)).toBeNull();
-    expect(mailDomainOf('')).toBeNull();
-    expect(mailDomainOf('no-at-sign')).toBeNull();
-    expect(mailDomainOf('trailing@')).toBeNull();
-    expect(mailDomainOf('a@bad domain')).toBeNull();
+  it('refuses a caller without the internal secret', async () => {
+    await expect(
+      controller({ id: 'user-1', mailClass: 'student' }).mail.mailClass('user-1', 'wrong')
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

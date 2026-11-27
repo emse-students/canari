@@ -548,3 +548,126 @@ export function noAskOwn(kinds) {
   }
   return out;
 }
+
+// ── ADM-11 / ADM-12: the card for a seat that is NOT an ask (slice 2 of the admission fix-forward) ──
+//
+// Runner `archive/admitcard.mjs`, which builds the state S15 could not reach through the product's own
+// path (`docs/wiki/protocols/admission-fix-forward.md`): the person's only leaf removed by a commit while
+// the roster seat stands, THEN a new device whose external commit a request-stage fault keeps from the
+// server, so its fallback asks a member.
+
+/**
+ * The rows `archive/admitcard.mjs` plays, from one revocation: two groups, one answered each way. Not in
+ * {@link ADMIT_ROWS}: those follow a group link, and `archive/admit.mjs` plays only them.
+ */
+export const ADMIT_CARD_ROWS = {
+  'ADM-11': {
+    devices: ['W6', 'W9'],
+    what: "the person's only device revoked and its leaf removed, a new device of theirs asks: W6 shows the card, Refuser removes the seat, and their external commit is then refused as a non-member",
+  },
+  'ADM-12': {
+    devices: ['W6', 'W9'],
+    what: 'the same state in a second group: W6 shows the card, Accepter brings the person back, and the new device reads a message sent after',
+  },
+};
+
+/**
+ * The fault that keeps the new device's external commit from the server: answered `503` at the REQUEST
+ * stage (the server never sees it), every time - the client's next attempts are its fallback's.
+ */
+export const ADMIT_CARD_FAULT = { match: '/api/mls/commit', method: 'POST', fault: 'status-unsent 503' };
+
+/**
+ * THE STATE THE CARD NEEDS, read before a new device enrols: the revocation answered 2xx, and in every
+ * row group the person's seat STANDS (on the roster, not an ask) while none of their devices is active.
+ *
+ * @param {{revoked: {status?: number, err?: string}, after: Record<string, {seat: {state: string, active: number}}>, rows: string[]}} p
+ */
+export function noLeafPremise({ revoked, after, rows }) {
+  return [
+    { what: `the subject's only device was revoked (${revoked?.err ?? revoked?.status ?? 'no answer'})`, ok: revoked?.status >= 200 && revoked?.status < 300 },
+    ...rows.flatMap((r) => [
+      { what: `${r}: the person's seat stands, not an ask (${after[r]?.seat?.state})`, ok: after[r]?.seat?.state === 'admitted' },
+      { what: `${r}: no device of the person is active - their leaf is gone (${after[r]?.seat?.active})`, ok: after[r]?.seat?.active === 0 },
+    ]),
+  ];
+}
+
+/**
+ * The asks the member's console raised for the person in one group: `[JOIN_REQUEST] <user> asks to
+ * join <g8>... - a member's answer is awaited` (`joinRequests.svelte.ts`). The user is matched on its
+ * 8-hex prefix, as the line may shorten it.
+ *
+ * WHY THIS LINE AND NOT THE BRANCH'S OWN: `askAMemberToAdmit` narrates through the sweep's log, which
+ * never reaches the console (the sixth run read none of its lines while the card showed). The line
+ * that does is the store's, and it is the same for a link ask; what makes it the seat branch is the
+ * row's own premise - no link was ever minted for these groups, and the seat read `admitted`, not
+ * `waiting`, before the new device existed ({@link noLeafPremise}).
+ *
+ * @param {string[]} lines the member's console, unstamped
+ * @param {string} userId the person
+ * @param {string} groupId the group
+ * @returns {number}
+ */
+export function askLinesFor(lines, userId, groupId) {
+  const user = String(userId).toLowerCase().slice(0, 8);
+  const group = String(groupId).slice(0, 8);
+  return (lines ?? []).filter((l) => l.startsWith(`[JOIN_REQUEST] ${user}`) && l.includes(` asks to join ${group}`) && l.endsWith("a member's answer is awaited")).length;
+}
+
+/**
+ * The member's own word that its Decline REMOVED a seat that was not a link ask - the server's
+ * `removed` answer (`joinAnswers.ts` `DECLINE_OUTCOME_LINE`), the one answer only the slice-2 Decline
+ * (with a tree epoch) can get. The line names the person, not the group: read it in a window holding one Decline.
+ *
+ * @param {string[]} lines the member's console since the Decline, unstamped
+ * @param {string} userId the person
+ * @returns {number}
+ */
+export function seatRemovedLines(lines, userId) {
+  const user = String(userId).toLowerCase().slice(0, 8);
+  return (lines ?? []).filter((l) => l.startsWith(`[JOIN_REQUEST] ${user}`) && l.endsWith('declined - their seat, not an invitation-link ask, is removed')).length;
+}
+
+/**
+ * How the server answered the kept external commit sent after the Decline: `refused` when it is the
+ * non-member refusal (`403`, `NOT_A_MEMBER` / `committer_not_member`), else what it was.
+ *
+ * @param {{status?: number, body?: string, err?: string}|null} replay
+ */
+export function replayRefusal(replay) {
+  if (!replay) return { refused: false, said: 'never sent - no external commit was kept for the group' };
+  if (replay.err) return { refused: false, said: `the replay threw: ${replay.err}` };
+  const body = String(replay.body ?? '');
+  const refused = replay.status === 403 && /NOT_A_MEMBER|committer_not_member/.test(body);
+  return { refused, said: `${replay.status} ${body.slice(0, 120)}` };
+}
+
+/** The card showed, and the member's store raised the ask for this group. Shared by both rows. */
+const cardRaised = (card, asks) => [
+  { what: `W6 shows the card (${ms(card)})`, ok: card !== null },
+  { what: `W6 raised the ask for the person in this group (${asks} line(s))`, ok: asks > 0 },
+];
+
+/** ADM-11: the card, Refuser removed the seat, and the person's external commit is refused. */
+export function declinedCardOwn({ card, asks, seatLine, seat, replay, gate, external }) {
+  return [
+    ...cardRaised(card, asks),
+    { what: `the new device tried its own door and was held back (${external} external commit(s))`, ok: external > 0 },
+    { what: `the member read its Decline as a seat removed, not a link ask withdrawn (${seatLine} line(s))`, ok: seatLine > 0 },
+    { what: `Refuser removed the seat (${seat?.state ?? 'not answered'})`, ok: seat?.state === 'absent' },
+    { what: `no device of the person is left (${seat?.active ?? '-'})`, ok: seat?.active === 0 },
+    { what: `the external commit sent after the Decline is refused as a non-member (${replay.said})`, ok: replay.refused },
+    { what: `the gate logged its REJECT (${gate} line(s))`, ok: gate > 0 },
+  ];
+}
+
+/** ADM-12: the card, Accepter brought the person back, and their new device reads the conversation. */
+export function acceptedCardOwn({ card, asks, seat, listed, received }) {
+  return [
+    ...cardRaised(card, asks),
+    { what: `Accepter admitted the person (${seat?.state ?? 'not answered'}, ${seat?.active ?? 0} active seat(s))`, ok: seat?.state === 'admitted' && (seat?.active ?? 0) > 0 },
+    { what: `the new device lists the conversation (${listed ? 'listed' : 'NOT listed'})`, ok: listed },
+    { what: `the new device reads a message sent after the Accept (${received})`, ok: received === 1 },
+  ];
+}

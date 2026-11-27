@@ -704,7 +704,7 @@ describe('AuthController sessions', () => {
     }
 
     /** Authentik's token endpoint (with or without an id_token), then its userinfo. */
-    function authentikAnswers(idToken?: string, sub = 'user-1') {
+    function authentikAnswers(idToken?: string, sub = 'user-1', claims: object = {}) {
       fetchSpy = jest
         .spyOn(global, 'fetch')
         .mockResolvedValueOnce(
@@ -716,7 +716,9 @@ describe('AuthController sessions', () => {
             { status: 200 }
           )
         )
-        .mockResolvedValueOnce(new globalThis.Response(JSON.stringify({ sub }), { status: 200 }));
+        .mockResolvedValueOnce(
+          new globalThis.Response(JSON.stringify({ sub, ...claims }), { status: 200 })
+        );
     }
 
     afterEach(() => {
@@ -738,6 +740,37 @@ describe('AuthController sessions', () => {
         makeRes().res
       );
       expect(body.id_token).toBe('h.idtoken.s');
+    });
+
+    it('hands the school address to the client once, and stores only its class', async () => {
+      authentikAnswers('h.idtoken.s', 'user-1', { school_mail: 'Jane.Doe@etu.emse.fr' });
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+        isUserAdmin: jest.fn().mockResolvedValue(false),
+      };
+      const body = await callbackController(undefined, users).oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(body.school_mail).toBe('jane.doe@etu.emse.fr');
+      // What the upsert stores: the profile's class, and the address nowhere in its arguments.
+      const stored = users.findOrCreateFromOidc.mock.calls[0];
+      expect(stored[4]).toEqual(expect.objectContaining({ mailClass: 'student' }));
+      expect(JSON.stringify(stored)).not.toContain('jane.doe');
+    });
+
+    it('hands no address when MiConnect sends none or one off the school domains', async () => {
+      for (const claims of [{}, { school_mail: 'someone@example.org' }]) {
+        authentikAnswers('h.idtoken.s', 'user-1', claims);
+        const body = await callbackController().oidcCallback(
+          { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        );
+        expect(body).not.toHaveProperty('school_mail');
+      }
     });
 
     it('mints an access token naming the session the sign-in opened', async () => {

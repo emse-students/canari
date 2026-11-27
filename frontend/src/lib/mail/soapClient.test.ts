@@ -57,6 +57,37 @@ describe('readSoapAnswer', () => {
   });
 });
 
+describe('what a failure may carry into a log', () => {
+  it("keeps the fault's Reason text and the unparsable body out of the error", () => {
+    const quoting = JSON.stringify({
+      Body: {
+        Fault: {
+          Reason: { Text: 'no such folder: Secret-Project' },
+          Detail: { Error: { Code: 'mail.NO_SUCH_FOLDER' } },
+        },
+      },
+    });
+    const fault = (() => {
+      try {
+        readSoapAnswer(500, utf8(quoting));
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(fault?.message).toBe('Zimbra fault mail.NO_SUCH_FOLDER (HTTP 500)');
+
+    const garbled = (() => {
+      try {
+        readSoapAnswer(200, utf8('{"Body": private-words-here'));
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(garbled).toBeInstanceOf(ZimbraUnreadableAnswer);
+    expect(garbled?.message).not.toContain('private-words');
+  });
+});
+
 describe('soapEnvelope', () => {
   it('carries the session token in the context header only when there is one', () => {
     expect(soapEnvelope({ A: {} })).toEqual({ Body: { A: {} } });

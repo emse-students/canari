@@ -192,6 +192,36 @@ entries:
         return {"alumni_linked": UserSourceConnection.objects.filter(user=request.user, source__slug="alumni").exists()}
       scope_name: "profile"
       description: "Says whether the account is linked to its Alumni account"
+  # THE SCHOOL ADDRESS, FOR CANARI'S MAIL CLIENT ONLY (owner, 2026-11-27;
+  # docs/wiki/mail-client-transport.md#eligibility). Its OWN scope, `school_mail`, bound to Canari's
+  # three providers and no other (50-providers.yaml), so no other site can ask for it: every other
+  # provider keeps the synthetic `email` above.
+  #
+  # Sent ONLY when the address is the CAS's: the account holds the `cas-emse` link AND was created
+  # from it (the link's identifier is the account's username - the CAS `sub` the enrolment wrote,
+  # identity-sources.md), because only then is `user.email` the address the CAS wrote at enrolment.
+  # An account created through the Alumni SSO (`alumni-<af_id>`) carries the address its holder
+  # typed at Alumnforce, which may name any mailbox, so it never gets the claim - even once it holds a
+  # CAS link too. And only on a domain of libs/contracts/mail-domains.json (keys equal to it:
+  # school-mail-claim.test.mjs). Otherwise the claim is ABSENT, which Canari reads as "not offered".
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-school-mail"
+    attrs:
+      expression: |-
+        from authentik.core.models import UserSourceConnection
+        SCHOOL_DOMAINS = ("etu.emse.fr", "emse.fr")
+        user = request.user
+        cas = UserSourceConnection.objects.filter(user=user, source__slug="cas-emse").first()
+        if cas is None or cas.identifier != user.username:
+            return {}
+        address = (user.email or "").strip().lower()
+        local, at, domain = address.rpartition("@")
+        if not at or not local or domain not in SCHOOL_DOMAINS:
+            return {}
+        return {"school_mail": address}
+      scope_name: "school_mail"
+      description: "Gives the school address of a CAS account, to Canari's mail client"
   - model: authentik_sources_oauth.oauthsourcepropertymapping
     identifiers:
       name: "miconnect-cas-identity"

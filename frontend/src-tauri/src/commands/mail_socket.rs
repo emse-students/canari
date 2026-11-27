@@ -33,6 +33,10 @@ const CONNECT_DEADLINE: Duration = Duration::from_secs(15);
 const READ_CHUNK: usize = 64 * 1024;
 /// The request header naming the socket a raw write is for.
 const SOCKET_HEADER: &str = "x-mail-socket";
+/// The most sockets open (or opening) at once. The client keeps ONE persistent connection, and a
+/// few more only while one is being replaced: anything above this is a page opening in a loop.
+/// The relay's per-account cap is the same number (apps/chat-gateway/src/mail_relay.rs).
+pub(crate) const MAX_OPEN_SOCKETS: usize = 4;
 
 /// Why a command was refused - a TYPE, which the page reads as `error.kind`.
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -42,6 +46,10 @@ pub(crate) enum MailSocketError {
     ConnectFailed { detail: String },
     /// No open socket has this id (closed, or never opened).
     UnknownSocket,
+    /// [`MAX_OPEN_SOCKETS`] are already open or opening.
+    TooManySockets,
+    /// The page that asked was replaced while the connect ran; the socket was closed at once.
+    Superseded,
     /// A write whose body is not raw bytes, or with no socket id header.
     MalformedWrite,
 }
@@ -66,27 +74,78 @@ enum Order {
     Close,
 }
 
-/// The open sockets, by id. Managed by the app (`lib.rs`).
+/// The open sockets, by id, and the opens in flight. Managed by the app (`lib.rs`).
 #[derive(Default)]
 pub(crate) struct MailSockets {
     next_id: AtomicU64,
-    open: Mutex<HashMap<u64, mpsc::UnboundedSender<Order>>>,
+    slots: Mutex<Slots>,
+}
+
+#[derive(Default)]
+struct Slots {
+    open: HashMap<u64, mpsc::UnboundedSender<Order>>,
+    /// Opens whose connect is running: they hold a place, so the cap cannot be raced.
+    connecting: usize,
+    /// Moved on by [`MailSockets::close_all`]: an open that began under an older generation
+    /// belongs to a page that is gone, and its socket is closed the moment it exists.
+    generation: u64,
 }
 
 impl MailSockets {
+    fn slots(&self) -> std::sync::MutexGuard<'_, Slots> {
+        self.slots.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     fn sender(&self, id: u64) -> Option<mpsc::UnboundedSender<Order>> {
-        self.open
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(&id)
-            .cloned()
+        self.slots().open.get(&id).cloned()
     }
 
     fn forget(&self, id: u64) {
-        self.open
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&id);
+        self.slots().open.remove(&id);
+    }
+
+    /// Takes a place for an open, or refuses past [`MAX_OPEN_SOCKETS`]. Answers the generation the
+    /// open began under.
+    fn reserve(&self) -> Result<u64, MailSocketError> {
+        let mut slots = self.slots();
+        if slots.open.len() + slots.connecting >= MAX_OPEN_SOCKETS {
+            return Err(MailSocketError::TooManySockets);
+        }
+        slots.connecting += 1;
+        Ok(slots.generation)
+    }
+
+    /// Gives back the place of an open that did not produce a socket.
+    fn release(&self) {
+        let mut slots = self.slots();
+        slots.connecting = slots.connecting.saturating_sub(1);
+    }
+
+    /// Turns a reserved place into socket `id`, unless the page that asked is gone (a
+    /// [`MailSockets::close_all`] ran since `generation`): then nothing is registered.
+    fn register(
+        &self,
+        id: u64,
+        generation: u64,
+        orders: mpsc::UnboundedSender<Order>,
+    ) -> Result<(), MailSocketError> {
+        let mut slots = self.slots();
+        slots.connecting = slots.connecting.saturating_sub(1);
+        if slots.generation != generation {
+            return Err(MailSocketError::Superseded);
+        }
+        slots.open.insert(id, orders);
+        Ok(())
+    }
+
+    /// Closes every socket and disowns every open in flight; answers how many sockets it closed.
+    /// Dropping a socket's sender ends its task as a close (`closed_by_page`).
+    fn close_all(&self) -> usize {
+        let mut slots = self.slots();
+        slots.generation += 1;
+        let closed = slots.open.len();
+        slots.open.clear();
+        closed
     }
 }
 
@@ -99,6 +158,11 @@ pub(crate) async fn mail_socket_open(
     on_end: Channel<MailSocketEnd>,
 ) -> Result<u64, MailSocketError> {
     log::debug!("[MAIL-SOCKET] open {MAIL_HOST}:{MAIL_PORT}");
+    let generation = sockets.reserve().inspect_err(|_| {
+        log::warn!(
+            "[MAIL-SOCKET] open refused: {MAX_OPEN_SOCKETS} sockets already open or opening"
+        );
+    })?;
     let stream = match tokio::time::timeout(
         CONNECT_DEADLINE,
         crate::happy_eyeballs::connect(MAIL_HOST.to_string(), MAIL_PORT),
@@ -107,12 +171,14 @@ pub(crate) async fn mail_socket_open(
     {
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
+            sockets.release();
             log::warn!("[MAIL-SOCKET] connect failed: {e}");
             return Err(MailSocketError::ConnectFailed {
                 detail: e.to_string(),
             });
         }
         Err(_) => {
+            sockets.release();
             log::warn!(
                 "[MAIL-SOCKET] connect took over {} s",
                 CONNECT_DEADLINE.as_secs()
@@ -125,11 +191,11 @@ pub(crate) async fn mail_socket_open(
     let _ = stream.set_nodelay(true);
     let id = sockets.next_id.fetch_add(1, Ordering::Relaxed);
     let (orders, rx) = mpsc::unbounded_channel();
-    sockets
-        .open
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(id, orders);
+    if let Err(refusal) = sockets.register(id, generation, orders) {
+        // The stream is dropped here: the connection is closed without a byte sent.
+        log::debug!("[MAIL-SOCKET] {id}: the page that asked was replaced - closed at once");
+        return Err(refusal);
+    }
     let registry = sockets.inner().clone();
     tauri::async_runtime::spawn(async move {
         let outcome = run(stream, rx, |bytes| {
@@ -180,6 +246,17 @@ pub(crate) fn mail_socket_close(
     sender
         .send(Order::Close)
         .map_err(|_| MailSocketError::UnknownSocket)
+}
+
+/// Closes every socket, and disowns every open in flight. The mail client calls it once per
+/// document, before its first open (`tauriSocketTransport.ts`): a reload or a navigation leaves
+/// the previous document's sockets with nobody to read them, and the page-load event is not the
+/// place for it (it can run after the new document's first native call - `page_ring`).
+#[tauri::command]
+pub(crate) fn mail_socket_close_all(sockets: State<'_, std::sync::Arc<MailSockets>>) -> usize {
+    let count = sockets.close_all();
+    log::debug!("[MAIL-SOCKET] a new document: {count} socket(s) of the previous one closed");
+    count
 }
 
 /// Pipes one socket until it ends: bytes read go to `deliver` (which answers whether the page took
@@ -286,6 +363,44 @@ mod tests {
         let (_far, orders, _delivered, task) = start(true);
         drop(orders);
         assert_eq!(task.await.unwrap(), MailSocketEnd::ClosedByPage);
+    }
+
+    #[test]
+    fn opens_past_the_cap_are_refused_and_a_failed_connect_gives_its_place_back() {
+        let sockets = MailSockets::default();
+        for _ in 0..MAX_OPEN_SOCKETS {
+            sockets.reserve().unwrap();
+        }
+        assert_eq!(sockets.reserve(), Err(MailSocketError::TooManySockets));
+        sockets.release();
+        let generation = sockets.reserve().unwrap();
+        // Registered sockets hold their place as well as opening ones.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        sockets.register(9, generation, tx).unwrap();
+        assert_eq!(sockets.reserve(), Err(MailSocketError::TooManySockets));
+        sockets.forget(9);
+        assert!(sockets.reserve().is_ok());
+    }
+
+    #[tokio::test]
+    async fn close_all_ends_every_socket_and_disowns_the_opens_in_flight() {
+        let sockets = MailSockets::default();
+        let (_far, orders, _delivered, task) = start(true);
+        let generation = sockets.reserve().unwrap();
+        sockets.register(1, generation, orders).unwrap();
+        let in_flight = sockets.reserve().unwrap();
+
+        assert_eq!(sockets.close_all(), 1);
+        assert_eq!(task.await.unwrap(), MailSocketEnd::ClosedByPage);
+        // The open that was connecting belongs to the gone page: refused, and its place freed.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        assert_eq!(
+            sockets.register(2, in_flight, tx),
+            Err(MailSocketError::Superseded)
+        );
+        for _ in 0..MAX_OPEN_SOCKETS {
+            sockets.reserve().unwrap();
+        }
     }
 
     #[test]

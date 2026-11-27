@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FakeStream } from '../../test/mailFakes';
-import { Http1Connection, HttpProtocolError, serializeRequest } from './http1';
+import { Http1Connection, HttpProtocolError, MAX_BODY_BYTES, serializeRequest } from './http1';
 
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -35,6 +35,26 @@ describe('serializeRequest', () => {
   it('refuses a header that would inject a line', () => {
     expect(() =>
       serializeRequest('h', { method: 'GET', path: '/', headers: { X: 'a\r\nEvil: 1' } })
+    ).toThrow(HttpProtocolError);
+  });
+
+  it('refuses a path or a host that would break the request line', () => {
+    for (const path of ['/a b', '/a\r\nX: 1', 'relative', '/\u0000']) {
+      expect(() => serializeRequest('h', { method: 'GET', path })).toThrow(HttpProtocolError);
+    }
+    for (const host of ['h h', 'h\r\nX: 1', '']) {
+      expect(() => serializeRequest(host, { method: 'GET', path: '/' })).toThrow(HttpProtocolError);
+    }
+  });
+
+  it('refuses the framing headers it writes itself, whatever their case', () => {
+    for (const name of ['Content-Length', 'host', 'TRANSFER-ENCODING', 'Connection']) {
+      expect(() =>
+        serializeRequest('h', { method: 'POST', path: '/', headers: { [name]: '1' } })
+      ).toThrow(HttpProtocolError);
+    }
+    expect(() =>
+      serializeRequest('h', { method: 'GET', path: '/', headers: { 'Bad Name': '1' } })
     ).toThrow(HttpProtocolError);
   });
 });
@@ -103,9 +123,11 @@ describe('Http1Connection', () => {
     closing.push('HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     await answer;
     expect(http.usable).toBe(false);
+    // Queued behind a closing answer: never sent, and typed so (safe to send again).
     await expect(http.request({ method: 'GET', path: '/' })).rejects.toMatchObject({
-      kind: 'ended',
+      kind: 'not_sent',
     });
+    expect(closing.written).toHaveLength(1);
 
     const unframed = new FakeStream();
     const http2 = new Http1Connection(unframed, 'h');
@@ -144,5 +166,43 @@ describe('Http1Connection', () => {
     garbage.push('SSH-2.0-OpenSSH\r\n\r\n');
     await expect(answer2).rejects.toMatchObject({ kind: 'malformed' });
     expect(http.usable).toBe(false);
+  });
+});
+
+describe('Http1Connection, the edges', () => {
+  it('a body framed by an end that is not a close_notify is truncated, said ended', async () => {
+    const stream = new FakeStream();
+    stream.onWrite = () => {
+      stream.push('HTTP/1.1 200 OK\r\n\r\nhalf of');
+      stream.finish({ kind: 'peer_closed' });
+    };
+    const http = new Http1Connection(stream, 'h');
+    await expect(http.request({ method: 'GET', path: '/' })).rejects.toMatchObject({
+      kind: 'ended',
+    });
+  });
+
+  it('bytes left past a whole response spend the connection', async () => {
+    const stream = new FakeStream();
+    stream.onWrite = () =>
+      stream.push('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokHTTP/1.1 200 OK\r\n');
+    const http = new Http1Connection(stream, 'h');
+    expect(text((await http.request({ method: 'GET', path: '/' })).body)).toBe('ok');
+    expect(http.usable).toBe(false);
+  });
+
+  it('refuses a Content-Length or a chunk size over the body cap before reading it', async () => {
+    for (const head of [
+      `HTTP/1.1 200 OK\r\nContent-Length: ${MAX_BODY_BYTES + 1}\r\n\r\n`,
+      `HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${(MAX_BODY_BYTES + 1).toString(16)}\r\n`,
+      'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nfffffffffffffffff\r\n',
+    ]) {
+      const stream = new FakeStream();
+      stream.onWrite = () => stream.push(head);
+      const http = new Http1Connection(stream, 'h');
+      await expect(http.request({ method: 'GET', path: '/' })).rejects.toMatchObject({
+        kind: 'malformed',
+      });
+    }
   });
 });

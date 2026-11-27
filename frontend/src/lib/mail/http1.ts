@@ -12,7 +12,10 @@ import type { PlaintextStream } from './tlsConnection';
  * straddle any chunk the network hands over.
  */
 
-/** A request: the client adds `Host` and `Content-Length`. */
+/**
+ * A request: the client adds `Host` and `Content-Length`, and frames the body itself, so a caller
+ * may not set `Host`, `Content-Length`, `Transfer-Encoding` or `Connection` (refused, `malformed`).
+ */
 export interface HttpRequest {
   method: 'GET' | 'POST';
   path: string;
@@ -27,12 +30,20 @@ export interface HttpResponse {
   body: Uint8Array;
 }
 
-/** Why a response could not be read - typed at the throw. */
+/** Why an exchange failed - typed at the throw. */
 export type HttpErrorKind =
-  /** The bytes are not an HTTP/1.1 response this client can frame. */
+  /** The bytes are not an HTTP/1.1 response this client can frame, or the request is not one. */
   | 'malformed'
-  /** The connection ended before the response was whole. */
-  | 'ended';
+  /**
+   * The connection ended before the response was whole. The request MAY have been carried out:
+   * a call that is not idempotent (`SendMsg`) must not be sent again blindly.
+   */
+  | 'ended'
+  /**
+   * The request was NEVER SENT: the connection was already spent when its turn came. Safe to send
+   * again on a new connection.
+   */
+  | 'not_sent';
 
 export class HttpProtocolError extends Error {
   constructor(
@@ -48,6 +59,20 @@ export class HttpProtocolError extends Error {
 const MAX_LINE_BYTES = 16 * 1024;
 /** The most header bytes one response may carry. */
 const MAX_HEADER_BYTES = 64 * 1024;
+/**
+ * The largest body one response may carry, 64 MiB: above any Zimbra answer and any attachment a
+ * page could hold in memory. Past it the response is refused `malformed` rather than buffered, and
+ * a chunk size beyond it (or beyond a safe integer) is refused before anything is read.
+ */
+export const MAX_BODY_BYTES = 64 * 1024 * 1024;
+/** Hex digits a chunk size may have: 8 already exceeds {@link MAX_BODY_BYTES}. */
+const MAX_CHUNK_SIZE_DIGITS = 8;
+/** The framing headers this client writes itself, and so refuses from a caller (lowercase). */
+const RESERVED_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection']);
+/** An HTTP token (RFC 9110 5.6.2): a header name. */
+const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+/** A request target or a host: printable ASCII with no space (no CR, LF or control byte). */
+const NO_SPACE_PRINTABLE = /^[\x21-\x7e]+$/;
 
 const CR = 13;
 const LF = 10;
@@ -58,10 +83,19 @@ const headerDecoder = new TextDecoder('latin1');
 /** Serialises `request` for `host`, `Content-Length` included whenever a body is sent. */
 export function serializeRequest(host: string, request: HttpRequest): Uint8Array {
   const body = request.body ?? new Uint8Array(0);
+  if (!NO_SPACE_PRINTABLE.test(host)) {
+    throw new HttpProtocolError('malformed', 'a host with a space, a line break or a control byte');
+  }
+  if (!request.path.startsWith('/') || !NO_SPACE_PRINTABLE.test(request.path)) {
+    throw new HttpProtocolError('malformed', 'a path with a space, a line break or a control byte');
+  }
   const lines = [`${request.method} ${request.path} HTTP/1.1`, `Host: ${host}`];
   for (const [name, value] of Object.entries(request.headers ?? {})) {
-    if (/[\r\n]/.test(name) || /[\r\n]/.test(value)) {
-      throw new HttpProtocolError('malformed', `a header carries a line break: ${name}`);
+    if (!TOKEN.test(name) || /[\r\n\0]/.test(value)) {
+      throw new HttpProtocolError('malformed', 'a header name or value that would break the head');
+    }
+    if (RESERVED_HEADERS.has(name.toLowerCase())) {
+      throw new HttpProtocolError('malformed', `${name} is written by the client itself`);
     }
     lines.push(`${name}: ${value}`);
   }
@@ -157,6 +191,11 @@ class ResponseReader {
     }
   }
 
+  /** Bytes received past the last whole response: none, on a connection that is followed. */
+  get leftover(): number {
+    return this.queue.size;
+  }
+
   private async exactly(n: number): Promise<Uint8Array> {
     while (this.queue.size < n) {
       if (!(await this.more())) throw new HttpProtocolError('ended', `inside a ${n}-byte body`);
@@ -164,9 +203,22 @@ class ResponseReader {
     return this.queue.take(n);
   }
 
+  /**
+   * A body framed by the end of the connection. It is WHOLE only if the stream ended with the
+   * server's TLS close_notify: a socket that merely ended may have cut it anywhere (truncation).
+   */
   private async untilEnd(): Promise<Uint8Array> {
     while (await this.more()) {
-      // Everything is kept until the stream ends.
+      if (this.queue.size > MAX_BODY_BYTES) {
+        throw new HttpProtocolError('malformed', `a body over ${MAX_BODY_BYTES} bytes`);
+      }
+    }
+    const end = this.stream.end?.kind;
+    if (end !== 'tls_closed') {
+      throw new HttpProtocolError(
+        'ended',
+        `a body framed by the end, which was ${end ?? 'unknown'}`
+      );
     }
     return this.queue.take(this.queue.size);
   }
@@ -196,10 +248,13 @@ class ResponseReader {
     let total = 0;
     for (;;) {
       const sizeLine = (await this.line()).split(';')[0].trim();
-      if (!/^[0-9a-fA-F]+$/.test(sizeLine)) {
-        throw new HttpProtocolError('malformed', `a chunk size that is not hexadecimal`);
+      if (!/^[0-9a-fA-F]+$/.test(sizeLine) || sizeLine.length > MAX_CHUNK_SIZE_DIGITS) {
+        throw new HttpProtocolError('malformed', 'a chunk size that is not a bounded hex number');
       }
       const size = parseInt(sizeLine, 16);
+      if (total + size > MAX_BODY_BYTES) {
+        throw new HttpProtocolError('malformed', `a chunked body over ${MAX_BODY_BYTES} bytes`);
+      }
       if (size === 0) {
         // Trailers, up to the empty line, are read and dropped.
         while ((await this.line()) !== '') {
@@ -247,7 +302,11 @@ class ResponseReader {
         if (!/^\d+$/.test(length)) {
           throw new HttpProtocolError('malformed', 'a Content-Length that is not a number');
         }
-        body = await this.exactly(Number(length));
+        const n = Number(length);
+        if (n > MAX_BODY_BYTES) {
+          throw new HttpProtocolError('malformed', `a Content-Length over ${MAX_BODY_BYTES} bytes`);
+        }
+        body = await this.exactly(n);
       } else {
         body = await this.untilEnd();
         keepAlive = false;
@@ -290,7 +349,9 @@ export class Http1Connection {
 
   private async exchange(request: HttpRequest): Promise<HttpResponse> {
     if (!this.usable) {
-      throw new HttpProtocolError('ended', 'the connection is spent');
+      // Queued behind an answer that closed the connection: nothing of it left this device.
+      Log.d('MAIL-HTTP', `${request.method} ${request.path} not sent: the connection is spent`);
+      throw new HttpProtocolError('not_sent', 'the connection was spent before its turn');
     }
     Log.d('MAIL-HTTP', `${request.method} ${request.path} (${request.body?.length ?? 0} bytes)`);
     try {
@@ -299,6 +360,11 @@ export class Http1Connection {
       if (!keepAlive) {
         this.spent = true;
         Log.d('MAIL-HTTP', 'the server closes this connection after the response');
+      } else if (this.reader.leftover > 0) {
+        // Bytes nobody asked for: the next response could not be told from them, so the
+        // connection is not trusted with another request.
+        this.spent = true;
+        Log.w('MAIL-HTTP', `${this.reader.leftover} bytes past the response - connection spent`);
       }
       Log.d('MAIL-HTTP', `answered ${response.status} (${response.body.length} bytes)`);
       return response;

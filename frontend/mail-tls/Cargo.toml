@@ -10,10 +10,11 @@ description = "Sans-IO TLS client for the school mailbox (partage.emse.fr), for 
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# TLS 1.3 and 1.2 over ring, nothing else: no `aws-lc-rs` (it does not build for
+# TLS 1.3 only, over ring, nothing else: Partage negotiates 1.3 (measured 2026-11-27), so 1.2 is
+# code the client would carry for no server. No `aws-lc-rs` (it does not build for
 # wasm32-unknown-unknown), no logging feature (nothing of a handshake is logged from inside).
 # Why ring and not a pure-Rust provider: docs/wiki/mail-client-transport.md#the-crypto-provider.
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # The Mozilla root store, not a pinned root: a RENATER certificate rotation onto another public CA
 # must not break the client (mail-client-transport.md#the-roots).
 webpki-roots = "1"

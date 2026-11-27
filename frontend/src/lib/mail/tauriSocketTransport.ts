@@ -35,6 +35,8 @@ export interface NativeSocketBridge {
   open(onData: Channel<ArrayBuffer>, onEnd: Channel<NativeSocketEnd>): Promise<number>;
   write(id: number, bytes: Uint8Array): Promise<void>;
   close(id: number): Promise<void>;
+  /** Closes every native socket; answers how many were open. */
+  closeAll(): Promise<number>;
   newChannel<T>(): Channel<T>;
 }
 
@@ -44,8 +46,33 @@ const tauriBridge: NativeSocketBridge = {
   write: (id, bytes) =>
     invoke<void>('mail_socket_write', bytes, { headers: { 'x-mail-socket': String(id) } }),
   close: (id) => invoke<void>('mail_socket_close', { id }),
+  closeAll: () => invoke<number>('mail_socket_close_all'),
   newChannel: <T>() => new Channel<T>(),
 };
+
+/**
+ * Per bridge, the close of the PREVIOUS document's sockets, asked once before this document's first
+ * open: a reload or a navigation leaves them open natively with nobody reading them, and the native
+ * side cannot tell a new document from the old one (mail_socket.rs, `mail_socket_close_all`).
+ */
+const previousDocumentClosed = new WeakMap<NativeSocketBridge, Promise<void>>();
+
+function closePreviousDocument(bridge: NativeSocketBridge): Promise<void> {
+  let done = previousDocumentClosed.get(bridge);
+  if (!done) {
+    done = bridge.closeAll().then(
+      (closed) => {
+        if (closed > 0) Log.d('MAIL-SOCKET', `${closed} socket(s) of a previous document closed`);
+      },
+      (err: unknown) => {
+        // Not fatal to this open, but its cap may then be held by sockets nobody reads.
+        Log.w('MAIL-SOCKET', "the previous document's sockets could not be closed", err);
+      }
+    );
+    previousDocumentClosed.set(bridge, done);
+  }
+  return done;
+}
 
 /**
  * Opens the apps' transport: a TCP socket to the mailbox, opened natively. The destination is a
@@ -57,6 +84,7 @@ const tauriBridge: NativeSocketBridge = {
  */
 export function tauriSocketTransport(bridge: NativeSocketBridge = tauriBridge): TransportOpener {
   return async (handlers: ByteTransportHandlers) => {
+    await closePreviousDocument(bridge);
     Log.d('MAIL-SOCKET', 'opening the native socket');
     let ended = false;
     const onData = bridge.newChannel<ArrayBuffer>();

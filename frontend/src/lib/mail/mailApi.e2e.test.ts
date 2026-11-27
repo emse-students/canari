@@ -7,6 +7,7 @@ import { emptyMessage } from './mailCompose';
 import { relayTransport } from './relayTransport';
 import { MAIL_HOST, ZimbraSoapClient } from './soapClient';
 import { connectTls } from './tlsConnection';
+import { searchRequest } from './zimbraRequests';
 import { MailTransportError, type TransportOpener } from './transport';
 
 /**
@@ -14,8 +15,9 @@ import { MailTransportError, type TransportOpener } from './transport';
  *
  * Skipped unless `CANARI_MAIL_TEST_TOKEN_FILE` names a JSON file `{ "authToken", "account" }` holding
  * a session token of the test account (never a password, never committed, never printed). It reads
- * the account (`GetInfo`), the folders (`GetFolder`) and a search limited to earlier test mails - no
- * real mail's content is read. With `CANARI_MAIL_TEST_SEND=1` it also uploads a small attachment and
+ * the account (`GetInfo`), the folders (`GetFolder`), a search limited to earlier test mails, and
+ * one search of 500 messages whose answer exceeds 64 KiB, of which ONLY the count and the size are
+ * read - no real mail's content is read. With `CANARI_MAIL_TEST_SEND=1` it also uploads a small attachment and
  * sends ONE mail to the account ITSELF, subject prefixed `[test Canari]`, then reads that mail back
  * and downloads its attachment.
  *
@@ -101,6 +103,18 @@ describe.skipIf(!tokenFile)('the Zimbra client end to end (opt-in)', () => {
       });
       expect(Array.isArray(page.items)).toBe(true);
       for (const c of page.items) expect(c.subject).toContain('[test Canari]');
+
+      // An answer over 64 KiB, on the real server: lot 1's TLS and HTTP framing carry it whole.
+      // ONLY its count and its size are read - no subject, sender or body of a real mail.
+      const large = await soap.call(
+        searchRequest('message', { folderId: null, query: '', offset: 0, limit: 500 }),
+        authToken
+      );
+      const messages = (large.SearchResponse as { m?: unknown[] } | undefined)?.m ?? [];
+      const answerBytes = new TextEncoder().encode(JSON.stringify(large)).length;
+      console.info(`[e2e] large search: ${messages.length} message(s), ${answerBytes} bytes`);
+      expect(messages.length).toBeGreaterThan(0);
+      expect(answerBytes).toBeGreaterThan(64 * 1024);
 
       if (!send) return;
       const filename = 'canari-test-é.txt';

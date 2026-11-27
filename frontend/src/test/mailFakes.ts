@@ -4,7 +4,7 @@ import type {
   TransportEnd,
   TransportOpener,
 } from '$lib/mail/transport';
-import type { PlaintextStream, TlsEngine } from '$lib/mail/tlsConnection';
+import type { PlaintextStream, StreamEnd, TlsEngine } from '$lib/mail/tlsConnection';
 
 /**
  * Test doubles for the mail transport's tests (no production code imports this file).
@@ -115,6 +115,7 @@ export class FakeEngine implements TlsEngine {
 export class FakeStream implements PlaintextStream {
   written: string[] = [];
   ended = false;
+  end: StreamEnd | null = null;
   private pending: Uint8Array[] = [];
   private waiting: ((v: Uint8Array | null) => void) | null = null;
   /** Called on each write, so a test can answer a request as it is sent. */
@@ -132,7 +133,7 @@ export class FakeStream implements PlaintextStream {
     return new Promise((resolve) => (this.waiting = resolve));
   }
   close(): void {
-    this.finish();
+    this.finish({ kind: 'closed_by_us' });
   }
   /** The server sends `b`. */
   push(b: Uint8Array | string): void {
@@ -143,9 +144,11 @@ export class FakeStream implements PlaintextStream {
       w(chunk);
     } else this.pending.push(chunk);
   }
-  /** The stream ends. */
-  finish(): void {
+  /** The stream ends: by default with the server's close_notify, the end that proves a body whole. */
+  finish(end: StreamEnd = { kind: 'tls_closed' }): void {
+    if (this.ended) return;
     this.ended = true;
+    this.end = end;
     if (this.waiting) {
       const w = this.waiting;
       this.waiting = null;

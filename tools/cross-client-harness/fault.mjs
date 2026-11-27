@@ -131,7 +131,12 @@ export function pausedBody(request) {
 }
 
 /**
- * Normalises the rules a caller hands in: `{ match, method?, fault: '<spec>', body? }`.
+ * Normalises the rules a caller hands in: `{ match, method?, fault: '<spec>', body?, keepBody? }`.
+ *
+ * `keepBody` keeps the REQUEST body each firing paused on its record (`record.body`), for a row that
+ * must send the very bytes again later - ADM-11 replays the external commit a fault kept from the
+ * server, once the seat it was built for is gone. Off by default: a commit body is large, and a record
+ * that carries one is written into the verdict.
  *
  * `body` is what a `status` / `status-unsent` answer CARRIES. A refusal the client classifies by
  * its body - `409 SEAT_CLAIM_OVERTAKEN` is a typed `ApiRefusalError` only because of its `code`
@@ -141,7 +146,7 @@ export function pausedBody(request) {
  * `transform` (for `rewrite`) and `url` (for `rewrite-url`) are functions, required by their mode and
  * refused on any other, for the same reason.
  *
- * @param {Array<{match: string|RegExp, method?: string, bodyIncludes?: string, fault: string, body?: string|object,
+ * @param {Array<{match: string|RegExp, method?: string, bodyIncludes?: string, fault: string, body?: string|object, keepBody?: boolean,
  *   transform?: (text: string, record: object) => string, url?: (original: string) => string}>} rules
  */
 export function compileRules(rules) {
@@ -171,6 +176,7 @@ export function compileRules(rules) {
       transform: r.transform ?? null,
       url: r.url ?? null,
       when: r.when ?? null,
+      keepBody: r.keepBody === true,
       spec: r.fault,
       fired: 0,
     };
@@ -205,8 +211,10 @@ export function fulfilBody(body, contentType) {
  */
 export function claimRule(compiled, req) {
   // A GATED rule (`when`) claims nothing while its gate is shut: NET-3's portal exists from the start
-  // and goes up only once the commit is held, so the Add's own pre-checks are not answered by it.
-  const rule = compiled.find((r) => r.stage === req.stage && r.fired < r.times && (!r.when || r.when()) && ruleMatches(r, req));
+  // and goes up only once the commit is held, so the Add's own pre-checks are not answered by it. The
+  // gate is handed the paused request (url, method, body): ADM-11 lets ONE body through - the commit it
+  // replays - while the device's own attempts, other bytes, stay answered.
+  const rule = compiled.find((r) => r.stage === req.stage && r.fired < r.times && (!r.when || r.when(req)) && ruleMatches(r, req));
   if (rule) rule.fired += 1;
   return rule ?? null;
 }
@@ -299,6 +307,7 @@ export async function armFault(cx, rules, { log = (l) => console.log(l) } = {}) 
       realError: p.responseErrorReason ?? null,
       pausedAt: new Date().toISOString(),
     };
+    if (rule.keepBody) record.body = req.body;
     records.push(record);
     log(`  [fault] #${rule.index} ${rule.mode} ${req.method} ${req.url} (real ${record.realStatus ?? record.realError ?? 'unsent'})`);
     switch (rule.mode) {

@@ -92,6 +92,12 @@ check_rust() {
         local cmd
         read -r -a cmd <<<"$task"
         (cd "$crate" && "${cmd[@]}")
+        # THE VENDORED WEBSOCKET PLUGIN IS A PATH DEPENDENCY, NOT A WORKSPACE MEMBER: the crate's own
+        # `cargo test` never reaches its tests (the going-away mute lives there). Run with the Tauri crate.
+        if [ "$crate" = "frontend/src-tauri" ]; then
+          echo "--- rust $crate: vendored plugin tests"
+          (cd "$crate/patches/tauri-plugin-websocket" && cargo test)
+        fi
         ;;
       *) die "rust: unknown step $s" ;;
     esac

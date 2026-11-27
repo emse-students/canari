@@ -8,7 +8,15 @@
  *   bun archive/admit-selftest.mjs
  */
 import {
+  ADMIT_CARD_FAULT,
+  ADMIT_CARD_ROWS,
   ADMIT_ROWS,
+  acceptedCardOwn,
+  askLinesFor,
+  declinedCardOwn,
+  noLeafPremise,
+  replayRefusal,
+  seatRemovedLines,
   OLD_REF,
   admitRefusedFor,
   admittedOwn,
@@ -244,6 +252,45 @@ const done = (user = JU, group = G) => `LOG [MembersController] [ADD_MEMBER][add
 ok('routeEnrolments: a DONE about the joiner in the group counts, case-folded', routeEnrolments([done(JU.toUpperCase())], G, JU) === 1);
 ok('routeEnrolments: a DONE about another user or group does not', routeEnrolments([done('e'.repeat(64)), done(JU, 'other-group')], G, JU) === 0);
 ok('ADM-10 orders two different members', ADMIT_ROWS['ADM-10'].stale.approve !== ADMIT_ROWS['ADM-10'].stale.decline);
+
+// ── ADM-11 / ADM-12: the card for a seat that is not an ask ─────────────────────────────────────
+{
+  const U = 'a'.repeat(64);
+  ok('ADM-11 and ADM-12 are their own table, never ADMIT_ROWS (archive/admit.mjs plays only those)', Object.keys(ADMIT_CARD_ROWS).join() === 'ADM-11,ADM-12' && !ADMIT_ROWS['ADM-11'] && !ADMIT_ROWS['ADM-12']);
+  ok('the fault keeps the commit from the server (request stage)', ADMIT_CARD_FAULT.fault.startsWith('status-unsent ') && ADMIT_CARD_FAULT.method === 'POST');
+  const rows = ['ADM-11', 'ADM-12'];
+  const standing = { seat: { state: 'admitted', active: 0 } };
+  ok('premise: a revoked device, a standing seat, no active device', allOk(noLeafPremise({ revoked: { status: 200 }, after: { 'ADM-11': standing, 'ADM-12': standing }, rows })));
+  ok('premise breaks on a device still active (the S15 shape: added as a further device)', !allOk(noLeafPremise({ revoked: { status: 200 }, after: { 'ADM-11': standing, 'ADM-12': { seat: { state: 'admitted', active: 1 } } }, rows })));
+  ok('premise breaks on a seat gone with the revocation', !allOk(noLeafPremise({ revoked: { status: 200 }, after: { 'ADM-11': { seat: { state: 'absent', active: 0 } }, 'ADM-12': standing }, rows })));
+  ok('premise breaks on a refused revocation', !allOk(noLeafPremise({ revoked: { status: 403 }, after: { 'ADM-11': standing, 'ADM-12': standing }, rows })));
+  const G = 'ca1eaa75-0000-4000-8000-000000000000';
+  const ask = (user, group) => `[JOIN_REQUEST] ${user.slice(0, 8)}\u2026 asks to join ${group.slice(0, 8)}... - a member's answer is awaited`;
+  const asked = askLinesFor([ask(U, G), ask(U, '58c68fbb-0000'), ask('b'.repeat(64), G), `[JOIN_REQUEST] ${U} asks to join ${G.slice(0, 8)}... again (a new ask) - a member's answer is awaited`], U, G);
+  ok('askLinesFor counts the asks of this person in this group only (a shortened or a full id)', asked === 2);
+  const removed = `[JOIN_REQUEST] ${U} declined - their seat, not an invitation-link ask, is removed`;
+  const withdrawn = `[JOIN_REQUEST] ${U} declined - their seat is withdrawn`;
+  ok('seatRemovedLines counts the removed answer only, never a link ask withdrawn', seatRemovedLines([removed, withdrawn, removed.replace(U, 'b'.repeat(64))], U) === 1);
+  ok('replayRefusal: 403 NOT_A_MEMBER is the refusal', replayRefusal({ status: 403, body: '{"code":"NOT_A_MEMBER","error":"committer_not_member"}' }).refused);
+  ok('replayRefusal: another 403 is not', !replayRefusal({ status: 403, body: '{"code":"DEVICE_REVOKED"}' }).refused);
+  ok('replayRefusal: an accepted commit is not', !replayRefusal({ status: 200, body: '{"accepted":true}' }).refused);
+  ok('replayRefusal: nothing kept is not a refusal', !replayRefusal(null).refused);
+  const refused = replayRefusal({ status: 403, body: 'NOT_A_MEMBER' });
+  const dec = { card: 1200, asks: 1, seatLine: 1, seat: { state: 'absent', active: 0 }, replay: refused, gate: 1, external: 2 };
+  ok('ADM-11 clean', allOk(declinedCardOwn(dec)));
+  ok('ADM-11 breaks on no card', !allOk(declinedCardOwn({ ...dec, card: null })));
+  ok('ADM-11 breaks on no ask raised for the group', !allOk(declinedCardOwn({ ...dec, asks: 0 })));
+  ok('ADM-11 breaks on a Decline read as a link ask withdrawn', !allOk(declinedCardOwn({ ...dec, seatLine: 0 })));
+  ok('ADM-11 breaks on a seat left standing', !allOk(declinedCardOwn({ ...dec, seat: { state: 'admitted', active: 0 } })));
+  ok('ADM-11 breaks on an accepted replay', !allOk(declinedCardOwn({ ...dec, replay: replayRefusal({ status: 200, body: '' }) })));
+  ok('ADM-11 breaks on no gate line', !allOk(declinedCardOwn({ ...dec, gate: 0 })));
+  ok('ADM-11 breaks on a device that never tried its own door', !allOk(declinedCardOwn({ ...dec, external: 0 })));
+  const acc = { card: 900, asks: 1, seat: { state: 'admitted', active: 1 }, listed: true, received: 1 };
+  ok('ADM-12 clean', allOk(acceptedCardOwn(acc)));
+  ok('ADM-12 breaks on no active seat', !allOk(acceptedCardOwn({ ...acc, seat: { state: 'admitted', active: 0 } })));
+  ok('ADM-12 breaks on not listed', !allOk(acceptedCardOwn({ ...acc, listed: false })));
+  ok('ADM-12 breaks on the message missed, or read twice', !allOk(acceptedCardOwn({ ...acc, received: 0 })) && !allOk(acceptedCardOwn({ ...acc, received: 2 })));
+}
 
 if (failures) {
   console.error(`\n${failures} admission assertion(s) failed`);

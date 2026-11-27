@@ -1,5 +1,5 @@
 import { Log } from '$lib/utils/Log';
-import { isMailEligibleAddress } from './eligibility';
+import { mailClassOf } from './eligibility';
 import { classifyMailFailure, type MailError } from './mailErrors';
 import type { MailApi } from './mailApi';
 import type { MailEligibility, MailSession, MailSessionState } from './mailSession';
@@ -40,7 +40,7 @@ export function eligibilityOf(state: MailSessionState): MailEligibility {
         ? state.account
         : null;
   if (address === null) return 'unknown';
-  return isMailEligibleAddress(address) ? 'eligible' : 'not_eligible';
+  return mailClassOf(address) !== null ? 'eligible' : 'not_eligible';
 }
 
 export class MailStore {

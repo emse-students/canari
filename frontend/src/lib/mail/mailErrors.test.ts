@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HttpProtocolError } from './http1';
 import { classifyMailFailure, faultKind, MailError } from './mailErrors';
 import { ZimbraFault, ZimbraUnreadableAnswer } from './soapClient';
-import { MailTlsError } from './tlsConnection';
+import { MailTlsError, MailTlsLoadError } from './tlsConnection';
 import { MailTransportError } from './transport';
 
 /** D7: every failure typed by its class and code, never by its message. */
@@ -39,17 +39,40 @@ describe('faultKind', () => {
     expect(faultKind('account.ACCOUNT_INACTIVE', 'auth')).toBe('account_unavailable');
     expect(faultKind('account.AUTH_FAILED', 'auth')).toBe('bad_credentials');
     expect(
-      classifyMailFailure(new ZimbraFault('account.NO_SUCH_ACCOUNT', 500, 'x'), 'auth')
+      classifyMailFailure(new ZimbraFault('account.NO_SUCH_ACCOUNT', 500), 'auth')
     ).toMatchObject({ kind: 'account_closed' });
   });
 });
 
 describe('classifyMailFailure', () => {
-  it('a fault keeps its code; the same message with another code is another kind', () => {
-    const a = classifyMailFailure(new ZimbraFault('account.AUTH_FAILED', 500, 'same text'));
-    const b = classifyMailFailure(new ZimbraFault('account.ACCOUNT_INACTIVE', 500, 'same text'));
+  it('a fault keeps its code; two faults of one HTTP status are told apart by code alone', () => {
+    const a = classifyMailFailure(new ZimbraFault('account.AUTH_FAILED', 500));
+    const b = classifyMailFailure(new ZimbraFault('account.ACCOUNT_INACTIVE', 500));
     expect(a).toMatchObject({ kind: 'bad_credentials', code: 'account.AUTH_FAILED' });
     expect(b).toMatchObject({ kind: 'account_unavailable', code: 'account.ACCOUNT_INACTIVE' });
+  });
+
+  it('a request never sent is not_sent (retry-safe); a TLS the build cannot speak is incompatible', () => {
+    expect(classifyMailFailure(new HttpProtocolError('not_sent', 'x'))).toMatchObject({
+      kind: 'not_sent',
+      code: 'http-not_sent',
+    });
+    expect(classifyMailFailure(new HttpProtocolError('ended', 'x'))).toMatchObject({
+      kind: 'transport',
+      code: 'http-ended',
+    });
+    expect(classifyMailFailure(new MailTlsError('incompatible', 'x'))).toMatchObject({
+      kind: 'incompatible',
+      code: 'tls-incompatible',
+    });
+    expect(classifyMailFailure(new MailTlsError('closed', 'x'))).toMatchObject({
+      kind: 'transport',
+      code: 'tls-closed',
+    });
+    expect(classifyMailFailure(new MailTlsLoadError('http_status', 'x'))).toMatchObject({
+      kind: 'transport',
+      code: 'tls-load-http_status',
+    });
   });
 
   it('transport, TLS and HTTP framing failures are transport; an unreadable answer is server', () => {

@@ -7,7 +7,12 @@
   import { fetchMinesweeperReplay, formatDurationMs } from '$lib/minesweeper/api';
   import type { MinesweeperReplayData } from '$lib/minesweeper/api';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
-  import { createReplay, fitCellSize, type Replay } from '$lib/minesweeper/replay';
+  import {
+    createReplay,
+    fitCellSize,
+    replayGlyphSizes,
+    type Replay,
+  } from '$lib/minesweeper/replay';
   import { animationFactor, loadMinesweeperSettings } from '$lib/minesweeper/settings';
   import { m } from '$lib/paraglide/messages';
   import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -60,6 +65,8 @@
   /** The device's animation setting: the cells' colour crossfade follows it, as in the game itself. */
   const animFactor = animationFactor(loadMinesweeperSettings().animations);
 
+  /** The digit and icon sizes the fitted cell can hold (a 13 px cell cannot hold the game's 12 px digit). */
+  const glyphs = $derived(replayGlyphSizes(cellPx));
   const lastMove = $derived(data && shown > 0 ? data.moves[shown - 1] : null);
   /** Where the game ends: its last move. */
   const lengthMs = $derived(data ? (data.moves[data.moves.length - 1]?.t ?? 0) : 0);
@@ -219,8 +226,8 @@
       >
         <div
           role="presentation"
-          class="m-auto grid w-max"
-          style="--ms-cell: {cellPx}px; gap: {GRID_GAP_PX}px; grid-template-columns: repeat({data
+          class="m-auto grid w-max [&_button]:text-(length:--ms-digit) [&_svg]:size-(--ms-icon)"
+          style="--ms-cell: {cellPx}px; --ms-digit: {glyphs.digitPx}px; --ms-icon: {glyphs.iconPx}px; gap: {GRID_GAP_PX}px; grid-template-columns: repeat({data
             .config.width}, var(--ms-cell));"
           data-testid="replay-board"
         >

@@ -1,7 +1,7 @@
 import { Log } from '$lib/utils/Log';
 import { HttpProtocolError } from './http1';
 import { ZimbraFault, ZimbraUnreadableAnswer } from './soapClient';
-import { MailTlsError } from './tlsConnection';
+import { MailTlsError, MailTlsLoadError } from './tlsConnection';
 import { MailTransportError } from './transport';
 
 /**
@@ -47,8 +47,22 @@ export type MailErrorKind =
   | 'not_eligible'
   /** A call was made with no session. */
   | 'not_signed_in'
-  /** The mailbox could not be reached, or the connection failed (relay, socket, TLS, HTTP framing). */
+  /**
+   * The mailbox could not be reached, or the connection failed (relay, socket, TLS, HTTP framing,
+   * the TLS engine not loaded). The request MAY have been carried out: a call that is not idempotent
+   * is not sent again blindly.
+   */
   | 'transport'
+  /**
+   * The request was NEVER SENT: the connection was spent before its turn (lot 1's `not_sent`).
+   * Safe to send again on a new connection, whatever the call - `SendMsg` included.
+   */
+  | 'not_sent'
+  /**
+   * The server speaks a TLS this build cannot (`incompatible`): permanent until an update, so
+   * retrying does nothing.
+   */
+  | 'incompatible'
   /** The server answered with a fault this client does not name, or an unreadable answer. */
   | 'server'
   /** A throw no layer typed: a bug, logged as one. */
@@ -122,8 +136,22 @@ export function classifyMailFailure(err: unknown, origin: FaultOrigin = 'call'):
     return new MailError('server', `unreadable-${err.status}`, err);
   }
   if (err instanceof MailTransportError) return new MailError('transport', err.kind, err);
-  if (err instanceof MailTlsError) return new MailError('transport', `tls-${err.kind}`, err);
-  if (err instanceof HttpProtocolError) return new MailError('transport', `http-${err.kind}`, err);
+  if (err instanceof MailTlsError) {
+    return new MailError(
+      err.kind === 'incompatible' ? 'incompatible' : 'transport',
+      `tls-${err.kind}`,
+      err
+    );
+  }
+  if (err instanceof MailTlsLoadError)
+    return new MailError('transport', `tls-load-${err.kind}`, err);
+  if (err instanceof HttpProtocolError) {
+    return new MailError(
+      err.kind === 'not_sent' ? 'not_sent' : 'transport',
+      `http-${err.kind}`,
+      err
+    );
+  }
   Log.w('MAIL', 'ERROR: a mail call failed with a throw no layer typed', err);
   return new MailError('internal', 'untyped', err);
 }

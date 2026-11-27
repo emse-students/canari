@@ -1,5 +1,6 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
 import type { Campus, CursusEntry, Post } from '../miconnect-profile';
+import type { MailClass } from '../mail-class';
 
 /** TypeORM entity representing a Canari user, keyed by their OIDC subject. */
 @Entity('users')
@@ -45,6 +46,14 @@ export class User {
    */
   @Column({ type: 'boolean', nullable: true })
   alumniLinked?: boolean | null;
+
+  /**
+   * The class of the school address MiConnect sent at the last sign-in (claim `school_mail`,
+   * migration 032): `student`, `staff`, or `null` - the mail client is not offered. Never the address
+   * (charter principle 1). Read by the mail relay's admission (`InternalMailController`).
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  mailClass?: MailClass | null;
 
   @Column({ type: 'text', nullable: true })
   bio?: string | null;

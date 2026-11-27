@@ -5,6 +5,7 @@ import {
   PostNotificationsService,
   SYSTEM_ACTOR_ID,
   SYSTEM_ACTOR_NAME,
+  type SharedNoticeFields,
 } from '../posts/post-notifications.service';
 import { BOOKINGS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
@@ -451,34 +452,34 @@ export class BookingNotificationsService {
       );
       return;
     }
-    const { rowActorId, ...shown } = presented;
+    // SHARED BY THE ROWS AND THE PUSH, so typed as what BOTH read (`SharedNoticeFields`): a row-only
+    // field here would be dropped by the push without a word, and is a compile error instead. The
+    // logo URL is what the bell row shows; the push carries the media id (`pushIconOf`).
     const common = {
       type,
-      actorId: rowActorId ?? actorId,
-      ...shown,
+      actorId: presented.rowActorId ?? actorId,
+      actorName: presented.actorName,
+      associationId: presented.associationId,
+      associationLogoMediaId: presented.associationLogoMediaId,
       meta,
       pushData: { target: BOOKINGS_TARGET },
+    } satisfies SharedNoticeFields<Parameters<PostNotificationsService['createNotifications']>[0]>;
+    const row = {
+      ...common,
+      recipientIds: to,
+      postId: bookingId,
+      associationLogoUrl: presented.associationLogoUrl,
+      text: text.row,
     };
     let written: number;
     if (text.row === text.push) {
-      written = await this.notifications.createNotifications({
-        ...common,
-        recipientIds: to,
-        postId: bookingId,
-        text: text.row,
-      });
+      written = await this.notifications.createNotifications(row);
     } else {
-      written = await this.notifications.createNotifications({
-        ...common,
-        recipientIds: to,
-        postId: bookingId,
-        text: text.row,
-        skipPush: true,
-      });
+      written = await this.notifications.createNotifications({ ...row, skipPush: true });
       await this.notifications.pushNotice({
         ...common,
         recipientIds: to,
-        actorName: shown.actorName ?? (await this.notifications.resolveActorName(actorId)),
+        actorName: presented.actorName ?? (await this.notifications.resolveActorName(actorId)),
         text: text.push,
       });
     }

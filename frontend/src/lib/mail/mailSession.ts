@@ -1,5 +1,5 @@
 import { Log } from '$lib/utils/Log';
-import { isMailEligibleAddress } from './eligibility';
+import { mailClassOf } from './eligibility';
 import { classifyMailFailure, MailError } from './mailErrors';
 import { eraseMailLocalData } from './mailLocalData';
 import type { MailAccount } from './mailTypes';
@@ -151,7 +151,7 @@ export class MailSession {
   async eligibility(): Promise<MailEligibility> {
     const address = await this.context.mailAddress();
     const verdict: MailEligibility =
-      address === null ? 'unknown' : isMailEligibleAddress(address) ? 'eligible' : 'not_eligible';
+      address === null ? 'unknown' : mailClassOf(address) !== null ? 'eligible' : 'not_eligible';
     Log.d('MAIL', `eligibility from the account's own address: ${verdict}`);
     return verdict;
   }
@@ -176,7 +176,7 @@ export class MailSession {
       throw new MailError('address_unknown', 'no-identity-address');
     }
     const name = normalized(address);
-    if (!isMailEligibleAddress(name)) {
+    if (mailClassOf(name) === null) {
       Log.d('MAIL', 'sign-in refused: the address is not on an eligible domain');
       throw new MailError('not_eligible', 'domain');
     }
@@ -320,7 +320,7 @@ export class MailSession {
       await this.endQuietly(token);
       throw superseded();
     }
-    if (!isMailEligibleAddress(account.address)) {
+    if (mailClassOf(account.address) === null) {
       Log.w('MAIL', 'sign-in refused: the canonical address is not on an eligible domain');
       await this.endQuietly(token);
       throw new MailError('not_eligible', 'canonical-domain');
@@ -420,7 +420,7 @@ export class MailSession {
       throw new MailError('address_unknown', 'no-identity-address');
     }
     const name = normalized(address);
-    if (!isMailEligibleAddress(name)) {
+    if (mailClassOf(name) === null) {
       Log.w('MAIL', 'renewal refused: the account address is not on an eligible domain');
       throw new MailError('not_eligible', 'domain');
     }

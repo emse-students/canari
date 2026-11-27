@@ -916,5 +916,5 @@ wrong**, and nothing said so for either.
 | `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist, and the origins a socket upgrade may name (`*` admits none of those). `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `MAIL_RELAY_ENABLED` | no | off | The mail relay's switch: unset, empty, `0` or `false` is OFF (`/api/mail/relay` answers 404); `1` or `true` is ON; anything else STOPS the gateway at boot ([mail-client-transport](../mail-client-transport.md#the-relay)) |
 | `MAIL_RELAY_UPSTREAM` | when the relay is on | `partage.emse.fr:443` (compose) | The relay's ONE destination, `host:port`; a list, a URL or a wildcard STOPS the gateway at boot |
-| `CORE_SERVICE_URL` | when the relay is on | - | core-service base, no `/api`; asked, with `INTERNAL_SECRET`, for the mail domain of the account opening a relay socket |
+| `CORE_SERVICE_URL` | when the relay is on | - | core-service base, no `/api`; asked, with `INTERNAL_SECRET`, for the mail CLASS of the account opening a relay socket (`GET /api/internal/users/:id/mail-class`, one row read) |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

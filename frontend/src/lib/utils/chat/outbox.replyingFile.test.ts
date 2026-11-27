@@ -37,7 +37,7 @@ import { IndexedDbStorage } from '$lib/db/indexeddb';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
-import { MediaKind } from '$lib/proto/codec';
+import { MediaKind, decodeAppMessage } from '$lib/proto/codec';
 import { clearAllUploads } from './uploadProgress.svelte';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
@@ -190,6 +190,31 @@ describe('a file sent as a reply waits for what it quotes', () => {
     await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
     storage.close();
   });
+  it('the file that uploaded in this page life is still sent as a reply (the lane re-reads a slim row)', async () => {
+    const storage = new IndexedDbStorage(freshName());
+    await storage.init();
+    const uploadMedia = vi.fn().mockResolvedValue({
+      type: 'image',
+      mediaId: 'mid',
+      key: 'aa',
+      iv: 'bb',
+      mimeType: 'image/jpeg',
+      size: 3,
+    });
+    const { outbox, mlsService } = setup(storage, { uploadMedia } as Partial<OutboxDeps>);
+    await storage.saveOutboxEntry(photo('B', 200, { replyTo: REPLY }), KEY);
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+
+    // The frame carries the quote: it was lost when the upload's task rebuilt the entry from the
+    // slim queue read, so the proto, the stored envelope and the peer's copy all had no reply.
+    const frame = decodeAppMessage(mlsService.sendMessage.mock.calls[0][1] as Uint8Array);
+    expect(frame?.media?.replyTo?.id).toBe(REPLY.id);
+    expect(frame?.media?.replyTo?.senderId).toBe(REPLY.senderId);
+    storage.close();
+  });
+
   it('a failed quote read is an ordinary failed attempt: backed off, the flush survives, another lane goes', async () => {
     const storage = new IndexedDbStorage(freshName());
     await storage.init();

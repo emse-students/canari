@@ -40,9 +40,11 @@ pub enum MailTlsErrorKind {
     Certificate,
     /// The server ended the session with a TLS alert of its own.
     PeerAlert,
-    /// The bytes received are not TLS this client can follow (malformed, unexpected, or a version
-    /// or cipher the two sides do not share).
+    /// The bytes received are not TLS this client can follow (malformed, or unexpected).
     Protocol,
+    /// The server offers nothing this client accepts (no TLS 1.3, no shared cipher, group or
+    /// signature scheme): a change at Partage, not a fault of the bytes.
+    Incompatible,
     /// Plaintext was written after the session was closed.
     Closed,
 }
@@ -54,6 +56,7 @@ impl MailTlsErrorKind {
             MailTlsErrorKind::Certificate => "certificate",
             MailTlsErrorKind::PeerAlert => "peer_alert",
             MailTlsErrorKind::Protocol => "protocol",
+            MailTlsErrorKind::Incompatible => "incompatible",
             MailTlsErrorKind::Closed => "closed",
         }
     }
@@ -78,8 +81,12 @@ impl From<rustls::Error> for MailTlsError {
     /// Classifies rustls's error at the boundary, once.
     fn from(e: rustls::Error) -> Self {
         let kind = match &e {
-            rustls::Error::InvalidCertificate(_) => MailTlsErrorKind::Certificate,
+            // A server that presents no certificate is judged like one whose certificate fails.
+            rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented => {
+                MailTlsErrorKind::Certificate
+            }
             rustls::Error::AlertReceived(_) => MailTlsErrorKind::PeerAlert,
+            rustls::Error::PeerIncompatible(_) => MailTlsErrorKind::Incompatible,
             _ => MailTlsErrorKind::Protocol,
         };
         MailTlsError {
@@ -117,6 +124,13 @@ fn config(roots: RootCertStore) -> Result<Arc<ClientConfig>, MailTlsError> {
 /// One TLS session to [`SERVER_NAME`], driven by its caller (sans-IO).
 pub struct MailTls {
     conn: ClientConnection,
+    /// Plaintext decrypted and not yet handed out. rustls keeps at most 16 KiB of unread plaintext
+    /// and refuses more ciphertext past it, so every feed drains it here, as it decrypts: a feed of
+    /// any size is taken whole, and the caller reads at its own pace.
+    plaintext: Vec<u8>,
+    /// The server sent its close_notify: everything it meant to send has arrived. The ONLY proof
+    /// that a body framed by the end of the connection is complete (an ended socket is not one).
+    peer_closed: bool,
     /// Set by [`MailTls::close`]. rustls itself accepts plaintext after its close_notify (and
     /// sends it nowhere useful), so the refusal is this crate's own.
     closed: bool,
@@ -135,28 +149,62 @@ impl MailTls {
             kind: MailTlsErrorKind::Protocol,
             detail: format!("server name: {e}"),
         })?;
-        let conn = ClientConnection::new(config(roots)?, name)?;
+        let mut conn = ClientConnection::new(config(roots)?, name)?;
+        // No cap on what is queued to send: the caller drains it with `take_ciphertext` after every
+        // write, so the queue never outgrows one request - and a capped queue would refuse an
+        // attachment larger than the cap with an error that says nothing about why.
+        conn.set_buffer_limit(None);
         Ok(MailTls {
             conn,
+            plaintext: Vec::new(),
+            peer_closed: false,
             closed: false,
         })
     }
 
-    /// Hands the session bytes that arrived from the server, and processes them. An error ends the
-    /// session: its alert, if any, is waiting in [`MailTls::take_ciphertext`].
+    /// Hands the session bytes that arrived from the server, of any length, and processes them.
+    /// An error ends the session: its alert, if any, is waiting in [`MailTls::take_ciphertext`].
     pub fn feed_ciphertext(&mut self, mut bytes: &[u8]) -> Result<(), MailTlsError> {
         while !bytes.is_empty() {
-            // `read_tls` takes at most what its buffer accepts, so it is called until all is taken.
+            // `read_tls` takes at most what its buffer accepts, so it is called until all is taken;
+            // the plaintext of each pass is drained before the next, or rustls would refuse it.
             let taken = self.conn.read_tls(&mut bytes).map_err(|e| MailTlsError {
                 kind: MailTlsErrorKind::Protocol,
                 detail: format!("read_tls: {e}"),
             })?;
-            self.conn.process_new_packets()?;
+            let state = self.conn.process_new_packets()?;
+            if state.peer_has_closed() {
+                self.peer_closed = true;
+            }
+            self.drain_plaintext()?;
             if taken == 0 {
                 break;
             }
         }
         Ok(())
+    }
+
+    /// Moves everything rustls decrypted into [`MailTls::plaintext`].
+    fn drain_plaintext(&mut self) -> Result<(), MailTlsError> {
+        let mut chunk = [0u8; 16 * 1024];
+        loop {
+            match self.conn.reader().read(&mut chunk) {
+                // 0: the close_notify was received and everything before it was read.
+                Ok(0) => return Ok(()),
+                Ok(n) => self.plaintext.extend_from_slice(&chunk[..n]),
+                // Nothing more decrypted for now.
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                // Not swallowed: rustls says the stream ended in a way it cannot vouch for
+                // (`UnexpectedEof`, the bytes ended without a close_notify), and the caller hears it
+                // as a typed error rather than as an ordinary end.
+                Err(e) => {
+                    return Err(MailTlsError {
+                        kind: MailTlsErrorKind::Protocol,
+                        detail: format!("reading plaintext: {:?}", e.kind()),
+                    })
+                }
+            }
+        }
     }
 
     /// The bytes the session owes the server (handshake, records, alerts), empty when none.
@@ -171,8 +219,8 @@ impl MailTls {
         out
     }
 
-    /// Queues `data` to be encrypted and sent. Before the handshake ends it is buffered and sent
-    /// as soon as the keys exist.
+    /// Queues `data`, of any length, to be encrypted and sent. Before the handshake ends it is
+    /// buffered and sent as soon as the keys exist.
     pub fn write_plaintext(&mut self, data: &[u8]) -> Result<(), MailTlsError> {
         if self.closed {
             return Err(MailTlsError {
@@ -180,30 +228,20 @@ impl MailTls {
                 detail: format!("{} bytes written after close", data.len()),
             });
         }
+        // With no buffer limit (`with_roots`) rustls takes every byte; a failure here is not a
+        // closed session, so it is not called one.
         self.conn
             .writer()
             .write_all(data)
             .map_err(|e| MailTlsError {
-                kind: MailTlsErrorKind::Closed,
-                detail: format!("write after close: {e}"),
+                kind: MailTlsErrorKind::Protocol,
+                detail: format!("queueing {} bytes: {:?}", data.len(), e.kind()),
             })
     }
 
     /// The plaintext received so far and not yet read, empty when none.
     pub fn read_plaintext(&mut self) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut chunk = [0u8; 16 * 1024];
-        loop {
-            match self.conn.reader().read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => out.extend_from_slice(&chunk[..n]),
-                // WouldBlock: nothing more for now. UnexpectedEof: the server closed without its
-                // close_notify, which the transport sees itself as its socket ending.
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-        out
+        std::mem::take(&mut self.plaintext)
     }
 
     /// Whether the handshake is still running.
@@ -211,9 +249,10 @@ impl MailTls {
         self.conn.is_handshaking()
     }
 
-    /// Whether the server sent its close_notify: no more plaintext will come.
-    pub fn peer_closed(&mut self) -> bool {
-        matches!(self.conn.process_new_packets(), Ok(state) if state.peer_has_closed())
+    /// Whether the server sent its close_notify: no more plaintext will come, and what came is
+    /// whole.
+    pub fn peer_closed(&self) -> bool {
+        self.peer_closed
     }
 
     /// Ends the session politely: the close_notify is waiting in [`MailTls::take_ciphertext`].

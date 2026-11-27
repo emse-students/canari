@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeEngine, FakeTransport } from '../../test/mailFakes';
-import { MailTlsError, TlsConnection, asMailTlsError, connectTls } from './tlsConnection';
+import {
+  MailTlsError,
+  MailTlsLoadError,
+  TlsConnection,
+  asMailTlsError,
+  connectTls,
+  loadMailTlsEngine,
+} from './tlsConnection';
 import { MailTransportError } from './transport';
 
 const text = (b: Uint8Array | null) => (b === null ? null : new TextDecoder().decode(b));
@@ -43,13 +50,13 @@ describe('TlsConnection', () => {
     expect(text(await connection.read())).toBe('HTTP/1.1 200 OK');
   });
 
-  it("ends on the server's close_notify: the reader gets what came, then null", async () => {
+  it("ends on the server's close_notify as tls_closed: the reader gets what came, then null", async () => {
     const { connection, transport, engine } = await connected();
     transport.deliver('last bytes');
     transport.deliver('CLOSE-NOTIFY');
     expect(text(await connection.read())).toBe('last bytes');
     expect(await connection.read()).toBeNull();
-    expect(connection.end).toEqual({ kind: 'peer_closed' });
+    expect(connection.end).toEqual({ kind: 'tls_closed' });
     expect(transport.closed).toBe(true);
     expect(engine.freed).toBe(1);
   });
@@ -66,6 +73,13 @@ describe('TlsConnection', () => {
     await until(() => transport.closed);
     expect(transport.sent).toContain('ALERT');
     expect(engine.freed).toBe(1);
+  });
+
+  it('a transport that ends without a close_notify is told apart from one', async () => {
+    const { connection, transport } = await connected();
+    transport.end({ kind: 'peer_closed' });
+    expect(await connection.read()).toBeNull();
+    expect(connection.end).toEqual({ kind: 'peer_closed' });
   });
 
   it('a transport that ends during the handshake fails it as a transport error', async () => {
@@ -112,7 +126,35 @@ describe('asMailTlsError', () => {
     for (const kind of ['certificate', 'peer_alert', 'protocol', 'closed'] as const) {
       expect(asMailTlsError(Object.assign(new Error('x'), { kind })).kind).toBe(kind);
     }
+    expect(asMailTlsError(Object.assign(new Error('x'), { kind: 'incompatible' })).kind).toBe(
+      'incompatible'
+    );
     expect(asMailTlsError(new WebAssembly.RuntimeError('unreachable')).kind).toBe('internal');
     expect(asMailTlsError(Object.assign(new Error('x'), { kind: 'novel' })).kind).toBe('internal');
+  });
+});
+
+describe('loadMailTlsEngine', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a binary that is not served is a typed load error, not remembered', async () => {
+    const fetch = vi.fn(async () => new Response('missing', { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    await expect(loadMailTlsEngine()).rejects.toMatchObject({
+      name: 'MailTlsLoadError',
+      kind: 'http_status',
+    });
+    await expect(loadMailTlsEngine()).rejects.toBeInstanceOf(MailTlsLoadError);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a download that fails is a typed load error of kind unavailable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('network down');
+      })
+    );
+    await expect(loadMailTlsEngine()).rejects.toMatchObject({ kind: 'unavailable' });
   });
 });

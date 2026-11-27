@@ -31,6 +31,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-mail"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
@@ -82,6 +83,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-mail"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
@@ -123,6 +125,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-mail"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:

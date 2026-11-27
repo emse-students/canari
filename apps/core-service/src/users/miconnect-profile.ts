@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { readSchoolMail, type MailClass } from './mail-class';
 
 /** The campuses MiConnect enrols a person on (D6: the person's own choice, never deduced). */
 export const CAMPUSES = ['saint-etienne', 'gardanne'] as const;
@@ -26,6 +27,13 @@ export interface MiconnectProfile {
    * reminder banner shows only on an explicit `false`.
    */
   alumniLinked: boolean | null;
+  /**
+   * The class of the account's school address (claim `school_mail`, scope `school_mail`, owner
+   * 2026-11-27): `student`, `staff`, or `null` - not offered. The ADDRESS is never part of the
+   * profile: it is not stored (charter principle 1). Absent until MiConnect's blueprint emits the
+   * claim, which is the expected state before that stable, not a fault.
+   */
+  mailClass: MailClass | null;
 }
 
 /** The claims authentik emits on scope `profile` for Canari (WP1), all optional by contract. */
@@ -35,6 +43,8 @@ export interface MiconnectClaims {
   cursus?: unknown;
   posts?: unknown;
   alumni_linked?: unknown;
+  /** Scope `school_mail`, Canari's providers only: a CAS account's school address. */
+  school_mail?: unknown;
 }
 
 const logger = new Logger('MiconnectProfile');
@@ -103,7 +113,16 @@ export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'):
       `profile claim: alumni_linked is not a boolean (${typeof claims.alumni_linked}), read as unknown`
     );
   }
-  return { miconnectUuid, campus, cursus, posts, alumniLinked };
+  const schoolMail = readSchoolMail(claims.school_mail);
+  if (claims.school_mail !== undefined && schoolMail === null) {
+    // MiConnect sends the claim only for a listed domain, so this is a mapping and a contract that
+    // disagree. The value is never logged: it is an address.
+    logger.warn(
+      `profile claim: school_mail is not an address on a listed domain (${typeof claims.school_mail}), read as not offered`
+    );
+  }
+  const mailClass = schoolMail?.mailClass ?? null;
+  return { miconnectUuid, campus, cursus, posts, alumniLinked, mailClass };
 }
 
 /**
@@ -335,4 +354,5 @@ export const EMPTY_PROFILE: MiconnectProfile = {
   cursus: [],
   posts: [],
   alumniLinked: null,
+  mailClass: null,
 };

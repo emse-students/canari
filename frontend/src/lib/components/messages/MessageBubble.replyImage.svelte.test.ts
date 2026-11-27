@@ -76,8 +76,9 @@ describe('MessageBubble - an image sent as a reply', () => {
     expect(reply.quoted).toBe(true);
   });
 
-  it('keeps the frame for a file reply', () => {
+  it('keeps a file reply unframed too: a reply never changes the message render', () => {
     const file: MediaRef = { ...photo, type: 'file', mimeType: 'application/pdf' };
-    expect(draw(file, quote).cls).toContain('bg-bubble-out');
+    expect(draw(file, quote).cls).toBe(draw(file).cls);
+    expect(draw(file, quote).cls).not.toContain('bg-bubble-out');
   });
 });

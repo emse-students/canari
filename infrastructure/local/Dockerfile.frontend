@@ -313,6 +313,13 @@ map $request_method $miconnect_hook_key {\n\
     POST $binary_remote_addr;\n\
 }\n\
 limit_req_zone $miconnect_hook_key zone=miconnect_hook:1m rate=1r/s;\n\
+# THE MAIL RELAY'S OPENS (docs/wiki/mail-client-transport.md#the-relay), per client address: a\n\
+# client keeps ONE connection and opens another only when the last ended (an idle end every 100 s at\n\
+# most), so a page opens far under 1 a second. The key is the ADDRESS, not the account (limit_req\n\
+# runs before auth_request knows who it is), and a campus NATs many readers behind one, so the rate\n\
+# is sized for hundreds of readers on one address: 10 r/s, burst 100. What it bounds is a loop or a\n\
+# flood of upgrades, each of which costs the gateway a token check and an eligibility answer.\n\
+limit_req_zone $binary_remote_addr zone=mail_relay:1m rate=10r/s;\n\
 \n\
 include /etc/nginx/targets/frontend.conf;\n\
 \n\
@@ -730,12 +737,16 @@ server {\n\
     \n\
     # THE MAIL RELAY (docs/wiki/mail-client-transport.md): a WebSocket the gateway pipes to the school\n\
     # mailbox, ciphertext only. Authenticated like /api/ws (the gateway reads the token itself and\n\
-    # checks the origin), so the same lines, the same error_log rule and the same idle bound: a\n\
-    # connection silent for 120 s both ways is ended here, and the client opens a new one when it\n\
-    # next has something to send. Exact match: it widens nothing. Off on the gateway (404) unless\n\
+    # checks the origin), so the same lines, the same error_log rule and the same 120 s bound - which\n\
+    # the gateway never reaches: it ends a connection silent for 100 s itself, with its own close\n\
+    # code, and the client opens a new one when it next has something to send. Its opens are rate\n\
+    # limited per address (zone mail_relay, above). Exact match: it widens nothing. Off on the gateway (404) unless\n\
     # MAIL_RELAY_ENABLED is set there.\n\
     location = /api/mail/relay {\n\
     error_log /var/log/nginx/error.log crit;\n\
+    limit_req zone=mail_relay burst=100 nodelay;\n\
+    limit_req_status 429;\n\
+    limit_req_log_level warn;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\

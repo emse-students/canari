@@ -16,6 +16,7 @@ describe('parseProfileClaims', () => {
       cursus: [{ formation: 'ISMIN', promo: 2025 }],
       posts: [],
       alumniLinked: null,
+      mailClass: null,
     });
   });
 
@@ -35,6 +36,7 @@ describe('parseProfileClaims', () => {
       cursus: [],
       posts: [],
       alumniLinked: null,
+      mailClass: null,
     });
   });
 
@@ -50,7 +52,21 @@ describe('parseProfileClaims', () => {
       cursus: [],
       posts: [],
       alumniLinked: null,
+      mailClass: null,
     });
+  });
+
+  it('keeps the CLASS of the school address, never the address, and absent as not offered', () => {
+    const profile = parseProfileClaims({ school_mail: 'jane.doe@etu.emse.fr' });
+    expect(profile.mailClass).toBe('student');
+    expect(JSON.stringify(profile)).not.toContain('jane.doe');
+    expect(parseProfileClaims({ school_mail: 'john.roe@emse.fr' }).mailClass).toBe('staff');
+    // Before MiConnect emits the claim: not offered, the expected rollout state.
+    expect(parseProfileClaims({}).mailClass).toBeNull();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    expect(parseProfileClaims({ school_mail: 'x@example.org' }).mailClass).toBeNull();
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('example.org');
+    warn.mockRestore();
   });
 
   it('reads alumni_linked as a boolean, and anything else as UNKNOWN (D44)', () => {

@@ -11,7 +11,7 @@
 //   - the page's origin, exactly as `/api/ws` (`crate::origin`), or 403;
 //   - an ACCESS token, exactly as `/api/ws` (cookie, else `?token=`), or 401;
 //   - a place under the caps below, or 503;
-//   - an ELIGIBLE account: the domain of its MiConnect address is in `MAIL_DOMAINS` (D1), asked of
+//   - an ELIGIBLE account: its stored mail class is one of `MAIL_CLASSES` (D1), asked of
 //     core-service, or 403 - and 503 when core-service could not say;
 //   - the upstream answered the TCP connect within its deadline, or 502.
 
@@ -54,16 +54,21 @@ pub const MAX_BYTES_PER_CONNECTION: u64 = 256 * 1024 * 1024;
 pub const MAX_CLIENT_MESSAGE_BYTES: usize = 1024 * 1024;
 /// How long the TCP connect to the upstream may take before the upgrade is answered 502.
 pub const UPSTREAM_CONNECT_DEADLINE: Duration = Duration::from_secs(10);
-/// How long the eligibility question to core-service may take. core-service asks MiConnect with a
-/// 10 s deadline of its own (`AUTHENTIK_TIMEOUT_MS`), so this one outlasts it and the answer that
-/// comes back is core-service's, not a cut-off.
-pub const ELIGIBILITY_DEADLINE: Duration = Duration::from_secs(12);
+/// How long a connection may carry nothing, either way, before the relay ends it itself with
+/// [`close_code::IDLE`]. Below nginx's 120 s bound on the location (`proxy_read_timeout`,
+/// `proxy_send_timeout`), so an idle keep-alive connection ends as an ORDINARY end the client
+/// classifies, rather than as nginx's cut, which reaches it as an unexplained 1006.
+pub const IDLE_DEADLINE: Duration = Duration::from_secs(100);
+/// How long the eligibility question to core-service may take. core-service answers it with ONE
+/// primary-key read of `users.mailClass` and asks nobody else, so a slower answer is a fault.
+pub const ELIGIBILITY_DEADLINE: Duration = Duration::from_secs(5);
 /// Bytes read from the upstream at a time, and so the largest frame the relay sends.
 const READ_CHUNK: usize = 64 * 1024;
 
-/// The domains whose accounts may use the relay (D1). Equal to `libs/contracts/mail-domains.json`,
-/// which the client reads too (`the_domains_are_the_contracts`).
-pub const MAIL_DOMAINS: [&str; 2] = ["etu.emse.fr", "emse.fr"];
+/// The mail classes whose accounts may use the relay (D1): the VALUES of
+/// `libs/contracts/mail-domains.json`'s `classes`, which core-service stores at sign-in and the
+/// client reads too (`the_classes_are_the_contracts`).
+pub const MAIL_CLASSES: [&str; 2] = ["student", "staff"];
 
 /// The WebSocket close codes the relay ends a connection with - the client classifies on the CODE
 /// (`frontend/src/lib/mail/relayTransport.ts`), never on the reason text.
@@ -76,12 +81,13 @@ pub mod close_code {
     pub const UPSTREAM_ERROR: u16 = 4002;
     /// The client sent something that is not a binary frame.
     pub const PROTOCOL: u16 = 4003;
+    /// Nothing crossed for [`super::IDLE_DEADLINE`]: an ordinary end, like the upstream closing.
+    pub const IDLE: u16 = 4004;
 }
 
-/// Whether `domain` is one of [`MAIL_DOMAINS`]: exact, case-insensitive, no subdomain.
-pub fn is_eligible_domain(domain: &str) -> bool {
-    let domain = domain.trim().to_ascii_lowercase();
-    MAIL_DOMAINS.contains(&domain.as_str())
+/// Whether `class` is one of [`MAIL_CLASSES`]: exact, as core-service stores it.
+pub fn is_eligible_class(class: &str) -> bool {
+    MAIL_CLASSES.contains(&class)
 }
 
 // ── Configuration ────────────────────────────────────────────────────────────────────────────────
@@ -218,7 +224,7 @@ pub enum EligibilityError {
     /// It answered something other than the two answers below (a 5xx: MiConnect unreachable or
     /// not configured there, a refused secret).
     Upstream(u16),
-    /// A 200 whose body is not `{ "domain": string | null }`.
+    /// A 200 whose body is not `{ "mailClass": string | null }`.
     Malformed(String),
 }
 
@@ -235,13 +241,15 @@ impl std::fmt::Display for EligibilityError {
 }
 
 #[derive(serde::Deserialize)]
-struct DomainAnswer {
-    domain: Option<String>,
+struct ClassAnswer {
+    #[serde(rename = "mailClass")]
+    mail_class: Option<String>,
 }
 
-/// Asks core-service for the domain of an account's MiConnect address
-/// (`GET /api/internal/users/:id/mail-domain`). Canari stores no address; core-service reads it
-/// from MiConnect when asked, and hands back the DOMAIN only (mail-client-transport.md#eligibility).
+/// Asks core-service for an account's mail class (`GET /api/internal/users/:id/mail-class`): the
+/// class learnt from MiConnect's `school_mail` claim at the last sign-in and stored on the user row.
+/// Canari stores no address, and nobody asks MiConnect per connection
+/// (mail-client-transport.md#eligibility).
 pub struct Eligibility {
     http: reqwest::Client,
     core_url: String,
@@ -262,11 +270,11 @@ impl Eligibility {
         }
     }
 
-    /// The domain of `account`'s address: `Some(domain)`, or `None` when core-service answered that
-    /// the account has none it can name (unknown, no MiConnect link, no address) - both answers.
-    pub async fn domain_of(&self, account: &str) -> Result<Option<String>, EligibilityError> {
+    /// `account`'s mail class: `Some(class)`, or `None` when core-service answered that it has none
+    /// (an unknown account, or one MiConnect sent no school address for) - both answers.
+    pub async fn class_of(&self, account: &str) -> Result<Option<String>, EligibilityError> {
         let url = format!(
-            "{}/api/internal/users/{}/mail-domain",
+            "{}/api/internal/users/{}/mail-class",
             self.core_url,
             urlencode_segment(account)
         );
@@ -279,11 +287,11 @@ impl Eligibility {
             .map_err(|e| EligibilityError::Unreachable(e.to_string()))?;
         match res.status().as_u16() {
             200 => {
-                let answer: DomainAnswer = res
+                let answer: ClassAnswer = res
                     .json()
                     .await
                     .map_err(|e| EligibilityError::Malformed(e.to_string()))?;
-                Ok(answer.domain.map(|d| d.to_ascii_lowercase()))
+                Ok(answer.mail_class)
             }
             404 => Ok(None),
             other => Err(EligibilityError::Upstream(other)),
@@ -323,6 +331,7 @@ pub struct MailRelay {
     pub max_per_account: usize,
     pub max_total: usize,
     pub max_bytes: u64,
+    pub idle: Duration,
     places: Mutex<HashMap<String, usize>>,
     refusals: crate::log_repeat::RepeatCounter,
 }
@@ -354,6 +363,7 @@ impl MailRelay {
             max_per_account: MAX_MAIL_CONNECTIONS_PER_ACCOUNT,
             max_total: MAX_MAIL_CONNECTIONS,
             max_bytes: MAX_BYTES_PER_CONNECTION,
+            idle: IDLE_DEADLINE,
             places: Mutex::new(HashMap::new()),
             refusals: crate::log_repeat::RepeatCounter::new(4_096),
         }
@@ -486,17 +496,17 @@ pub async fn mail_relay_handler(
         }
     };
 
-    match relay.eligibility.domain_of(&account).await {
-        Ok(Some(domain)) if is_eligible_domain(&domain) => {
-            tracing::debug!("[mail-relay] {short} is eligible ({domain})");
+    match relay.eligibility.class_of(&account).await {
+        Ok(Some(class)) if is_eligible_class(&class) => {
+            tracing::debug!("[mail-relay] {short} is eligible ({class})");
         }
-        Ok(domain) => {
-            // An answer: this account's address is not the school's. Said once per account and
-            // episode - a client that keeps asking is a client the tab should not have been shown to.
+        Ok(class) => {
+            // An answer: this account holds no school address. Said once per account and episode -
+            // a client that keeps asking is a client the tab should not have been shown to.
             if let Some(n) = relay.refusals.hit(&format!("ineligible:{account}")) {
                 tracing::info!(
-                    "[mail-relay] {short} is not eligible (domain {:?}) - 403, refusal #{n}",
-                    domain.as_deref().unwrap_or("none")
+                    "[mail-relay] {short} is not eligible (class {:?}) - 403, refusal #{n}",
+                    class.as_deref().unwrap_or("none")
                 );
             }
             return (StatusCode::FORBIDDEN, "Not eligible").into_response();
@@ -535,7 +545,7 @@ pub async fn mail_relay_handler(
     ws.max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            pipe(socket, stream, relay.max_bytes, short).await;
+            pipe(socket, stream, relay.max_bytes, relay.idle, short).await;
             drop(place);
         })
 }
@@ -552,6 +562,8 @@ pub enum RelayEnd {
     ClientClosed,
     /// The upstream closed its side: ordinary, a keep-alive connection ends so.
     UpstreamClosed,
+    /// Nothing crossed for the idle deadline: ordinary, the relay ended it before nginx would.
+    Idle,
     /// The connection carried its byte cap.
     ByteCap,
     /// The client sent a frame that is not binary.
@@ -573,8 +585,16 @@ struct Tally {
 
 /// Pipes bytes both ways until either side ends, then says ONE line (INFO for an ordinary end,
 /// WARN for a cap or a fault) with the byte counts and record types - never content.
-async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: String) {
+async fn pipe(
+    socket: WebSocket,
+    stream: TcpStream,
+    max_bytes: u64,
+    idle_after: Duration,
+    short: String,
+) {
     let started = Instant::now();
+    let idle = tokio::time::sleep(idle_after);
+    tokio::pin!(idle);
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (mut tcp_rx, mut tcp_tx) = stream.into_split();
     let mut tally = Tally::default();
@@ -584,6 +604,7 @@ async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: Strin
         tokio::select! {
             incoming = ws_rx.next() => match incoming {
                 Some(Ok(Message::Binary(bytes))) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_after);
                     tally.up_bytes += bytes.len() as u64;
                     if tally.up_bytes + tally.down_bytes > max_bytes {
                         break RelayEnd::ByteCap;
@@ -608,6 +629,7 @@ async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: Strin
             read = tcp_rx.read(&mut buf) => match read {
                 Ok(0) => break RelayEnd::UpstreamClosed,
                 Ok(n) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_after);
                     tally.down_bytes += n as u64;
                     if tally.up_bytes + tally.down_bytes > max_bytes {
                         break RelayEnd::ByteCap;
@@ -622,6 +644,7 @@ async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: Strin
                     break RelayEnd::UpstreamFault;
                 }
             },
+            () = &mut idle => break RelayEnd::Idle,
         }
     };
 
@@ -630,6 +653,7 @@ async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: Strin
     let code = match end {
         RelayEnd::ClientClosed | RelayEnd::ClientFault => None,
         RelayEnd::UpstreamClosed => Some(close_code::UPSTREAM_CLOSED),
+        RelayEnd::Idle => Some(close_code::IDLE),
         RelayEnd::ByteCap => Some(close_code::BYTE_CAP),
         RelayEnd::UpstreamFault => Some(close_code::UPSTREAM_ERROR),
         RelayEnd::Protocol => Some(close_code::PROTOCOL),
@@ -656,7 +680,9 @@ async fn pipe(socket: WebSocket, stream: TcpStream, max_bytes: u64, short: Strin
         tally.down_records
     );
     match end {
-        RelayEnd::ClientClosed | RelayEnd::UpstreamClosed => tracing::info!("{line}"),
+        RelayEnd::ClientClosed | RelayEnd::UpstreamClosed | RelayEnd::Idle => {
+            tracing::info!("{line}")
+        }
         RelayEnd::ByteCap
         | RelayEnd::Protocol
         | RelayEnd::ClientFault

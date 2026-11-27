@@ -39,13 +39,6 @@ export interface MiconnectAccount {
    */
   cguVersion: string | null;
   /**
-   * The account's address at MiConnect (authentik's `email`), `null` when it holds none. Read for
-   * ONE question only: the DOMAIN the mail relay's eligibility asks (internal-mail.controller.ts,
-   * docs/wiki/mail-client.md D1). No claim sends it (10-mappings.yaml sends a synthetic address),
-   * and Canari stores none of it.
-   */
-  email: string | null;
-  /**
    * What the Alumni rule reads (alumni-access.ts): the profile's cursus entry years and posts,
    * `attributes.alumni`, and the names of the groups the user is directly in. Whether an Alumni
    * connection exists is a separate read ({@link MiconnectReaderClient.alumniLinked}), made only
@@ -183,7 +176,6 @@ export class MiconnectReaderClient {
         pk: number;
         is_active: boolean;
         uid: string;
-        email?: unknown;
         attributes?: Record<string, unknown>;
         groups_obj?: { name?: unknown }[] | null;
       }[];
@@ -208,7 +200,6 @@ export class MiconnectReaderClient {
       isActive: results[0].is_active === true,
       uid: results[0].uid,
       cguVersion: typeof accepted === 'string' ? accepted : null,
-      email: typeof results[0].email === 'string' && results[0].email ? results[0].email : null,
       facts: {
         ...alumniProfileFacts(attributes),
         groups: groups.map((g) => g.name).filter((n): n is string => typeof n === 'string'),

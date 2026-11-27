@@ -100,49 +100,44 @@ fn an_incomplete_on_is_refused_at_startup() {
 // ── Eligibility ──────────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn the_domains_are_the_contracts() {
+fn the_classes_are_the_contracts() {
     let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../libs/contracts/mail-domains.json"
     )))
     .unwrap();
-    let listed: Vec<&str> = contract["domains"]
-        .as_array()
+    let mut listed: Vec<&str> = contract["classes"]
+        .as_object()
         .unwrap()
-        .iter()
-        .map(|d| d.as_str().unwrap())
+        .values()
+        .map(|c| c.as_str().unwrap())
         .collect();
-    assert_eq!(listed, MAIL_DOMAINS.to_vec());
+    listed.sort_unstable();
+    listed.dedup();
+    let mut ours = MAIL_CLASSES.to_vec();
+    ours.sort_unstable();
+    assert_eq!(listed, ours);
 }
 
 #[test]
-fn only_the_exact_school_domains_are_eligible() {
-    assert!(is_eligible_domain("etu.emse.fr"));
-    assert!(is_eligible_domain("emse.fr"));
-    assert!(is_eligible_domain("EMSE.FR"));
-    for refused in [
-        "",
-        "gmail.com",
-        "alumni.emse.fr",
-        "mines-stetienne.fr",
-        "emse.fr.example",
-        "notemse.fr",
-        "canari.emse.fr",
-    ] {
-        assert!(!is_eligible_domain(refused), "{refused:?}");
+fn only_the_exact_classes_are_eligible() {
+    assert!(is_eligible_class("student"));
+    assert!(is_eligible_class("staff"));
+    for refused in ["", "none", "Student", "alumni", "etu.emse.fr"] {
+        assert!(!is_eligible_class(refused), "{refused:?}");
     }
 }
 
-/// A fake core-service answering `GET /api/internal/users/:id/mail-domain`: `domains` maps an
-/// account to its domain, `null` for a known account with none; an absent account is a 404; the
-/// account `broken` answers 503 (MiConnect unreachable there).
-async fn fake_core(domains: &[(&str, Option<&str>)]) -> String {
-    let table: HashMap<String, Option<String>> = domains
+/// A fake core-service answering `GET /api/internal/users/:id/mail-class`: `classes` maps an
+/// account to its stored class, `null` for a known account with none; an absent account is a 404;
+/// the account `broken` answers 503 (its database unreachable there).
+async fn fake_core(classes: &[(&str, Option<&str>)]) -> String {
+    let table: HashMap<String, Option<String>> = classes
         .iter()
         .map(|(a, d)| (a.to_string(), d.map(str::to_string)))
         .collect();
     let app = Router::new().route(
-        "/api/internal/users/{id}/mail-domain",
+        "/api/internal/users/{id}/mail-class",
         get(move |Path(id): Path<String>, headers: HeaderMap| {
             let table = table.clone();
             async move {
@@ -157,7 +152,7 @@ async fn fake_core(domains: &[(&str, Option<&str>)]) -> String {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
                 match table.get(&id) {
-                    Some(domain) => Json(serde_json::json!({ "domain": domain })).into_response(),
+                    Some(class) => Json(serde_json::json!({ "mailClass": class })).into_response(),
                     None => StatusCode::NOT_FOUND.into_response(),
                 }
             }
@@ -171,28 +166,28 @@ async fn fake_core(domains: &[(&str, Option<&str>)]) -> String {
 
 #[tokio::test]
 async fn core_services_answers_are_read_and_its_failures_are_not_answers() {
-    let base = fake_core(&[("student", Some("ETU.EMSE.FR")), ("noaddress", None)]).await;
+    let base = fake_core(&[("student", Some("student")), ("noaddress", None)]).await;
     let asks = Eligibility::new(base.clone(), INTERNAL.into());
     assert_eq!(
-        asks.domain_of("student").await.unwrap().as_deref(),
-        Some("etu.emse.fr")
+        asks.class_of("student").await.unwrap().as_deref(),
+        Some("student")
     );
-    assert_eq!(asks.domain_of("noaddress").await.unwrap(), None);
+    assert_eq!(asks.class_of("noaddress").await.unwrap(), None);
     // Unknown: an answer, and not eligible.
-    assert_eq!(asks.domain_of("stranger").await.unwrap(), None);
+    assert_eq!(asks.class_of("stranger").await.unwrap(), None);
     assert!(matches!(
-        asks.domain_of("broken").await,
+        asks.class_of("broken").await,
         Err(EligibilityError::Upstream(503))
     ));
     // A refused secret is a fault, never "not eligible".
     let wrong = Eligibility::new(base, "not-ours".into());
     assert!(matches!(
-        wrong.domain_of("student").await,
+        wrong.class_of("student").await,
         Err(EligibilityError::Upstream(403))
     ));
     let down = Eligibility::new("http://127.0.0.1:1".into(), INTERNAL.into());
     assert!(matches!(
-        down.domain_of("student").await,
+        down.class_of("student").await,
         Err(EligibilityError::Unreachable(_))
     ));
 }
@@ -339,7 +334,7 @@ async fn next_binary_or_close(socket: &mut Client) -> Result<Vec<u8>, Option<u16
 
 #[tokio::test]
 async fn bytes_cross_the_relay_both_ways_unchanged() {
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let url = serve(Some(relay_to(&echo_upstream().await, core))).await;
     let mut socket = open(&url("student")).await.unwrap();
     // A handshake record, as a client's first bytes would be; then a second message.
@@ -363,7 +358,7 @@ async fn bytes_cross_the_relay_both_ways_unchanged() {
 
 #[tokio::test]
 async fn an_ineligible_account_is_refused_before_any_socket() {
-    let core = fake_core(&[("alumnus", Some("gmail.com")), ("noaddress", None)]).await;
+    let core = fake_core(&[("alumnus", Some("alumni")), ("noaddress", None)]).await;
     let url = serve(Some(relay_to(&echo_upstream().await, core))).await;
     assert_eq!(
         open(&url("alumnus")).await.err(),
@@ -400,7 +395,7 @@ async fn the_route_is_a_404_while_the_switch_is_off() {
 
 #[tokio::test]
 async fn no_token_or_a_foreign_origin_opens_nothing() {
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let url = serve(Some(relay_to(&echo_upstream().await, core))).await;
     let bare = url("student");
     let bare = bare.split('?').next().unwrap().to_string();
@@ -419,7 +414,7 @@ async fn no_token_or_a_foreign_origin_opens_nothing() {
 
 #[tokio::test]
 async fn an_account_past_its_cap_is_a_503_and_a_closed_socket_frees_its_place() {
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let mut relay = relay_to(&echo_upstream().await, core);
     relay.max_per_account = 2;
     let url = serve(Some(relay)).await;
@@ -449,7 +444,7 @@ async fn an_account_past_its_cap_is_a_503_and_a_closed_socket_frees_its_place() 
 
 #[tokio::test]
 async fn a_connection_past_its_byte_cap_ends_with_its_code() {
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let mut relay = relay_to(&echo_upstream().await, core);
     relay.max_bytes = 64;
     let url = serve(Some(relay)).await;
@@ -466,7 +461,7 @@ async fn a_connection_past_its_byte_cap_ends_with_its_code() {
 
 #[tokio::test]
 async fn a_text_frame_ends_the_connection_as_a_protocol_fault() {
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let url = serve(Some(relay_to(&echo_upstream().await, core))).await;
     let mut socket = open(&url("student")).await.unwrap();
     socket.send(WsMessage::Text("hello".into())).await.unwrap();
@@ -486,7 +481,7 @@ async fn the_upstream_closing_ends_the_socket_with_its_code() {
             drop(socket);
         }
     });
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let url = serve(Some(relay_to(&addr, core))).await;
     let mut socket = open(&url("student")).await.unwrap();
     assert_eq!(
@@ -502,10 +497,33 @@ async fn an_upstream_that_refuses_the_connect_is_a_502() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         listener.local_addr().unwrap().to_string()
     };
-    let core = fake_core(&[("student", Some("etu.emse.fr"))]).await;
+    let core = fake_core(&[("student", Some("student"))]).await;
     let url = serve(Some(relay_to(&addr, core))).await;
     assert_eq!(
         open(&url("student")).await.err(),
         Some(StatusCode::BAD_GATEWAY)
+    );
+}
+
+#[tokio::test]
+async fn an_idle_connection_ends_with_its_own_code_before_nginx_would() {
+    assert!(
+        IDLE_DEADLINE < Duration::from_secs(120),
+        "below the location's proxy_read_timeout"
+    );
+    let core = fake_core(&[("student", Some("student"))]).await;
+    let mut relay = relay_to(&echo_upstream().await, core);
+    relay.idle = Duration::from_millis(200);
+    let url = serve(Some(relay)).await;
+    let mut socket = open(&url("student")).await.unwrap();
+    // Traffic moves the deadline on: the echo comes back, then nothing crosses.
+    socket
+        .send(WsMessage::Binary(vec![1u8; 8].into()))
+        .await
+        .unwrap();
+    assert_eq!(next_binary_or_close(&mut socket).await, Ok(vec![1u8; 8]));
+    assert_eq!(
+        next_binary_or_close(&mut socket).await,
+        Err(Some(close_code::IDLE))
     );
 }

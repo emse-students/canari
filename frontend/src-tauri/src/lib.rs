@@ -46,7 +46,9 @@ use crate::commands::conversation_nicknames::{
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
-use crate::commands::mail_socket::{mail_socket_close, mail_socket_open, mail_socket_write};
+use crate::commands::mail_socket::{
+    mail_socket_close, mail_socket_close_all, mail_socket_open, mail_socket_write,
+};
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, cle_feuille,
     cles_signature_epinglees, confirmer_commit, confirmer_commit_welcome_du,
@@ -2007,6 +2009,7 @@ pub fn run() {
             mail_socket_open,
             mail_socket_write,
             mail_socket_close,
+            mail_socket_close_all,
             notify_native_message,
             record_read_elsewhere,
             cancel_conversation_notifications,

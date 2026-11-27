@@ -1,33 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import contract from '../../../../libs/contracts/mail-domains.json';
-import { MAIL_DOMAINS, isMailEligibleAddress, isMailEligibleDomain } from './eligibility';
+import { MAIL_CLASS_BY_DOMAIN, mailClassOf } from './eligibility';
 
-describe('MAIL_DOMAINS', () => {
-  it('equals libs/contracts/mail-domains.json, which the relay is held to as well', () => {
-    expect([...MAIL_DOMAINS]).toEqual(contract.domains);
+describe('MAIL_CLASS_BY_DOMAIN', () => {
+  it('equals libs/contracts/mail-domains.json, which core-service and the relay are held to', () => {
+    expect({ ...MAIL_CLASS_BY_DOMAIN }).toEqual(contract.classes);
   });
 });
 
-describe('isMailEligibleDomain', () => {
-  it('admits the listed domains exactly, case aside, and nothing else', () => {
-    expect(isMailEligibleDomain('etu.emse.fr')).toBe(true);
-    expect(isMailEligibleDomain('EMSE.FR')).toBe(true);
-    expect(isMailEligibleDomain('sub.emse.fr')).toBe(false);
-    expect(isMailEligibleDomain('emse.fr.example.com')).toBe(false);
-    expect(isMailEligibleDomain('example.com')).toBe(false);
-    expect(isMailEligibleDomain('')).toBe(false);
-    expect(isMailEligibleDomain(null)).toBe(false);
-  });
-});
-
-describe('isMailEligibleAddress', () => {
-  it('reads the domain after the last @, exactly', () => {
-    expect(isMailEligibleAddress('prenom.nom@etu.emse.fr')).toBe(true);
-    expect(isMailEligibleAddress('Staff@EMSE.fr')).toBe(true);
-    expect(isMailEligibleAddress('"a@emse.fr"@example.com')).toBe(false);
-    expect(isMailEligibleAddress('x@sub.emse.fr')).toBe(false);
-    expect(isMailEligibleAddress('@emse.fr')).toBe(false);
-    expect(isMailEligibleAddress('emse.fr')).toBe(false);
-    expect(isMailEligibleAddress(null)).toBe(false);
+describe('mailClassOf', () => {
+  it('classes the school domains exactly, case aside, and nothing else', () => {
+    expect(mailClassOf('jane.doe@etu.emse.fr')).toBe('student');
+    expect(mailClassOf('John.Roe@EMSE.FR')).toBe('staff');
+    expect(mailClassOf('x@sub.emse.fr')).toBeNull();
+    expect(mailClassOf('x@emse.fr.example.com')).toBeNull();
+    expect(mailClassOf('x@example.com')).toBeNull();
+    expect(mailClassOf('emse.fr')).toBeNull();
+    expect(mailClassOf('@emse.fr')).toBeNull();
+    expect(mailClassOf('')).toBeNull();
+    expect(mailClassOf(null)).toBeNull();
   });
 });

@@ -346,6 +346,7 @@ export class UsersService implements OnModuleInit {
       sameCursus(u.cursus ?? [], profile.cursus) &&
       JSON.stringify(u.posts ?? []) === JSON.stringify(profile.posts) &&
       (u.alumniLinked ?? null) === profile.alumniLinked &&
+      (u.mailClass ?? null) === profile.mailClass &&
       (u.promo ?? null) === promo &&
       (u.formation ?? null) === formation;
     const user = await this.userRepository.findOne({ where: { id } });
