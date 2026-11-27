@@ -2564,6 +2564,37 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(whereArgs(deliveryRepo)).toContainEqual({ status: 'failed' });
     });
 
+    it('Le Cercle crediting a parked top-up settles it delivered, keyed on the payment intent', async () => {
+      const { service, deliveryRepo } = makeService();
+      const row = failedRow({ status: 'parked', nextAttemptAt: null, lastError: null });
+      deliveryRepo.findOne.mockResolvedValue(row);
+
+      expect(await service.markCercleTopupCredited('pi_1')).toEqual({ status: 'delivered' });
+      expect(deliveryRepo.findOne).toHaveBeenCalledWith({ where: { paymentIntentId: 'pi_1' } });
+      expect(row.status).toBe('delivered');
+      expect(deliveryRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('is idempotent: a repeated notice saves nothing', async () => {
+      const { service, deliveryRepo } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow({ status: 'delivered' }));
+
+      expect(await service.markCercleTopupCredited('pi_1')).toEqual({ status: 'delivered' });
+      expect(deliveryRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('settles a failed row too, off the ladder, and changes nothing for an unknown intent', async () => {
+      const { service, deliveryRepo } = makeService();
+      const row = failedRow();
+      deliveryRepo.findOne.mockResolvedValueOnce(row);
+      await service.markCercleTopupCredited('pi_1');
+      expect(row).toMatchObject({ status: 'delivered', nextAttemptAt: null, lastError: null });
+
+      deliveryRepo.findOne.mockResolvedValueOnce(null);
+      expect(await service.markCercleTopupCredited('pi_x')).toEqual({ status: 'unknown' });
+      expect(deliveryRepo.save).toHaveBeenCalledTimes(1);
+    });
+
     it('counts the parked deliveries, and those parked since before the cutoff', async () => {
       const { service, deliveryRepo } = makeService();
       deliveryRepo.__setCounts([5, 2]);

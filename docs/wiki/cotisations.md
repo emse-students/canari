@@ -1224,6 +1224,14 @@ product's `webhookUrl`:
   (`[CERCLE_PARKED] parked=N older_than_7d=M`): `log` at zero, `warn` while any has waited longer,
   `error` when it cannot count. The seven days are a reading threshold, not a timeout: nothing is
   retried or moved when they elapse.
+- **Le Cercle says when a park ends** (`POST /api/public/cercle/topup-credited`, body
+  `{ "paymentIntentId" }`, `X-Api-Key: <CERCLE_API_KEY>` - the key of `cotisant-status`, the only
+  credential Le Cercle holds for Canari; same throttle). Le Cercle calls it right after the
+  first-sign-in transaction that credits the parked top-up commits, best-effort and logged on
+  failure; `ProductsService.markCercleTopupCredited` turns the row `delivered`, idempotently (a
+  `failed` row for the same payment too, at WARN). Without it a credited park stayed "waiting" on
+  the admin page and in the 7-day line for ever - a false report. A lost notice loses nothing: the
+  row stays parked and the 7-day WARN then names a wait worth checking on Le Cercle's side.
   **Deploy order does not matter**: an old Canari reads the `202` as a 2xx (delivered), and an old
   Le Cercle keeps answering `404`, which this client still retries.
 

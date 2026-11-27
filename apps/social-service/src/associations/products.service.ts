@@ -4939,6 +4939,46 @@ export class ProductsService {
   }
 
   /**
+   * LE CERCLE SAYS IT CREDITED THIS TOP-UP (`POST /api/public/cercle/topup-credited`): a parked
+   * delivery becomes `delivered` - the one way Canari learns the end of a park, sent by Le Cercle
+   * when the member's first sign-in applies it. Keyed on the payment intent, the key both sides
+   * share; idempotent: a row already `delivered` is answered as it is.
+   *
+   * A `failed` or `pending` row for the same payment is ALSO settled: Le Cercle holds the credit, so
+   * a further retry could only be answered as a duplicate. Said at WARN, since this side believed
+   * otherwise. An unknown intent changes nothing and is said at WARN too - it names no top-up this
+   * service sent.
+   *
+   * @returns the row's status after the call, or `unknown`
+   */
+  async markCercleTopupCredited(
+    paymentIntentId: string
+  ): Promise<{ status: WebhookDelivery['status'] | 'unknown' }> {
+    const delivery = await this.deliveryRepo.findOne({ where: { paymentIntentId } });
+    if (!delivery) {
+      this.logger.warn(
+        `[CERCLE] credited notice for an unknown top-up intent=${paymentIntentId} - nothing changed`
+      );
+      return { status: 'unknown' };
+    }
+    if (delivery.status === 'delivered') {
+      this.logger.log(
+        `[CERCLE] credited notice repeated: intent=${paymentIntentId} already delivered`
+      );
+      return { status: 'delivered' };
+    }
+    const was = delivery.status;
+    delivery.status = 'delivered';
+    delivery.nextAttemptAt = null;
+    delivery.lastError = null;
+    await this.deliveryRepo.save(delivery);
+    const line = `[CERCLE] credited by Le Cercle at the member's first sign-in: intent=${paymentIntentId} ${was} -> delivered`;
+    if (was === 'parked') this.logger.log(line);
+    else this.logger.warn(`${line} (this side had it ${was})`);
+    return { status: 'delivered' };
+  }
+
+  /**
    * How many deliveries are parked, and how many of them since before `olderThan` - the daily
    * report's reading (`CercleDeliveryScheduler.reportLongParked`). Counts only: no member is named.
    */
