@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import {
   isPrivateIpAddress,
   assertPublicAddresses,
@@ -384,57 +384,110 @@ describe('MiGallery album cover', () => {
   const ORIGIN = 'https://gallery.mitv.fr';
   const ID = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
 
-  it('offers the wide 1200x630 cover for every visibility but private', () => {
-    for (const visibility of ['unlisted', 'authenticated', 'UNLISTED']) {
-      expect(galleryWideCoverFor(visibility, ORIGIN, ID)).toBe(
-        `${ORIGIN}/api/albums/${ID}/og-cover`
-      );
-    }
-  });
-
-  it('offers nothing for a private album, or for a visibility that is not stated', () => {
-    expect(galleryWideCoverFor('private', ORIGIN, ID)).toBe('');
-    expect(galleryWideCoverFor('Private', ORIGIN, ID)).toBe('');
-    expect(galleryWideCoverFor(undefined, ORIGIN, ID)).toBe('');
-    expect(galleryWideCoverFor('', ORIGIN, ID)).toBe('');
+  it('offers the wide 1200x630 cover, MiGallery serving it without a key for every album', () => {
+    expect(galleryWideCoverFor(ORIGIN, ID)).toBe(`${ORIGIN}/api/albums/${ID}/og-cover`);
   });
 
   describe('fetchMiGalleryPreview', () => {
     const realFetch = global.fetch;
     const realKey = process.env.MIGALLERY_API_KEY;
     const realBase = process.env.MIGALLERY_API_URL;
+    let warn: jest.SpyInstance;
+    let error: jest.SpyInstance;
+    let fetchMock: jest.Mock;
 
     beforeEach(() => {
       process.env.MIGALLERY_API_KEY = 'test-key';
       delete process.env.MIGALLERY_API_URL;
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     });
     afterEach(() => {
       global.fetch = realFetch;
+      warn.mockRestore();
+      error.mockRestore();
       if (realKey === undefined) delete process.env.MIGALLERY_API_KEY;
       else process.env.MIGALLERY_API_KEY = realKey;
       if (realBase === undefined) delete process.env.MIGALLERY_API_URL;
       else process.env.MIGALLERY_API_URL = realBase;
     });
 
-    function answerWith(visibility: string | undefined) {
-      global.fetch = jest.fn(async () => ({
-        ok: true,
-        json: async () => ({ album: { name: 'Gala', date: '2026-05-15', visibility } }),
-      })) as unknown as typeof fetch;
+    /** MiGallery answers `status` with `body` to every request. */
+    function answerWith(status: number, body: unknown) {
+      fetchMock = jest.fn(async () => ({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+      }));
+      global.fetch = fetchMock as unknown as typeof fetch;
     }
 
-    it('carries the wide cover for an unlisted album', async () => {
-      answerWith('unlisted');
-      const payload = await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/${ID}`));
-      expect(payload?.image).toBe(`${ORIGIN}/api/albums/${ID}/og-cover`);
-      expect(payload?.title).toBe('Gala');
+    const preview = () => fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/${ID}`));
+    const logged = (spy: jest.SpyInstance) => spy.mock.calls.map((c) => String(c[0])).join('\n');
+
+    it('reads the read-scoped preview route, never /info', async () => {
+      answerWith(200, { name: 'Gala', date: '2026-05-15', visibility: 'unlisted' });
+      await preview();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toBe(`${ORIGIN}/api/albums/${ID}/preview`);
+      expect(fetchMock.mock.calls[0][1].headers['x-api-key']).toBe('test-key');
     });
 
-    it('carries no image for a private album, so its card keeps the square cover only', async () => {
-      answerWith('private');
-      const payload = await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/${ID}`));
-      expect(payload?.image).toBe('');
-      expect(payload?.title).toBe('Gala');
+    it('gives a PRIVATE album its whole card: title, date and place, and the wide cover', async () => {
+      answerWith(200, {
+        name: 'Gala',
+        date: '2026-05-15',
+        location: 'Saint-Etienne',
+        visibility: 'private',
+      });
+      expect(await preview()).toEqual({
+        url: `${ORIGIN}/albums/${ID}`,
+        title: 'Gala',
+        description: '15 mai 2026 · Saint-Etienne',
+        image: `${ORIGIN}/api/albums/${ID}/og-cover`,
+        siteName: 'MiGallery',
+      });
+    });
+
+    it('accuses a refused key at ERROR, naming the read scope and the status', async () => {
+      answerWith(403, { message: 'Read, Write or Admin scope required' });
+      expect(await preview()).toBeNull();
+      expect(logged(error)).toMatch(/refused the album preview \(403\).*read scope/);
+    });
+
+    it('tells a MiGallery with no preview route from an album it does not know', async () => {
+      answerWith(404, { message: 'Not Found' });
+      expect(await preview()).toBeNull();
+      expect(logged(warn)).toContain('MiGallery has no preview route yet');
+
+      warn.mockClear();
+      answerWith(404, { code: 'album_not_found', message: 'Album not found' });
+      expect(await preview()).toBeNull();
+      expect(logged(warn)).toContain(`MiGallery knows no album ${ID}`);
+      expect(logged(warn)).not.toContain('no preview route');
+    });
+
+    it('logs any other status, a nameless answer and an unreachable MiGallery at WARN', async () => {
+      answerWith(502, {});
+      expect(await preview()).toBeNull();
+      expect(logged(warn)).toContain('answered 502');
+
+      answerWith(200, { visibility: 'private' });
+      expect(await preview()).toBeNull();
+      expect(logged(warn)).toContain('carried no name');
+
+      global.fetch = jest.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      }) as unknown as typeof fetch;
+      expect(await preview()).toBeNull();
+      expect(logged(warn)).toContain('unreachable');
+    });
+
+    it('leaves a URL that is not an album link to the page path, without a request', async () => {
+      answerWith(200, { name: 'Gala' });
+      expect(await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums`))).toBeNull();
+      expect(await fetchMiGalleryPreview(new URL(`https://example.org/albums/${ID}`))).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });

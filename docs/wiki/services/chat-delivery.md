@@ -2975,20 +2975,48 @@ parity row.
 
 One rule, decided on 2026-08-17: **an image is public and needs no key, a metadata read does.**
 
-`fetchMiGalleryPreview` calls `/api/albums/:id/info` with `MIGALLERY_API_KEY`, because that
-endpoint stays gated for private albums - it is the only credentialed call to MiGallery in this
-service. Cover images are not: MiGallery serves `/cover` (square) and `/og-cover` (wide) publicly
-for every visibility, since an external site embeds one from an `<img>` tag, which carries no key.
-They go through the ordinary `/api/mls/link-preview/image` proxy like any other preview image -
-which is also the only path with the SSRF guard and the content-type check.
+`fetchMiGalleryPreview` calls MiGallery's `GET /api/albums/:id/preview` with `MIGALLERY_API_KEY` (a
+READ-scoped key) - the only credentialed call to MiGallery in this service. That route answers the four
+fields a card needs (name, date, location, visibility) for EVERY visibility, private included, and never
+an album's grant lists. Cover images are not credentialed: MiGallery serves `/cover` (square) and
+`/og-cover` (wide) publicly for every visibility, since an external site embeds one from an `<img>` tag,
+which carries no key. They go through the ordinary `/api/mls/link-preview/image` proxy like any other
+preview image - which is also the only path with the SSRF guard and the content-type check.
 
-**Which cover a card draws (2026-11-26).** The tile takes the square (400x400, built from the URL alone).
-The hero banner, about 640 CSS px wide, takes the wide one (1200x630) from the payload's `image`: it used to
-stretch the square about three times, which is what made the card look pixelated. `/info` states the album's
-visibility, and `galleryWideCoverFor` returns `''` for a private album (or an unstated one), so a private
-album's card keeps exactly the square it always had; the client proves the wide cover decodes before drawing it
-and falls back to the square otherwise. MiGallery's own `og:image` is already the same 1200x630 WebP, declared
-with its width and height, so nothing was lost on that side.
+**Why not `/info` (2026-11-27).** It used to read `/api/albums/:id/info`. MiGallery v2.23.1 (2026-11-12)
+made that route the staff's because it also returns the grant lists, so the read key got
+`403 Write or Admin scope required`, the function returned `null` WITHOUT A LOG LINE, and every album link
+fell to the HTML of a page that sends an anonymous reader to sign in: the generic MiGallery card, for
+every album, for two weeks, until the owner saw it (*"la dernière mise à jour de MiGallery a supprimé les
+aperçus ! Il faut que les albums privés puissent aussi afficher leurs aperçus"*). Reading the page is still
+what happens when MiGallery does not give the card - it is a FALLBACK, so every branch reaching it now
+accuses, at a level and with the status:
+
+| MiGallery answered | Logged |
+| --- | --- |
+| `401`/`403` | ERROR, `refused the album preview (<status>): MIGALLERY_API_KEY must hold the read scope` |
+| `404` carrying `code: album_not_found` | WARN, `MiGallery knows no album <id>` |
+| `404` without that code | WARN, `MiGallery has no preview route yet` - a MiGallery older than the route (it 404s the ROUTE, not the album; the code is the discriminator, never the message) |
+| any other status, a body with no name, or nothing at all | WARN, with the status or the transport cause |
+| no `MIGALLERY_API_KEY` in the environment | WARN, once per process |
+
+**Which cover a card draws (2026-11-26, widened 2026-11-27).** The tile takes the square (400x400, built from
+the URL alone). The hero banner, about 640 CSS px wide, takes the wide one (1200x630) from the payload's
+`image`: it used to stretch the square about three times, which is what made the card look pixelated.
+`galleryWideCoverFor` returned `''` for a private album until 2026-11-27, to keep its reach unchanged - but
+both covers were ALREADY public for every album at MiGallery, so it protected nothing and left exactly the
+cards the owner asked for pixelated. It now names the wide cover for every album. The client still proves
+the wide cover decodes before drawing it and falls back to the square otherwise (a payload read from the
+page may carry none). MiGallery's own `og:image` stays off for a private album - that one is read by any
+crawler the link reaches, which is MiGallery's decision ([its seo page](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/seo.md)).
+
+**After a deploy that fixes a card.** The preview cache is per process (`TtlCache`, 6 h), so the
+container a deploy recreates starts empty: no stale card is served by the server. The reader's own
+HTTP cache keeps an answer it already holds for at most `max-age` = 6 h - the endpoint cannot recall it,
+and a cache-busting parameter would reach the native apps only with a store update, later than the 6 h
+expire. Deploying MiGallery's route BEFORE this service means no degraded card is produced at all; the
+other order logs `no preview route yet` per album, and the page-read card it then caches lasts up to
+12 h past MiGallery's deploy (6 h here, then up to 6 h more in a browser that read it last).
 
 A second, key-carrying `/api/mls/gallery-cover/:albumId` proxy existed until then, from when covers
 were gated. Deleting it is what makes the rule true rather than aspirational: with two doors to one

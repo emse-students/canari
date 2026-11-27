@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 /**
- * A MIGALLERY HERO CARD DRAWS THE WIDE COVER, AND ONLY A PRIVATE ALBUM KEEPS THE SQUARE.
+ * A MIGALLERY HERO CARD DRAWS THE WIDE COVER, AND KEEPS THE SQUARE ONLY WHEN IT HAS NO WIDE ONE.
  *
  * The hero banner is about 640 CSS px wide; the 400x400 square cover that suits the tile was being
  * stretched about three times across it (owner, 2026-11-26: "visibly pixelated"). The server hands
- * the site's own 1200x630 cover in the payload's `image`, and an empty `image` for a private album.
+ * the site's own 1200x630 cover in the payload's `image` for every album, private included; a payload
+ * read from the page rather than MiGallery's API may carry an empty one.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -101,7 +102,7 @@ describe('LinkPreviewCard hero, MiGallery album', () => {
     await vi.waitFor(() => expect(banner(target)?.getAttribute('src')).toBe(proxied(WIDE)));
   });
 
-  it('keeps the square cover for a private album, whose payload carries no wide one', async () => {
+  it('keeps the square cover when the payload carries no wide one', async () => {
     payloadImage = '';
     const target = await mountHero();
     await vi.waitFor(() => expect(banner(target)?.getAttribute('src')).toBe(proxied(SQUARE)));
