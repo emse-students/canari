@@ -18,13 +18,14 @@
 # Dev branch build trigger
 FROM nginx:stable-alpine
 
-# ONE PACKAGE MOVED PAST THE BASE (2026-11-20): Alpine 3.24 fixed CVE-2026-86144 (HIGH) in
-# `libxml2 2.13.9-r3`, and no `nginx:stable-alpine` build carried it that day. `apk info -e` fails the
-# build if the repository hands over no fixed `libxml2`, rather than ship 2.13.9-r2 under a green build.
+# ONE PACKAGE MOVED PAST THE BASE (2026-11-20, raised on 2026-11-27): Alpine 3.24 fixed CVE-2026-86144
+# (HIGH) in `libxml2 2.13.9-r3`, then CVE-2026-11979 and five more in `2.13.9-r5`, and no
+# `nginx:stable-alpine` build carried r5 (the base held r3). `apk info -e` fails the
+# build if the repository hands over no fixed `libxml2`, rather than ship an older one under a green build.
 # The upgrade also makes the image scan BUILD this file and read the result, not the base
-# (`image-scan-targets.sh`). Delete this line the day the base carries `libxml2 >= 2.13.9-r3`: the scan
+# (`image-scan-targets.sh`). Delete this line the day the base carries `libxml2 >= 2.13.9-r5`: the scan
 # says so itself, in an "upgrade is likely a no-op" warning (docs/wiki/cicd.md, container images are scanned).
-RUN apk upgrade --no-cache libxml2 && apk info -e 'libxml2>=2.13.9-r3'
+RUN apk upgrade --no-cache libxml2 && apk info -e 'libxml2>=2.13.9-r5'
 
 COPY frontend/build/client /usr/share/nginx/html
 COPY frontend/build/prerendered /usr/share/nginx/html
