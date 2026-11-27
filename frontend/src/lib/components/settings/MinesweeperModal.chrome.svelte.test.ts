@@ -134,9 +134,9 @@ describe('MinesweeperModal - full-screen chrome', () => {
       window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
       flushSync();
       await vi.waitFor(() => expect(modal()).toBeNull());
-      // The game is still on screen, and the dismissal kept the default like Escape does.
+      // The game is still on screen, and the dismissal stored nothing, like Escape.
       expect(document.querySelectorAll('[data-cell]')).toHaveLength(18 * 32);
-      expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
+      expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
       pill().click();
       flushSync();
       expect(modal()).not.toBeNull();
@@ -156,18 +156,61 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(modal()).not.toBeNull();
   });
 
-  it('keeps the default and stores it when the first-game modal is dismissed, so it never nags', async () => {
-    localStorage.removeItem('canari.minesweeper.unranked');
+  it('stores NOTHING when the first-game modal is dismissed (Escape, scrim, cross, tutorial link)', async () => {
+    for (const dismiss of [
+      () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
+      () =>
+        document
+          .querySelector<HTMLElement>('[data-testid="mode-modal"] > [role="presentation"]')
+          ?.click(),
+      () => document.querySelector<HTMLButtonElement>('button[aria-label="Fermer"]')?.click(),
+    ]) {
+      localStorage.clear();
+      await open();
+      expect(modal()).not.toBeNull();
+      dismiss();
+      flushSync();
+      await tick();
+      expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
+      expect(pill().textContent).toContain('Débutant');
+      while (mounted.length) mounted.pop()!();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('opens by itself on a fresh device only: a level, a settings or a stats key counts as history', async () => {
+    localStorage.clear();
     await open();
+    expect(modal()).not.toBeNull();
+    for (const key of ['canari.minesweeper.level', 'canari.minesweeper.settings']) {
+      while (mounted.length) mounted.pop()!();
+      document.body.innerHTML = '';
+      localStorage.clear();
+      localStorage.setItem(key, key.endsWith('level') ? 'expert' : '{}');
+      await open();
+      expect(modal()).toBeNull();
+    }
+  });
+
+  it('a progress key of the tutorial alone is not history: the device is still new', async () => {
+    localStorage.clear();
+    localStorage.setItem('canari.minesweeper.tutorial', '{"done":["flag"],"lampUsed":false}');
+    await open();
+    expect(modal()).not.toBeNull();
+  });
+
+  it('never opens by itself over a game with mines placed', async () => {
+    localStorage.clear();
+    await open();
+    expect(modal()).not.toBeNull();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     flushSync();
-    await tick();
-    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
-    expect(pill().textContent).toContain('Débutant');
-    // The next mount is a returning player's: no modal by itself.
-    while (mounted.length) mounted.pop()!();
-    document.body.innerHTML = '';
-    await open();
+    await vi.waitFor(() => expect(modal()).toBeNull());
+    document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
+    for (let i = 0; i < 4; i++) {
+      await flushMacrotask();
+      flushSync();
+    }
     expect(modal()).toBeNull();
   });
 

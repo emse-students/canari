@@ -1,3 +1,4 @@
+import { TUTORIAL_PROGRESS_KEY } from '../settings';
 import { ALL_LESSON_IDS } from './path';
 
 /**
@@ -9,7 +10,7 @@ import { ALL_LESSON_IDS } from './path';
  * It is a record of what the player did, never a score: no streak, no points, no medals (charter, principle 3
  * - your attention is not for sale). Nothing here reaches the server, the engine or a game.
  */
-export const TUTORIAL_PROGRESS_KEY = 'canari.minesweeper.tutorial';
+export { TUTORIAL_PROGRESS_KEY };
 
 export interface TutorialProgress {
   /** The ids of the lessons solved, in the order they were first solved. */

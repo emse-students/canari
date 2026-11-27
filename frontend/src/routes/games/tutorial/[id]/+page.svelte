@@ -10,7 +10,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import MinesweeperLessonRunner from '$lib/components/games/MinesweeperLessonRunner.svelte';
-  import { locateLesson } from '$lib/minesweeper/tutorial/path';
+  import { locateLesson, tutorialPathHref } from '$lib/minesweeper/tutorial/path';
   import { m } from '$lib/paraglide/messages';
 
   const lessonId = $derived(page.params.id ?? '');
@@ -24,7 +24,7 @@
 <PageContainer width="reading">
   <PageHeader
     title={place ? place.lesson.title() : m.minesweeper_tutorial_title()}
-    backHref={resolve('/games/tutorial')}
+    backHref={place ? tutorialPathHref(place.tab) : resolve('/games/tutorial')}
     backLabel={m.minesweeper_lesson_back()}
   />
 

@@ -169,11 +169,15 @@ DELETED** (`MinesweeperModeSheet.svelte` and its test): one chooser, a CENTERED 
 **"Libre" is renamed "Entraînement" in every user-visible string** (the pastille reads "Entraînement · Débutant", the
 stats note says "mode Entraînement"; English: "Training"). The stored keys did not change.
 
-**It opens by itself ONLY at the first game on a device** - no mode stored yet (`hasStoredMinesweeperMode()`, true
-once `canari.minesweeper.unranked` exists) - and afterwards the bottom pastille opens the same modal, before the first
-dig (the mode is locked once the board exists, as before). **Dismissing the first-game modal without a pick keeps the
-default (Entraînement on Débutant) and STORES it**, so it introduces the choice once and never nags (charter,
-principle 3). "Jouer" writes exactly what the sheet's pick wrote (`canari.minesweeper.unranked`, and
+**It opens by itself ONLY at the first game on a device** (owner review, 2026-11-27): no mode stored AND no minesweeper
+history on the device (`isFirstMinesweeperGame()`: any `canari.minesweeper.*` key besides the mode and the tutorial's
+progress - a level, the settings, the stats - counts as history, so a player from before this modal is never nagged),
+AND never while `modeLocked` or `board.minesPlaced` (the first-game flag is read once, before the level loader writes
+its own key). Afterwards the bottom pastille opens the same modal, before the first dig. **Dismissing it without a pick
+(Escape, scrim, cross, Back, the tutorial link) STORES NOTHING**: the default (Entraînement on Débutant) just plays, and
+the level key written on mount makes the next open a later one, so it introduces the choice once and never nags
+(charter, principle 3). Focus moves into the dialog on open and back on close (`focusTrap`), and both radiogroups are
+roving (one tab stop, arrows move and pick). "Jouer" writes exactly what the sheet's pick wrote (`canari.minesweeper.unranked`, and
 `canari.minesweeper.level` for a level); the draft inside the modal writes nothing until then. Ranked offers no hint, as
 before (`hintOffered`).
 
@@ -181,8 +185,8 @@ before (`hintOffered`).
 
 **Pinned:** `MinesweeperModeModal.svelte.test.ts` (the cards and their lines, the levels under Entraînement only, "Jouer"
 commits and nothing before, the ways out, the tutorial link), `MinesweeperModal.chrome.svelte.test.ts` (opens by itself
-at the first game and only then, the pastille reopens it, a dismissal stores the default, ranked asks for its challenge,
-a level pick is stored), `MinesweeperModal.levels.svelte.test.ts`, `levels.test.ts` (`hasStoredMinesweeperMode`).
+at the first game and only then, the pastille reopens it, a dismissal stores nothing, the history gate, roving arrows and focus, ranked asks for its challenge,
+a level pick is stored), `MinesweeperModal.levels.svelte.test.ts`, `levels.test.ts` (`hasStoredMinesweeperMode`, `isFirstMinesweeperGame`).
 
 ## The tutorial path (owner, 2026-11-27)
 
@@ -196,7 +200,7 @@ tile wears the short name of its lesson ("B1", "1-2-1"); one too long for it wea
 Under the tabs: Le Pic's line, the progress of the family the player is in (a bar and "2 / 8") and a **"Continuer ·
 <next>"** button to the first lesson not done; when a tab is complete it offers a game. **THE ORDER IS ADVISED AND
 EVERYTHING STAYS OPEN**: every tile is a plain link whatever is done; "current" is only the first not done.
-The catalogue's old route `/games/tutorial/patterns` is gone: it is the Motifs tab, and its jump list is the path.
+The catalogue's old route `/games/tutorial/patterns` is gone: it is the Motifs tab, and its jump list is the path. **The active tab lives in the URL (`?tab=patterns`, `parseTab`/`tabUrl`)**, and a lesson's "Retour au parcours" and solved-screen links carry the tab of its family (`tutorialPathHref`), so returning from a pattern lands on Motifs.
 
 **One lesson** (`MinesweeperLessonRunner.svelte`): Le Pic beside a speech bubble that says the goal, then each step of
 the lamp (his mood: thinking at the start, pointing while he explains, glad on the last step, worried after a mine),
@@ -309,7 +313,7 @@ screen that leads to a game, the hint cycle with its legend, restart, Back to `/
 > **2026-11-27: the catalogue is the "Motifs" tab of [the path](#the-tutorial-path-owner-2026-11-27)**; the route `/games/tutorial/patterns` and its jump list are gone. The boards, the proofs and the credit below are unchanged.
 
 *"reprend leurs explications pour tous les patterns dans un tutoriel annexe"* (owner), after asking for an
-introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. `/games/tutorial/patterns` lists
+introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. the Motifs tab lists
 **every named pattern of that reference catalogue**, one playable board each, by family, reached from the
 tutorial's header and closing screen. It shares the tutorial's reader (`MinesweeperLessonRunner.svelte`, which
 the tutorial page also uses), with a jump list grouped by family.
@@ -394,8 +398,8 @@ subject. This replaced a search for boards on which the counter never decides.
 
 **Pinned:** `lessons.test.ts` (the whole catalogue, with the tutorial: goals, highlights, the counter's role,
 the reduction labels, the list of reference names, the families kept together), `MinesweeperMiniGrid.svelte.test.ts`
-(an open grid, a reduction label), `routes/games/tutorial/patterns/page.svelte.test.ts`. **Owed:** the phone
-reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), item 14).
+(an open grid, a reduction label), `routes/games/tutorial/page.svelte.test.ts` (the tabs, the tiles). **Owed:** the phone
+reading ([reading](../../backlog.d/reading-owed-the-minesweeper-tutorial-path.md)).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
 

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Check } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
+  import { page } from '$app/state';
   import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import LePic from '$lib/components/games/LePic.svelte';
@@ -13,6 +15,8 @@
     tabLessons,
     type TutorialTab,
   } from '$lib/minesweeper/tutorial/path';
+  import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
   import { loadTutorialProgress } from '$lib/minesweeper/tutorial/progress';
   import { m } from '$lib/paraglide/messages';
 
@@ -28,10 +32,24 @@
   const progress = loadTutorialProgress();
   const done = $derived(new Set(progress.done));
 
-  /** The tab opens on the basics until they are all done, then on the patterns. */
-  let tab = $state<TutorialTab>(
-    firstUndone('basics', new Set(progress.done)) ? 'basics' : 'patterns'
-  );
+  /** With no `?tab=`, the path opens on the basics until they are all done, then on the patterns. */
+  const autoTab: TutorialTab = firstUndone('basics', new Set(progress.done))
+    ? 'basics'
+    : 'patterns';
+  /**
+   * THE OPEN TAB LIVES IN THE URL (`?tab=`, read once, written with `replaceState` through `tabQuery`): a lesson's Back
+   * link carries the tab of its family, so returning from a pattern lands on Motifs, not on the default.
+   */
+  let tab = $state<TutorialTab>(parseTab(page.url.searchParams.get('tab'), TUTORIAL_TABS, autoTab));
+
+  function selectTab(next: TutorialTab) {
+    tab = next;
+    void goto(resolve(internalPath(tabUrl(page.url, next, autoTab))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
+  }
 
   const lessons = $derived(tabLessons(tab));
   const families = $derived(PATH_FAMILIES[tab]);
@@ -90,7 +108,7 @@
   <SegmentedControl
     items={tabItems}
     value={tab}
-    onSelect={(key) => (tab = key)}
+    onSelect={selectTab}
     label={m.minesweeper_path_tabs_label()}
   />
 
@@ -143,7 +161,7 @@
           {@const state = stateOf(lesson.id)}
           {@const dx = offsetOf(lesson.id)}
           {@const name = shortName(lesson.title())}
-          <li class="relative flex h-[4.5rem] items-center justify-center">
+          <li class="relative flex h-18 items-center justify-center">
             <a
               href={resolve('/games/tutorial/[id]', { id: lesson.id })}
               class="path-tile"
@@ -165,7 +183,7 @@
             </a>
             {#if name.length > 5}
               <span
-                class="text-text-muted pointer-events-none absolute top-1/2 max-w-[40%] -translate-y-1/2 text-xs font-semibold {dx >=
+                class="text-text-muted pointer-events-none absolute top-1/2 max-w-2/5 -translate-y-1/2 text-xs font-semibold {dx >=
                 0
                   ? 'left-0 text-left'
                   : 'right-0 text-right'}"

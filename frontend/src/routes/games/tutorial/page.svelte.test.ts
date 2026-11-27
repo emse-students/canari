@@ -10,6 +10,24 @@ import { flushSync, mount, unmount } from 'svelte';
 import { LESSONS } from '$lib/minesweeper/tutorial/lessons';
 import { PATTERNS } from '$lib/minesweeper/tutorial/patterns';
 import { TUTORIAL_PROGRESS_KEY } from '$lib/minesweeper/tutorial/progress';
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/games/tutorial') }));
+const gotoMock = vi.hoisted(() => vi.fn());
+vi.mock('$app/state', () => ({
+  page: {
+    get url() {
+      return nav.url;
+    },
+    state: {},
+  },
+}));
+vi.mock('$app/navigation', () => ({
+  goto: (href: string, opts: unknown) => {
+    gotoMock(href, opts);
+    nav.url = new URL(href, 'http://localhost');
+    return Promise.resolve();
+  },
+}));
+
 import Page from './+page.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
@@ -20,6 +38,8 @@ function open() {
 }
 
 beforeEach(() => {
+  nav.url = new URL('http://localhost/games/tutorial');
+  gotoMock.mockReset();
   localStorage.clear();
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
@@ -145,5 +165,19 @@ describe('the tutorial path page', () => {
     const text = document.body.textContent ?? '';
     expect(text).not.toMatch(/série|streak|flamme|médaille|medal|points?\b|xp/i);
     expect(document.querySelector('svg.lucide-flame')).toBeNull();
+  });
+
+  it('keeps the active tab in the URL: a tab change writes ?tab=, and a URL with it opens on that tab', () => {
+    open();
+    tab('Motifs').click();
+    flushSync();
+    expect(gotoMock).toHaveBeenCalledTimes(1);
+    expect(gotoMock.mock.calls[0][0]).toContain('tab=patterns');
+    expect(gotoMock.mock.calls[0][1]).toMatchObject({ replace: true, shallow: true });
+    unmount(app!, { outro: false });
+    document.body.innerHTML = '';
+    nav.url = new URL('http://localhost/games/tutorial?tab=patterns');
+    open();
+    expect(tab('Motifs').getAttribute('aria-selected')).toBe('true');
   });
 });

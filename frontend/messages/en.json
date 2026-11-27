@@ -4228,7 +4228,7 @@
   "minesweeper_modal_subtitle": "How do you want to play?",
   "minesweeper_modal_kind_label": "Game type",
   "minesweeper_modal_level_label": "Level",
-  "minesweeper_modal_ranked_note": "18 × 32 · 150 mines · your game counts for your class ranking.",
+  "minesweeper_modal_ranked_note": "{cols} × {rows} · {mines} mines · your game counts for your class ranking.",
   "minesweeper_modal_play": "Play",
   "minesweeper_modal_change_later": "You can change it later from the pill at the bottom.",
   "minesweeper_modal_tutorial": "Not comfortable yet? The tutorial",

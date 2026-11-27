@@ -133,12 +133,40 @@ describe('MinesweeperModeModal', () => {
     open();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(historyOverlayStackDepth()).toBe(0);
-    document.body.innerHTML = '';
     while (mounted.length) mounted.pop()!();
+    document.body.innerHTML = '';
+    // Jouer hands the choice over; the parent then unmounts the modal, which releases the entry.
+    open();
+    expect(historyOverlayStackDepth()).toBe(1);
+    play().click();
+    flushSync();
+    while (mounted.length) mounted.pop()!();
+    expect(historyOverlayStackDepth()).toBe(0);
     open();
     expect(historyOverlayStackDepth()).toBe(1);
     while (mounted.length) mounted.pop()!();
     expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('states the ranked challenge from the level constants', () => {
+    open('ranked');
+    expect(document.querySelector('[data-testid="mode-ranked-note"]')?.textContent).toContain(
+      '18 × 32 · 150 mines'
+    );
+  });
+
+  it('is a roving radiogroup: one tab stop, arrows move and pick, focus enters on open', () => {
+    open('beginner', 'beginner');
+    const tabStop = (els: HTMLElement[]) => els.filter((e) => e.getAttribute('tabindex') === '0');
+    expect(tabStop(cards())).toHaveLength(1);
+    expect(tabStop(cards())[0].dataset.mode).toBe('training');
+    const lv = () => [...document.querySelectorAll<HTMLElement>('[data-level]')];
+    expect(tabStop(lv())[0].dataset.level).toBe('beginner');
+    lv()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    flushSync();
+    expect(lv()[1].getAttribute('aria-checked')).toBe('true');
+    expect(tabStop(lv())[0].dataset.level).toBe('intermediate');
+    expect(document.activeElement).toBe(lv()[1]);
   });
 
   it('says where to change later, and links the tutorial', () => {

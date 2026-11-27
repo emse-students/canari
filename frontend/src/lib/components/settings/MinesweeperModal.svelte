@@ -34,7 +34,7 @@
   import {
     LEVEL_SPECS,
     loadMinesweeperLevel,
-    hasStoredMinesweeperMode,
+    isFirstMinesweeperGame,
     loadMinesweeperUnranked,
     playModeOf,
     saveMinesweeperLevel,
@@ -148,6 +148,10 @@
    * Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is
    * submitted. A newcomer plays unranked (owner, 2026-11-26): the ranked board is the barrier to entry.
    */
+  /**
+   * A FIRST GAME ON THIS DEVICE, read before the level loader below stores the level it resolves (which is history).
+   */
+  const firstGame = isFirstMinesweeperGame();
   let unranked = $state(loadMinesweeperUnranked());
 
   function toggleFlagPrimary() {
@@ -172,20 +176,15 @@
    * THE MODE MODAL (owner, 2026-11-27): opens by ITSELF only at the first game on this device - no mode stored
    * yet - and afterwards from the pastille, before the first dig. One chooser, replacing the bottom sheet.
    */
-  let showModeModal = $state(!hasStoredMinesweeperMode());
+  let showModeModal = $state(firstGame);
 
   /**
-   * Closing the modal without a pick (Escape, the scrim, the cross) keeps the default the game started with, and
-   * STORES it when nothing was stored: the modal introduces the choice once, it never nags (charter, principle 3).
+   * Closing the modal without a pick (Escape, the scrim, the cross, Back, the tutorial link) STORES NOTHING and keeps the
+   * default the game started with (owner decision, 2026-11-27). It never nags: the first open already stored the
+   * level, which makes every later open a later one (`isFirstMinesweeperGame`).
    */
   function dismissModeModal() {
     showModeModal = false;
-    if (!hasStoredMinesweeperMode()) {
-      console.debug('[minesweeper] mode modal dismissed at the first game, keeping the default', {
-        mode,
-      });
-      saveMinesweeperUnranked(unranked);
-    }
   }
 
   /** "Jouer" in the mode modal: the ranked game, or an unranked one at a level. The grid is the same. */
@@ -1406,7 +1405,7 @@
       </div>
     {/if}
 
-    {#if showModeModal}
+    {#if showModeModal && !modeLocked}
       <MinesweeperModeModal
         current={mode}
         {level}

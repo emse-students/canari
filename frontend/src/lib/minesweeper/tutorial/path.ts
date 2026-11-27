@@ -1,3 +1,4 @@
+import { resolve } from '$app/paths';
 import { m } from '$lib/paraglide/messages';
 import { LESSONS, type Lesson } from './lessons';
 import { PATTERNS } from './patterns';
@@ -67,6 +68,11 @@ export interface LessonPlace {
   indexInFamily: number;
   /** The lesson after this one on the path (across families), or null at the end of the tab. */
   next: Lesson | null;
+}
+
+/** The path page opened on a tab (`?tab=`), so Back from a lesson lands on the tab the lesson belongs to. */
+export function tutorialPathHref(tab: TutorialTab): string {
+  return `${resolve('/games/tutorial')}?tab=${tab}`;
 }
 
 /** Finds a lesson by id on either tab; null for an id that is not a lesson. */

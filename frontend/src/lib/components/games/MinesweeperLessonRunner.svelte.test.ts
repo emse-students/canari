@@ -147,6 +147,7 @@ describe('a lesson screen', () => {
     expect(testId('tutorial-solved-name')?.textContent?.trim()).toBe('B1');
     expect(testId('tutorial-solved-next')?.textContent).toContain('Motif suivant ·');
     expect(testId('tutorial-solved-next')?.getAttribute('href')).toContain(PATTERNS[1].id);
+    expect(byText('Retour au parcours').getAttribute('href')).toMatch(/\?tab=patterns$/);
   });
 
   it('skips without recording: "Passer" leads to the next lesson, and the path at the end', () => {
@@ -158,7 +159,7 @@ describe('a lesson screen', () => {
     unmount(app!, { outro: false });
     document.body.innerHTML = '';
     open(LESSONS.at(-1)!.id);
-    expect(testId('tutorial-skip')?.getAttribute('href')).toMatch(/\/games\/tutorial$/);
+    expect(testId('tutorial-skip')?.getAttribute('href')).toMatch(/\/games\/tutorial\?tab=basics$/);
   });
 });
 

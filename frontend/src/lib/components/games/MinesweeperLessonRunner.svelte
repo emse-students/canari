@@ -5,7 +5,12 @@
   import LePic, { type PicMood, type PicPose } from '$lib/components/games/LePic.svelte';
   import MinerLamp from '$lib/components/games/MinerLamp.svelte';
   import MinesweeperMiniGrid from '$lib/components/games/MinesweeperMiniGrid.svelte';
-  import { countDone, shortName, type LessonPlace } from '$lib/minesweeper/tutorial/path';
+  import {
+    countDone,
+    shortName,
+    tutorialPathHref,
+    type LessonPlace,
+  } from '$lib/minesweeper/tutorial/path';
   import {
     markLampUsed,
     markLessonDone,
@@ -41,6 +46,8 @@
   const familyTotal = $derived(place.family.lessons.length);
   const familyDone = $derived(countDone(place.family.lessons, done));
   const stepCount = $derived(lesson.hints.length);
+  /** One dot per step of the lamp. */
+  const stepDots = $derived(Array.from({ length: stepCount }, (_, i) => i));
   const lastStep = $derived(hintStep !== null && hintStep + 1 >= stepCount);
   /** The lamp pulses until it was pressed once on this device. */
   const pulse = $derived(hintStep === null && !progress.lampUsed);
@@ -81,7 +88,9 @@
   );
 
   const nextHref = $derived(
-    place.next ? resolve('/games/tutorial/[id]', { id: place.next.id }) : resolve('/games/tutorial')
+    place.next
+      ? resolve('/games/tutorial/[id]', { id: place.next.id })
+      : tutorialPathHref(place.tab)
   );
 </script>
 
@@ -143,7 +152,7 @@
           {m.minesweeper_tutorial_play()}
         </Button>
       {/if}
-      <Button href={resolve('/games/tutorial')} variant="ghost" class="w-full">
+      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="w-full">
         {m.minesweeper_lesson_back()}
       </Button>
     </div>
@@ -176,7 +185,7 @@
     <div class="flex items-end gap-2">
       <LePic size={96} {mood} {pose} />
       <div
-        class="bg-cn-surface text-text-main relative mb-4 min-h-[4.5rem] flex-1 rounded-2xl px-3.5 py-3 text-sm"
+        class="bg-cn-surface text-text-main relative mb-4 min-h-18 flex-1 rounded-2xl px-3.5 py-3 text-sm"
         role="status"
         aria-live="polite"
       >
@@ -258,7 +267,7 @@
         </span>
         <span class="text-accent-text text-sm font-bold">{hintLabel}</span>
         <span class="flex gap-1.5" aria-hidden="true">
-          {#each lesson.hints as step, i (i)}
+          {#each stepDots as i (i)}
             <span
               class="size-2 rounded-full {hintStep !== null && i <= hintStep
                 ? 'bg-accent'

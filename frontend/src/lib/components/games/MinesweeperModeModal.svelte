@@ -11,6 +11,9 @@
   import Button from '$lib/components/ui/Button.svelte';
   import LePic from '$lib/components/games/LePic.svelte';
   import MinerLamp from '$lib/components/games/MinerLamp.svelte';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { rovingTarget } from '$lib/components/ui/rovingFocus';
+  import { CHALLENGE } from '$lib/minesweeper/game';
   import { LEVELS, type MinesweeperLevel, type PlayMode } from '$lib/minesweeper/levels';
   import { levelLabel } from '$lib/minesweeper/modeLabels';
   import { m } from '$lib/paraglide/messages';
@@ -70,6 +73,20 @@
     else onClose();
   }
 
+  /**
+   * THE ARROW KEYS OF A RADIO GROUP: roving tabindex (only the checked radio is a tab stop) and the arrows move AND
+   * select, wrapping, as `rovingTarget` does for every group in the app.
+   */
+  function roving(e: KeyboardEvent) {
+    const el = e.currentTarget as HTMLElement;
+    const group = [...(el.parentElement?.querySelectorAll<HTMLElement>('[role="radio"]') ?? [])];
+    const next = rovingTarget(e.key, group.indexOf(el), group.length);
+    if (next < 0) return;
+    e.preventDefault();
+    group[next].focus();
+    group[next].click();
+  }
+
   function pickKind(next: Kind) {
     kind = next;
   }
@@ -99,6 +116,7 @@
     role="dialog"
     aria-modal="true"
     aria-label={m.minesweeper_modal_title()}
+    use:focusTrap={{ initial: '[role="radio"][aria-checked="true"]' }}
     class="bg-cn-surface relative flex max-h-full w-full max-w-sm flex-col gap-4 overflow-y-auto rounded-3xl p-4 shadow-2xl"
     transition:scale={{ start: 0.96, duration: durationMs }}
   >
@@ -128,9 +146,11 @@
         variant="bare"
         role="radio"
         aria-checked={kind === 'ranked'}
+        tabindex={kind === 'ranked' ? 0 : -1}
+        onkeydown={roving}
         data-mode="ranked"
         onclick={() => pickKind('ranked')}
-        class="flex flex-col items-center gap-1.5 rounded-2xl border-[3px] px-2.5 py-3.5 text-center {kind ===
+        class="flex flex-col items-center gap-1.5 rounded-2xl border-2 px-2.5 py-3.5 text-center {kind ===
         'ranked'
           ? 'border-accent bg-accent/15'
           : 'border-cn-border bg-cn-surface'}"
@@ -143,9 +163,11 @@
         variant="bare"
         role="radio"
         aria-checked={kind === 'training'}
+        tabindex={kind === 'training' ? 0 : -1}
+        onkeydown={roving}
         data-mode="training"
         onclick={() => pickKind('training')}
-        class="flex flex-col items-center gap-1.5 rounded-2xl border-[3px] px-2.5 py-3.5 text-center {kind ===
+        class="flex flex-col items-center gap-1.5 rounded-2xl border-2 px-2.5 py-3.5 text-center {kind ===
         'training'
           ? 'border-accent bg-accent/15'
           : 'border-cn-border bg-cn-surface'}"
@@ -171,6 +193,8 @@
               variant="bare"
               role="radio"
               aria-checked={picked === lvl}
+              tabindex={picked === lvl ? 0 : -1}
+              onkeydown={roving}
               data-level={lvl}
               onclick={() => (picked = lvl)}
               class="min-h-9 rounded-full px-1 text-xs font-bold {picked === lvl
@@ -187,7 +211,11 @@
         class="bg-accent/15 text-text-main rounded-lg px-3 py-2.5 text-xs font-semibold"
         data-testid="mode-ranked-note"
       >
-        {m.minesweeper_modal_ranked_note()}
+        {m.minesweeper_modal_ranked_note({
+          cols: String(CHALLENGE.width),
+          rows: String(CHALLENGE.height),
+          mines: String(CHALLENGE.mineCount),
+        })}
       </p>
     {/if}
 

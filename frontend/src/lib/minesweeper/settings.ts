@@ -21,6 +21,9 @@ export interface MinesweeperSettings {
   animations: AnimationSpeed;
 }
 
+/** The tutorial path's progress (`tutorial/progress.ts`): not a trace of having PLAYED, so not game history. */
+export const TUTORIAL_PROGRESS_KEY = 'canari.minesweeper.tutorial';
+
 export const SETTINGS_STORAGE_KEY = 'canari.minesweeper.settings';
 
 /** The range the long-press slider offers: under 150 ms a tap flags by accident (owner, 2026-11-13: lowered from 200), over 600 it feels broken. */

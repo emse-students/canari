@@ -42,7 +42,7 @@ describe('the tutorial lesson route', () => {
     expect(document.querySelector('h1')?.textContent).toContain('Le chording');
     expect(document.querySelector('[data-testid="tutorial-goal"]')).not.toBeNull();
     expect(document.querySelector('a[data-back-link]')?.getAttribute('href')).toMatch(
-      /\/games\/tutorial$/
+      /\/games\/tutorial\?tab=basics$/
     );
   });
 
@@ -51,6 +51,10 @@ describe('the tutorial lesson route', () => {
     expect(document.querySelector('h1')?.textContent).toContain('1-1');
     expect(document.querySelector('[data-testid="tutorial-progress"]')?.textContent).toContain(
       'Motifs de base'
+    );
+    // Back returns to the tab of the lesson's family, not to the default one.
+    expect(document.querySelector('a[data-back-link]')?.getAttribute('href')).toMatch(
+      /\/games\/tutorial\?tab=patterns$/
     );
   });
 

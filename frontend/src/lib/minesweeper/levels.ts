@@ -1,3 +1,4 @@
+import { TUTORIAL_PROGRESS_KEY } from './settings';
 import {
   CHALLENGE,
   LATEST_GENERATOR_VERSION,
@@ -84,6 +85,41 @@ export function hasStoredMinesweeperMode(): boolean {
     console.warn('[minesweeper] could not read the stored mode, treating it as a first game', err);
     return false;
   }
+}
+
+/**
+ * Whether this device holds ANY minesweeper trace besides the mode and the tutorial's progress: the level, the
+ * settings, the control-inversion flag. A player with one has played here, even if they never chose a mode.
+ */
+export function hasMinesweeperHistory(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key?.startsWith('canari.minesweeper.') &&
+        key !== UNRANKED_STORAGE_KEY &&
+        key !== TUTORIAL_PROGRESS_KEY
+      )
+        return true;
+    }
+  } catch (err) {
+    console.warn(
+      '[minesweeper] could not read the device history, treating it as a first game',
+      err
+    );
+  }
+  return false;
+}
+
+/**
+ * THE MODE MODAL OPENS BY ITSELF ONLY AT A FIRST GAME (owner, 2026-11-27): no stored mode AND no minesweeper
+ * history on this device. Read BEFORE anything resolves a default (the level loader stores the
+ * level it resolves, and that is history). Dismissing it stores nothing; the level written on that first open is what
+ * makes the next open a later one, so it never nags.
+ */
+export function isFirstMinesweeperGame(): boolean {
+  return !hasStoredMinesweeperMode() && !hasMinesweeperHistory();
 }
 
 /** Persists the ranked / unranked choice; a storage that refuses is logged, never fatal. */

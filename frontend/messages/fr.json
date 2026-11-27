@@ -4260,7 +4260,7 @@
   "minesweeper_modal_subtitle": "Comment tu veux jouer ?",
   "minesweeper_modal_kind_label": "Type de partie",
   "minesweeper_modal_level_label": "Niveau",
-  "minesweeper_modal_ranked_note": "18 × 32 · 150 mines · ta partie compte pour le classement de ta promo.",
+  "minesweeper_modal_ranked_note": "{cols} × {rows} · {mines} mines · ta partie compte pour le classement de ta promo.",
   "minesweeper_modal_play": "Jouer",
   "minesweeper_modal_change_later": "Tu pourras changer ensuite depuis la pastille en bas.",
   "minesweeper_modal_tutorial": "Pas encore à l'aise ? Le tutoriel",

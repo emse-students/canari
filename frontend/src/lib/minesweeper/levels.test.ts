@@ -19,6 +19,8 @@ import {
   LEVEL_SPECS,
   LEVEL_STORAGE_KEY,
   hasStoredMinesweeperMode,
+  hasMinesweeperHistory,
+  isFirstMinesweeperGame,
   loadMinesweeperLevel,
   PLAY_MODES,
   loadMinesweeperUnranked,
@@ -101,6 +103,25 @@ describe('the modes and their stored choices', () => {
     localStorage.clear();
     saveMinesweeperUnranked(false);
     expect(hasStoredMinesweeperMode()).toBe(true);
+  });
+
+  it('is a first game only on a device with no mode AND no minesweeper history', () => {
+    expect(isFirstMinesweeperGame()).toBe(true);
+    // The tutorial's progress and the mode key are not history: the first is not a game, the second is read apart.
+    localStorage.setItem('canari.minesweeper.tutorial', '{"done":[],"lampUsed":false}');
+    expect(hasMinesweeperHistory()).toBe(false);
+    expect(isFirstMinesweeperGame()).toBe(true);
+    for (const key of ['level', 'settings', 'flagPrimary', 'stats']) {
+      localStorage.clear();
+      localStorage.setItem(`canari.minesweeper.${key}`, 'x');
+      expect(hasMinesweeperHistory()).toBe(true);
+      expect(isFirstMinesweeperGame()).toBe(false);
+    }
+    localStorage.clear();
+    localStorage.setItem('canari.other.thing', 'x');
+    expect(isFirstMinesweeperGame()).toBe(true);
+    saveMinesweeperUnranked(true);
+    expect(isFirstMinesweeperGame()).toBe(false);
   });
 
   it('starts a newcomer on Debutant, and keeps Expert for a player who already chose a mode', () => {
