@@ -56,6 +56,19 @@
    */
   const { fog: far, unknown } = untrack(() => pictureOf(lesson.rows, lesson.open === true));
 
+  /**
+   * A CELL THE PLAYER OPENS in an open picture shows "?" too (owner, 2026-11-27: *"les nombres en dessous sont
+   * souvent bizarres"*): its number counts the fog beyond the pattern, which the picture does not show anywhere
+   * else, so it would be a number about nothing. The pattern is what tells the cell is safe; that is all it says.
+   */
+  const hiddenAtStart = untrack(() => board.cells.map((cell) => cell.state !== 'revealed'));
+  const opened = $derived(
+    views.views.map(
+      (cell, i) =>
+        lesson.open === true && hiddenAtStart[i] && cell.state === 'revealed' && !cell.mine
+    )
+  );
+
   /** The numbers the shown explanation reads, ringed (`read`). */
   const reading = $derived.by(() => {
     const lit: Array<'read' | null> = board.cells.map(() => null);
@@ -118,7 +131,7 @@
   }
 
   function act(index: number, flag: boolean) {
-    if (finished || far[index] || unknown[index]) return;
+    if (finished || far[index] || unknown[index] || opened[index]) return;
     const x = index % board.width;
     const y = Math.floor(index / board.width);
     // A number is chorded by a tap whatever the mode: flagging a revealed cell is meaningless.
@@ -172,7 +185,7 @@
           {cell}
           index={i}
           pending={false}
-          highlight={reading[i] ?? (unknown[i] ? 'unknown' : far[i] ? 'far' : null)}
+          highlight={reading[i] ?? (unknown[i] || opened[i] ? 'unknown' : far[i] ? 'far' : null)}
         />
       {/each}
     </div>
