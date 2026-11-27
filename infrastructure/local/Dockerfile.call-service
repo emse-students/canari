@@ -14,7 +14,12 @@ RUN cd apps/call-service && cargo build --release
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+# PAM MOVED PAST THE BASE (2026-11-27): Debian fixed CVE-2025-6020 (HIGH) in `libpam-modules 1.5.2-6+deb12u3`
+# while `debian:bookworm-slim` still carried deb12u2. `apt-get upgrade` takes the fix from the security
+# archive, and the `dpkg --compare-versions` fails the build if it did not, rather than ship deb12u2 under a
+# green build. The upgrade also makes the image scan BUILD this file, not the base (`image-scan-targets.sh`).
+# Delete both the day the base carries it: the scan says so (docs/wiki/cicd.md, container images are scanned).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends ca-certificates curl && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpam-modules)" ge 1.5.2-6+deb12u3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /build/apps/call-service/target/release/call-service .
