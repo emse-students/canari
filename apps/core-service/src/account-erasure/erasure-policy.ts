@@ -101,6 +101,18 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   // duplicate's account on that site, the target's subject blanked - a transfer onto an erased person
   // is no longer owed, and the duplicate's account there must not outlive the merge. The merge row's
   // deletion below then only nulls the job's `mergeId` (ON DELETE SET NULL).
+  //
+  // THE TARGET'S MERGE ROWS ARE LOCKED FIRST. `AlumniMergeService.complete` closes a merge and writes
+  // its jobs in one transaction; without this lock a close committing between two statements below
+  // would leave transfer jobs naming an erased person. With it, a close in flight commits before the
+  // statements below run (each reads its own snapshot, so they see its jobs), and a close that comes
+  // after waits for this transaction and reads the blanked target from its own UPDATE.
+  {
+    label: 'alumni_merges_lock',
+    sql: `SELECT id FROM alumni_merges
+           WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1)
+           FOR UPDATE`,
+  },
   {
     label: 'alumni_merge_site_jobs_done',
     sql: `DELETE FROM alumni_merge_site_jobs WHERE "completedAt" IS NOT NULL
@@ -111,7 +123,8 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     label: 'alumni_merge_site_jobs_owed',
     sql: `UPDATE alumni_merge_site_jobs
             SET kind = 'erase', "targetSubject" = NULL, "blockedAt" = NULL, "unreadySince" = NULL,
-                attempts = 0, "lastError" = NULL, "nextAttemptAt" = now()
+                attempts = 0, "lastError" = NULL,
+                "nextAttemptAt" = GREATEST("nextAttemptAt", now())
           WHERE "completedAt" IS NULL AND "mergeId" IN (SELECT id FROM alumni_merges
               WHERE "targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
   },

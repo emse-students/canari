@@ -9,18 +9,16 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { timingSafeEqual } from 'node:crypto';
+import { ALUMNI_MERGE_SUBJECT_RE } from '../auth/handoff/handoff-token';
 import { AlumniMergeService } from './alumni-merge.service';
 
 /** The header MiConnect's webhook transport carries the shared secret in (85-alumni-merge-push.yaml). */
 export const ALUMNI_MERGE_HOOK_SECRET_HEADER = 'x-miconnect-alumni-merge-secret';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** An OIDC subject as MiConnect issues it (`hashed_user_id`, hex), bounded like the column holding it. */
-const SUBJECT_RE = /^[A-Za-z0-9._-]{1,255}$/;
-
 /** Absent, empty, or a well-formed subject. */
 const subjectOk = (v: unknown): boolean =>
-  v === undefined || v === '' || (typeof v === 'string' && SUBJECT_RE.test(v));
+  v === undefined || v === '' || (typeof v === 'string' && ALUMNI_MERGE_SUBJECT_RE.test(v));
 
 const logger = new Logger('AlumniMergeHook');
 

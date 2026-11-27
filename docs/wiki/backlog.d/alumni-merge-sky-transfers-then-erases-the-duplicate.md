@@ -22,7 +22,7 @@ expired, of another audience or another `typ`.
 **The `erase` mode and the shared verifier** (the review of 2026-11-27, [the target erased before its sites answered](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):
 the token is verified by Canari's `libs/handoff/alumni-merge-verify.ts`, copied byte-identically
 beside the site's `handoff-verify.ts` (a site-local verifier is replaced by it). Its `mode` claim is
-`transfer` (the default when absent: `target` REQUIRED) or `erase` - the merge's target was erased in
+`transfer` (`target` REQUIRED; `mode` itself is REQUIRED, a token without it is refused `invalid`) or `erase` - the merge's target was erased in
 Canari before this site answered, so `target` is ABSENT and a token carrying one is refused. On an
 `erase` the site erases the duplicate's account under `dup` as any account deletion does, in one
 transaction, and answers `{ outcome: 'erased' }`, or `absent` when it holds none; it never transfers.

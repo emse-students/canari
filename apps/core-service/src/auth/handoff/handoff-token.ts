@@ -139,6 +139,17 @@ export function signHandoffToken(
  */
 export const ALUMNI_MERGE_TOKEN_TYPE = 'canari-merge+jwt';
 
+/**
+ * THE ONE BOUND OF AN ALUMNI MERGE SUBJECT (a MiConnect `hashed_user_id`: 64 hex), and its shape: the
+ * hook's validation, the subject columns of migration 030 and the sites' verifier
+ * (`libs/handoff/alumni-merge-verify.ts`, `ALUMNI_MERGE_SUBJECT_MAX_LENGTH`) all read this number;
+ * `alumni-merge-verify.test.ts` asserts the three agree.
+ */
+export const ALUMNI_MERGE_SUBJECT_MAX_LENGTH = 128;
+export const ALUMNI_MERGE_SUBJECT_RE = new RegExp(
+  `^[A-Za-z0-9._-]{1,${ALUMNI_MERGE_SUBJECT_MAX_LENGTH}}$`
+);
+
 /** The claims of an Alumni merge call token. */
 export interface AlumniMergeCallClaims {
   iss: string;

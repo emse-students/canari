@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { DataSource } from 'typeorm';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
+import { DELETED_ACCOUNT } from '../account-erasure/erasure-policy';
 import { chatDeliveryUrl, socialUrl } from '../internal/service-urls';
 import { MiconnectEditorClient, type MiconnectUserListing } from './miconnect-editor.client';
 import {
@@ -928,6 +929,8 @@ export class AlumniMergeService {
    * The transaction that closes a MERGED row also writes its sibling-site jobs (D52): a closed merge
    * always owes its sites, and only the closer writes them, with the subjects the row captured at the
    * mark - or, for a row that captured none, the ones MiConnect's push names ({@link PushedSubjects}).
+   * The target is read from the closing UPDATE itself, so a target erased meanwhile yields `erase`
+   * jobs (the erasure locks the row first, `erasure-policy.ts`).
    * A row closed by the reconciler rather than the push says so at warning, with its age: a dead push
    * is seen the first time an admin opens the page.
    */
@@ -946,18 +949,24 @@ export class AlumniMergeService {
         this.logger.log(`[ALUMNI_MERGE] ${tag}: no Canari account to erase`);
       }
     }
-    const subjects = this.subjectsOf(row, pushed, tag);
     const { closed, jobs } = await this.dataSource.transaction(async (manager) => {
+      // The target is read from THIS update, never from `row`: the target's erasure locks the row
+      // first (`alumni_merges_lock`), so a close that waited on it reads the blanked target here.
       const [updated] = (await manager.query(
         `UPDATE alumni_merges SET "completedAt" = now(), "completedBy" = $2
           WHERE id = $1 AND "completedAt" IS NULL
-          RETURNING id`,
+          RETURNING id, "targetUuid", "targetSubject"`,
         [row.id, by]
-      )) as [{ id: string }[], number];
-      if (!merged || (updated ?? []).length === 0) {
-        return { closed: (updated ?? []).length > 0, jobs: false };
-      }
-      if (!subjects) {
+      )) as [{ id: string; targetUuid: string; targetSubject: string | null }[], number];
+      const closing = (updated ?? [])[0];
+      if (!merged || !closing) return { closed: Boolean(closing), jobs: false };
+      const targetErased = closing.targetUuid === DELETED_ACCOUNT;
+      const subjects = this.subjectsOf(
+        { ...row, targetSubject: closing.targetSubject },
+        targetErased ? { duplicateSubject: pushed.duplicateSubject } : pushed,
+        tag
+      );
+      if (!subjects.duplicate || (!targetErased && !subjects.target)) {
         // CANNOT HAPPEN: the mark captures both subjects, a pre-1.8.3 row gets them at its first
         // reading, and the push names both. Reaching here is a broken invariant, never a path.
         this.logger.error(
@@ -966,7 +975,20 @@ export class AlumniMergeService {
         );
         return { closed: true, jobs: false };
       }
-      await this.siteJobs.writeJobs(manager, row.id, subjects.duplicate, subjects.target);
+      if (targetErased) {
+        // The target's erasure committed after this merge was read: no transfer onto an erased
+        // person is owed, the duplicate's accounts on the sites are erased instead (D54).
+        this.logger.warn(
+          `[ALUMNI_MERGE] completed ${tag} merge=${row.id}: its target was erased meanwhile - ` +
+            'the site jobs are erases'
+        );
+      }
+      await this.siteJobs.writeJobs(
+        manager,
+        row.id,
+        subjects.duplicate,
+        targetErased ? null : subjects.target
+      );
       return { closed: true, jobs: true };
     });
     if (!closed) {
@@ -1000,14 +1022,14 @@ export class AlumniMergeService {
   /**
    * The two subjects a merged row's site jobs carry: the row's own, captured while both accounts
    * existed, else the push's. A push naming a subject that differs from the row's is said at error and
-   * the row's is kept - it was read from MiConnect, the push is only a hint. Null when either is still
-   * missing.
+   * the row's is kept - it was read from MiConnect, the push is only a hint. Each is null when
+   * neither names it.
    */
   private subjectsOf(
     row: OpenRow,
     pushed: PushedSubjects,
     tag: string
-  ): { duplicate: string; target: string } | null {
+  ): { duplicate: string | null; target: string | null } {
     for (const [key, ours, theirs] of [
       ['duplicate', row.duplicateSubject, pushed.duplicateSubject],
       ['target', row.targetSubject, pushed.targetSubject],
@@ -1024,7 +1046,7 @@ export class AlumniMergeService {
     if (duplicate && !row.duplicateSubject) {
       this.logger.log(`[ALUMNI_MERGE] ${tag}: the duplicate's subject taken from the push`);
     }
-    return duplicate && target ? { duplicate, target } : null;
+    return { duplicate, target };
   }
 
   /**

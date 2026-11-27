@@ -35,8 +35,8 @@ SET lock_timeout = '5s';
 
 ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS mode VARCHAR(8) NOT NULL DEFAULT 'auto';
 ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS reason TEXT;
-ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "duplicateSubject" VARCHAR(255);
-ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "targetSubject" VARCHAR(255);
+ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "duplicateSubject" VARCHAR(128);
+ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "targetSubject" VARCHAR(128);
 ALTER TABLE alumni_merges ADD COLUMN IF NOT EXISTS "completedBy" VARCHAR(16);
 
 CREATE TABLE IF NOT EXISTS alumni_merge_site_jobs (
@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS alumni_merge_site_jobs (
     "mergeId"           UUID REFERENCES alumni_merges(id) ON DELETE SET NULL,
     site                VARCHAR(32) NOT NULL,
     kind                VARCHAR(8) NOT NULL DEFAULT 'transfer',
-    "duplicateSubject"  VARCHAR(255) NOT NULL,
-    "targetSubject"     VARCHAR(255),
+    "duplicateSubject"  VARCHAR(128) NOT NULL,
+    "targetSubject"     VARCHAR(128),
     "createdAt"         TIMESTAMPTZ NOT NULL DEFAULT now(),
     attempts            INT NOT NULL DEFAULT 0,
     "nextAttemptAt"     TIMESTAMPTZ NOT NULL DEFAULT now(),

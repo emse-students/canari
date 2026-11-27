@@ -1233,17 +1233,23 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
     backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
     `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token Canari signs with its
-    handoff key, `typ: canari-merge+jwt`, audience the site, claims `mode` (`transfer`, the default,
-    or `erase` once the target was erased - see below), `dup`, `target` (a `transfer` only), `jti` =
+    handoff key, `typ: canari-merge+jwt`, audience the site, claims `mode` (REQUIRED, no default:
+    `transfer`, or `erase` once the target was erased - see below), `dup`, `target` (a `transfer`
+    only; each subject at most 128 characters, `ALUMNI_MERGE_SUBJECT_MAX_LENGTH`, the ONE bound the
+    hook, the columns and the verifier share), `jti` =
     the job id, lifetime 60 s - verified against Canari's JWKS by the ONE verifier Canari ships,
     `libs/handoff/alumni-merge-verify.ts`, beside the handoff verifier whose leeway and lifetime it
     imports, VENDORED by each site beside its `handoff-verify.ts` and compared by `shape.mjs`
     (`ALUMNI_MERGE_VENDORED`); its test signs with core-service's own sender. A `2xx` with its outcome
-    completes the job; a `409` with a typed refusal marks it `blocked` (no retry: the state, not the
+    completes the job - an `erase` may answer `absent` or `erased`, a `transfer` `absent`,
+    `transferred` or `merged`, and any other outcome is a broken contract, an ERROR line, retried with
+    backoff; a `409` with a typed refusal marks it `blocked` (no retry: the state, not the
     network, refused) and is an ERROR line; a `401 { outcome: <class> }` is a refused token, an ERROR
     line naming the site and the class on EVERY attempt, asked again hourly so that a key rotation
-    or a redeploy heals it; a `404`, or a `503 { outcome: 'not_configured' }` (the site serves the
-    path but its trust is unset), is a site not ready - the job waits UNREADY, asked again daily, with
+    or a redeploy heals it; a `404` (`route_missing`: the site does not serve the path yet), or a
+    `503 { outcome: 'not_configured' }` (`trust_unset`: it serves the path but its trust in Canari's
+    keys is unset), is a site not ready - the job waits UNREADY, its `lastError` and the daily warning
+    saying which of the two the site answered, asked again daily, with
     no line per try (a site that serves the path never answers 404: an account it does not hold is
     `absent`); anything else, `503 { outcome: 'keys_unavailable' }` included, is retried with
     backoff. Each is classified on the status and a typed body field, never on prose.
@@ -1252,7 +1258,15 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     deletes the jobs a site already settled and turns every job still owed into an `erase` of the
     duplicate's account on that site, the target's subject blanked, before it deletes the merge row,
     whose foreign key then only nulls `mergeId` (`ON DELETE SET NULL`). A duplicate's account on a
-    sibling site never outlives the merge because the person it was merged into left. The daily report names every job pending over 24 h and every blocked one, and the admin
+    sibling site never outlives the merge because the person it was merged into left. The erasure
+    first LOCKS the target's merge rows, and the close reads the target from its own `UPDATE ...
+    RETURNING`: a close in flight commits before the erasure's statements run (so they convert its
+    jobs), and a close that comes after reads the blanked target and writes `erase` jobs - neither
+    order leaves a transfer onto an erased person. A job already claimed keeps its lease
+    (`GREATEST("nextAttemptAt", now())`). **Canari's erasure does not reach the target's OWN accounts
+    on the sibling sites**: each site erases those under its own rules, as for any person who leaves
+    MiConnect; only the duplicate's account, which the merge made Canari's business, is erased by a
+    job. The daily report names every job pending over 24 h and every blocked one, and the admin
     page shows each closed merge's three site states.
   - **Idempotence from durable state**: the job row says what is owed, the site's own tables say what
     is done - a duplicate subject with no account is `absent`, whether it never signed in or the
@@ -1334,10 +1348,12 @@ build made:
   the SAME `miconnect-alumni-names-agree` policy as the automatic rule. The merge Event is
   `Event.new("alumni_merge", ...)`, `set_user(target)`, the client address from
   `ClientIPMiddleware.get_client_ip`, ONE `save()`, run by `transaction.on_commit`: saving the Event
-  is what dispatches the push, which must never announce a merge that rolls back. Step M reads the
-  Event after a committed merge; it does not drive a sign-in inside an outer transaction, because the
-  flow executor then re-plans forever (measured 2026-11-27), so the rolled-back case is not exercised
-  there. The Event and the
+  is what dispatches the push, which must never announce a merge that rolls back. Step M proves it:
+  a fault raised INSIDE the policy's own atomic block, after the merge registered its Event's save
+  (`transaction.on_commit` wrapped to register that one callback, then raise), leaves the duplicate
+  and its link standing, no merge Event and no push. The first form tried - the whole sign-in inside
+  an OUTER `transaction.atomic`, rolled back after - does not run: the step never returned and was
+  killed after about six hours (2026-11-27). The Event and the
   push carry both OIDC subjects (`uid`), the duplicate's read BEFORE its delete, since it derives from
   the pk. Refusals keep `from_http` (nothing is deleted).
 - **The push** is `85-alumni-merge-push.yaml`: the policy `miconnect-alumni-merge-is-the-event`, the
@@ -1376,13 +1392,18 @@ build made:
   names them; the admin who opened it stays in the log line.
 - **The site jobs** (`alumni-merge-site-jobs.service.ts`) and the account erasure share ONE runner,
   `src/common/durable-queue.ts` (timers, single-flight drain, logged failures); each keeps its own
-  claim, because the two tables differ. A `2xx` must name `absent`, `transferred` or `merged`, else it
-  is retried as `SITE_ANSWER_MALFORMED`; a `404` (a site that has not shipped its endpoint) makes the
-  job UNREADY (`unreadySince`), and so does a `503 { outcome: 'not_configured' }`: asked again every 24 h, no WARN per try, never accused as overdue, and
-  the daily report says ONE warning per such site with its count. Every write that settles an attempt
-  names the job's kind as claimed and checks it wrote one row; none - the target's erasure turned a
-  transfer into an erase under the call - is said at ERROR and records nothing, and the job as it now
-  stands runs next. A done `erase` whose merge row is gone deletes its own row.
+  claim, because the two tables differ. A `2xx` must name an outcome its job's KIND may answer
+  (`OUTCOMES_OF`), else it is a `SITE_ANSWER_MALFORMED` at ERROR, retried with backoff; a `404`
+  (`HTTP 404 route_missing`) makes the job UNREADY (`unreadySince`), and so does a
+  `503 { outcome: 'not_configured' }` (`HTTP 503 not_configured`): asked again every 24 h, no WARN per
+  try, never accused as overdue, and the daily report says ONE warning per such site and answer with
+  its count. Every write that settles an attempt names the job's kind as claimed and checks it wrote
+  one row; none is classified by re-reading the row: the expected race - the target's erasure turned
+  the transfer into an erase under the call - is said at info and records nothing (plus ONE WARN naming
+  the site and the job when that transfer had landed), and the job as it now stands runs next; a job
+  gone or completed under its lease is a broken invariant, at ERROR. A done `erase` whose merge row is
+  gone deletes its own row.
+
 - **The admin page** lists every Alumni-created account not in an open merge: the flagged ones with
   their targets, then those that match nobody, which only "Rattacher à un autre compte"
   (`AlumniManualMerge.svelte`) can attach. The open merges show their mode and reason, the closed

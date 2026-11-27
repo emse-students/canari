@@ -123,6 +123,11 @@ describe('the Alumni merge client', () => {
       m.admin_alumni_site_done({ site: 'sky', outcome: m.admin_alumni_site_outcome_transferred() }),
     ],
     [
+      'done',
+      { outcome: 'erased' },
+      m.admin_alumni_site_done({ site: 'sky', outcome: m.admin_alumni_site_outcome_erased() }),
+    ],
+    [
       'blocked',
       { lastError: 'HTTP 409 X' },
       m.admin_alumni_site_blocked({ site: 'sky', error: 'HTTP 409 X' }),

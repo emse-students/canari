@@ -14,6 +14,13 @@ Two traps met writing it, both about the TEST and not the flow:
   * authentik's session cookie is a signed JWT; the bare session key is accepted only under TEST, so
     a hand-made cookie is ignored and the executor quietly PLANS ANEW, with an empty context;
   * a completed POST is answered with a redirect to the next challenge, which must be followed.
+
+THE ROLLED-BACK MERGE (D54: `transaction.on_commit(merged.save)` - no Event, so no push, for a merge
+that rolls back) is driven by raising INSIDE the policy's own atomic block, after the merge registered
+its Event: `django.db.transaction.on_commit` is wrapped for that one sign-in. The other form - the
+whole sign-in inside an OUTER `transaction.atomic()` here, rolled back after - CANNOT RUN: on
+2026-11-27 the step never returned and was killed after about six hours, the executor planning again
+and again inside the open outer transaction. Do not reintroduce it.
 """
 import json
 import os
@@ -639,7 +646,39 @@ with Tenant.objects.get(ready=True):
         _, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
         check(User.objects.get(pk=duplicate.pk).attributes.get("alumni_merge_into") == str(other.uuid), f"an orphan clear keeps a mark that changed under it ({signed_in_as})")
 
+        # D54 - A MERGE THAT ROLLS BACK ANNOUNCES NOTHING (`transaction.on_commit(merged.save)`). The
+        # fault is raised INSIDE the policy's own atomic block, after the merge registered its Event's
+        # save: `django.db.transaction.on_commit` - which the policy reads at call time - is wrapped to
+        # register that ONE callback and then raise, so the block exits by an exception and Django
+        # discards its on-commit callbacks with the rollback. Every other on_commit of the sign-in is
+        # passed through untouched. (Why not an outer atomic around the sign-in: see the docstring.)
+        from django.db import transaction as django_transaction
+
+        real_on_commit = django_transaction.on_commit
+        injected = []
+
+        def on_commit_then_fail(func, *args, **kwargs):
+            real_on_commit(func, *args, **kwargs)
+            owner = getattr(func, "__self__", None)
+            if isinstance(owner, Event) and owner.action == "custom_alumni_merge":
+                injected.append(owner.context.get("duplicate_uuid"))
+                raise RuntimeError("e2e: a fault after the merge registered its Event")
+
+        target, duplicate, link = merge_case("90046")
+        rolled_pk, rolled_uuid = duplicate.pk, str(duplicate.uuid)
+        django_transaction.on_commit = on_commit_then_fail
+        try:
+            last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        finally:
+            django_transaction.on_commit = real_on_commit
+        link.refresh_from_db()
+        check(injected == [rolled_uuid], f"the fault was raised inside the merge's atomic block, after its Event was registered ({injected})")
+        check(User.objects.filter(pk=rolled_pk).exists() and link.user_id == rolled_pk, f"the merge rolled back: the duplicate and its Alumni link stand ({last.get('component')}, {signed_in_as})")
+        check(not Event.objects.filter(action="custom_alumni_merge", context__duplicate_uuid=rolled_uuid).exists(), "a rolled-back merge saves NO merge Event")
+        check(not [r for r in stub.received if r["body"].get("duplicateUuid") == rolled_uuid], "a rolled-back merge is never pushed")
+
         # D54 - THE PUSH, RECEIVED: of every alumni Event of this run, the rule passes the merges and
+
         # nothing else, and each merge is delivered EXACTLY once, to its target, carrying the
         # duplicate's uuid, the target's and the shared secret.
         passed = [e for e in Event.objects.filter(action__startswith="custom_alumni") if rule_sends(e)]

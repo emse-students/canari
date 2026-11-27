@@ -1,3 +1,4 @@
+import { ALUMNI_MERGE_SUBJECT_MAX_LENGTH } from '../../auth/handoff/handoff-token';
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import type { AlumniHoldings } from '../alumni-merge.service';
 
@@ -70,11 +71,11 @@ export class AlumniMerge {
   reason!: string | null;
 
   /** The duplicate's MiConnect `uid` (its OIDC subject on every site), read at the mark (D54). */
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH, nullable: true })
   duplicateSubject!: string | null;
 
   /** The target's MiConnect `uid`, read at the mark (D54); blanked by the target's erasure. */
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH, nullable: true })
   targetSubject!: string | null;
 
   /** What completed it: `push` (MiConnect's webhook) or `reconciler` (the admin page's reading). */

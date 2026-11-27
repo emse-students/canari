@@ -10,8 +10,8 @@
  * the same directory as its `handoff-verify.ts`, and `tools/ecosystem-shape/shape.mjs` fails when a
  * GitHub copy differs. Edit it in Canari, then copy it.
  *
- * THE TWO MODES. `transfer` (the default when `mode` is absent): move what the duplicate's account
- * owns onto `target`'s - `target` is REQUIRED. `erase`: the merge's target was erased in Canari before
+ * THE TWO MODES, named by the REQUIRED `mode` claim - no default, a token without it is `invalid`.
+ * `transfer`: move what the duplicate's account owns onto `target`'s - `target` is REQUIRED. `erase`: the merge's target was erased in Canari before
  * this site answered, so the duplicate's account is erased instead - `target` is ABSENT (Canari blanked
  * it with the person) and a token carrying one is refused.
  *
@@ -61,8 +61,13 @@ export interface AlumniMergeVerifyOptions {
   currentDate?: Date;
 }
 
-/** A MiConnect subject (`hashed_user_id`: 64 hex) or any opaque id: bounded, printable. */
-const SUBJECT = /^[A-Za-z0-9._-]{1,128}$/;
+/**
+ * THE ONE BOUND OF A SUBJECT (a MiConnect `hashed_user_id`: 64 hex), equal to Canari's
+ * `ALUMNI_MERGE_SUBJECT_MAX_LENGTH`: Canari's hook and columns hold none longer, and its test asserts
+ * the three agree.
+ */
+export const ALUMNI_MERGE_SUBJECT_MAX_LENGTH = 128;
+const SUBJECT = new RegExp(`^[A-Za-z0-9._-]{1,${ALUMNI_MERGE_SUBJECT_MAX_LENGTH}}$`);
 
 /** Verifies an Alumni merge call token for this site. */
 export async function verifyAlumniMergeCall(
@@ -90,14 +95,14 @@ export async function verifyAlumniMergeCall(
       issuer: options.issuer,
       audience: options.audience,
       clockTolerance: HANDOFF_LEEWAY_SECONDS,
-      requiredClaims: ['dup', 'jti', 'iat', 'exp'],
+      requiredClaims: ['mode', 'dup', 'jti', 'iat', 'exp'],
       currentDate,
     }));
   } catch (e) {
     return { outcome: classify(e) };
   }
-  const { dup, target, jti, iat, exp } = payload;
-  const mode = payload.mode ?? 'transfer';
+  const { mode, dup, target, jti, iat, exp } = payload;
+
   if (
     typeof dup !== 'string' ||
     typeof jti !== 'string' ||

@@ -58,7 +58,7 @@ export interface AlumniOpenMerge {
 interface AlumniMergeSiteState {
   site: string;
   state: 'pending' | 'unready' | 'blocked' | 'done';
-  outcome: 'absent' | 'transferred' | 'merged' | null;
+  outcome: 'absent' | 'transferred' | 'merged' | 'erased' | null;
   attempts: number;
   lastError: string | null;
 }
@@ -84,7 +84,9 @@ export function alumniSiteLine(s: AlumniMergeSiteState): string {
         ? m.admin_alumni_site_outcome_transferred()
         : s.outcome === 'merged'
           ? m.admin_alumni_site_outcome_merged()
-          : m.admin_alumni_site_outcome_absent();
+          : s.outcome === 'erased'
+            ? m.admin_alumni_site_outcome_erased()
+            : m.admin_alumni_site_outcome_absent();
     return m.admin_alumni_site_done({ site: s.site, outcome });
   }
   if (s.state === 'blocked') {

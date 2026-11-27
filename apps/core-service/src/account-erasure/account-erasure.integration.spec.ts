@@ -15,7 +15,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { AlumniMergeService } from '../users/alumni-merge.service';
 import { AlumniMergeSiteJobsService } from '../users/alumni-merge-site-jobs.service';
+import type { MiconnectEditorClient } from '../users/miconnect-editor.client';
 import { AccountErasureService } from './account-erasure.service';
 import { subjectDigest } from './erasure-policy';
 
@@ -34,6 +36,19 @@ const OWED = '0e0e0e0e-0000-4000-8000-00000000e1a5';
 /** The Alumni merge case's two targets: erased while their merges' site jobs are still owed. */
 const MERGE_TARGET = '0f0f0f0f-0000-4000-8000-00000000e1a5';
 const RACED_TARGET = '1a1a1a1a-0000-4000-8000-00000000e1a5';
+/** The close-versus-erasure interleavings: a Canari id and a MiConnect uuid per case. */
+const INTERLEAVED = {
+  a: {
+    id: '2a2a2a2a-0000-4000-8000-00000000e1a5',
+    mc: '2b2b2b2b-0000-4000-8000-00000000e1a5',
+    dup: '2c2c2c2c-0000-4000-8000-00000000e1a5',
+  },
+  b: {
+    id: '3a3a3a3a-0000-4000-8000-00000000e1a5',
+    mc: '3b3b3b3b-0000-4000-8000-00000000e1a5',
+    dup: '3c3c3c3c-0000-4000-8000-00000000e1a5',
+  },
+};
 
 const CORE_TABLES = [
   'users',
@@ -390,6 +405,10 @@ maybe('account erasure queue against PostgreSQL', () => {
       .toString('base64');
     process.env.FRONTEND_URL = 'https://canari.example';
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const log = jest.spyOn(Logger.prototype, 'log');
+    warn.mockClear();
+    log.mockClear();
     try {
       axios.delete = jest.fn(async () => ({ data: { ok: true } }));
       const erasure = new AccountErasureService(ds);
@@ -416,19 +435,25 @@ maybe('account erasure queue against PostgreSQL', () => {
           WHERE NOT ("duplicateSubject" = 'sub-raced' AND site = 'sky')`
       );
 
-      // Sky's transfer is in flight when the target is erased, and Sky answers it transferred; the
-      // erase it became is due at once and runs in the same drain - Sky answers that one absent.
+      // Sky's transfer is in flight when the target is erased, and Sky answers it transferred.
       axios.post = jest.fn(async () => {
         if (axios.post.mock.calls.length > 1) return { status: 200, data: { outcome: 'absent' } };
         await erasure.requestErasure(RACED_TARGET);
         return { status: 200, data: { outcome: 'transferred' } };
       });
       await siteJobs.drain();
-      // The transfer's answer is not recorded on the job it no longer is...
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining('its row is gone or changed under the call')
+      // The transfer's answer is not recorded on the job it no longer is - the EXPECTED race, at
+      // info, with ONE warning naming the site and the job, since that transfer had landed...
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('became an erase during the call'));
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/site=sky job=\S+ transferred/));
+      expect(error).not.toHaveBeenCalled();
+      // ...and the conversion KEPT the claimed job's lease (GREATEST): nothing ran it a second time
+      // under the call. Once due, the erases run, naming no target.
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      await ds.query(
+        `UPDATE alumni_merge_site_jobs SET "nextAttemptAt" = now() WHERE "duplicateSubject" = 'sub-raced'`
       );
-      // ...and the erase ran next, naming no target.
+      await siteJobs.drain();
       const ops = (
         axios.post.mock.calls as [string, unknown, { headers: { authorization: string } }][]
       ).map(([, , config]) =>
@@ -452,8 +477,132 @@ maybe('account erasure queue against PostgreSQL', () => {
       expect(await count(`alumni_merge_site_jobs WHERE "duplicateSubject" = 'sub-raced'`)).toBe(0);
     } finally {
       error.mockRestore();
-      process.env.HANDOFF_SIGNING_KEY = saved.key;
-      process.env.FRONTEND_URL = saved.url;
+      // `process.env.X = undefined` would store the STRING "undefined": an unset one is deleted.
+      for (const [name, value] of [
+        ['HANDOFF_SIGNING_KEY', saved.key],
+        ['FRONTEND_URL', saved.url],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }
+  }, 60_000);
+
+  /**
+   * THE CLOSE AND THE TARGET'S ERASURE, interleaved both ways, through the real
+   * `AlumniMergeService.completeFromPush` (MiConnect scripted) and the real erasure: neither order may
+   * leave a TRANSFER onto an erased person. `hook` runs the erasure at the interleaving's point.
+   */
+  async function interleave(
+    c: { id: string; mc: string; dup: string },
+    sub: string,
+    hook: 'before-close' | 'during-close'
+  ): Promise<{ mergeId: string; erasure: Promise<void> | null }> {
+    axios.delete = jest.fn(async () => ({ data: { ok: true } }));
+    const erasure = new AccountErasureService(ds);
+    // The request's OWN transaction is under test: its drain would run core's statements a second
+    // time and heal a broken order after the fact, hiding the race this case exists to catch.
+    erasure.drain = async () => undefined;
+    const realJobs = new AlumniMergeSiteJobsService(ds);
+    await ds.query(`INSERT INTO users (id, "displayName", "miconnectUuid") VALUES ($1, 'T', $2)`, [
+      c.id,
+      c.mc,
+    ]);
+    const [merge] = await ds.query(
+      `INSERT INTO alumni_merges
+         ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held,
+          "duplicateSubject", "targetSubject", "markedAt")
+       VALUES ('admin', $1, 'alumni-77', $2, $3, '{}'::jsonb, $4, $5, now())
+       RETURNING id`,
+      [c.dup, c.mc, c.id, sub, `${sub}-target`]
+    );
+    let running: Promise<void> | null = null;
+    const editor = {
+      assertAvailable: () => ({ baseUrl: 'https://mc', token: 't' }),
+      userByUuid: async (uuid: string) => (uuid === c.dup ? null : { pk: 7 }),
+      sourceLinksOf: async () => {
+        // (A) The erasure COMMITS after the merge was read and proven, before the close.
+        if (hook === 'before-close') await erasure.requestErasure(c.id);
+        return [{ slug: 'alumni', identifier: '77' }];
+      },
+    };
+    const siteJobs = {
+      writeJobs: async (
+        m: Parameters<AlumniMergeSiteJobsService['writeJobs']>[0],
+        ...rest: [string, string, string | null]
+      ) => {
+        if (hook === 'during-close') {
+          // (B) The close holds the merge row (its UPDATE ran); the erasure starts now and must
+          // WAIT on that row - proven by its backend waiting on a lock, not by a delay.
+          running = erasure.requestErasure(c.id);
+          for (let i = 0; ; i++) {
+            const [w] = await ds.query(
+              `SELECT count(*)::int AS n FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock'
+                  AND query LIKE '%alumni_merges%' AND pid <> pg_backend_pid()`
+            );
+            if (w.n > 0) break;
+            if (i > 500) throw new Error('the erasure never waited on the closing merge row');
+            await new Promise((r) => setTimeout(r, 10));
+          }
+        }
+        return realJobs.writeJobs(m, ...rest);
+      },
+      drain: async () => undefined,
+    };
+    const service = new AlumniMergeService(
+      ds,
+      editor as unknown as MiconnectEditorClient,
+      { requestErasure: async () => undefined } as unknown as AccountErasureService,
+      siteJobs as unknown as AlumniMergeSiteJobsService
+    );
+    await service.completeFromPush(c.dup, c.mc, merge.id);
+    return { mergeId: merge.id, erasure: running };
+  }
+
+  it('(A) the target erased between the read and the close: the close reads it blanked and writes erases', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    warn.mockClear();
+    const { mergeId } = await interleave(INTERLEAVED.a, 'sub-ia', 'before-close');
+    expect(
+      await ds.query(
+        `SELECT site, kind, "mergeId", "targetSubject" FROM alumni_merge_site_jobs
+          WHERE "duplicateSubject" = 'sub-ia' ORDER BY site`
+      )
+    ).toEqual(
+      ['le-cercle', 'migallery', 'sky'].map((site) => ({
+        site,
+        kind: 'erase',
+        mergeId,
+        targetSubject: null,
+      }))
+    );
+    const [row] = await ds.query(
+      `SELECT "completedAt", "targetUuid" FROM alumni_merges WHERE id = $1`,
+      [mergeId]
+    );
+    expect(row.completedAt).not.toBeNull();
+    expect(row.targetUuid).toBe('[deleted]');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('target was erased meanwhile'));
+  }, 60_000);
+
+  it('(B) the close commits while the erasure waits on its row: the erasure sees it and converts its jobs', async () => {
+    const { erasure } = await interleave(INTERLEAVED.b, 'sub-ib', 'during-close');
+    await erasure;
+    // The closed merge went with the target's history; its jobs stand, every one an erase.
+    expect(await count(`alumni_merges WHERE "duplicateUuid" = $1`, [INTERLEAVED.b.dup])).toBe(0);
+    expect(
+      await ds.query(
+        `SELECT site, kind, "mergeId", "targetSubject" FROM alumni_merge_site_jobs
+          WHERE "duplicateSubject" = 'sub-ib' ORDER BY site`
+      )
+    ).toEqual(
+      ['le-cercle', 'migallery', 'sky'].map((site) => ({
+        site,
+        kind: 'erase',
+        mergeId: null,
+        targetSubject: null,
+      }))
+    );
   }, 60_000);
 });

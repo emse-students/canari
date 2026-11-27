@@ -17,7 +17,7 @@ const REPORT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FIRST_REPORT_DELAY_MS = 5 * 60 * 1000;
 /** A job pending longer than this is ACCUSED by the report. */
 const OVERDUE_AFTER_HOURS = 24;
-/** How long a site that answered 404 (its endpoint not served yet) waits before it is asked again. */
+/** How long a site not ready (a 404, or a 503 `not_configured`) waits before it is asked again. */
 const UNREADY_RETRY_HOURS = 24;
 /**
  * How long a job the site REFUSED (401: the token's signature, issuer, audience or time) waits before
@@ -57,6 +57,34 @@ const OUTCOMES: readonly AlumniMergeSiteOutcome[] = ['absent', 'transferred', 'm
  */
 export type AlumniMergeSiteJobKind = 'transfer' | 'erase';
 
+/**
+ * The outcomes each kind may answer. Any other is a broken contract (an `erase` answered
+ * `transferred`: the site did something it was not asked), never a success.
+ */
+const OUTCOMES_OF: Readonly<Record<AlumniMergeSiteJobKind, readonly AlumniMergeSiteOutcome[]>> = {
+  transfer: ['absent', 'transferred', 'merged'],
+  erase: ['absent', 'erased'],
+};
+
+/**
+ * Why a site is not ready, from what it ANSWERED: `route_missing` - a `404`, it does not serve
+ * {@link ALUMNI_MERGE_SITE_PATH} (its half of D54 not deployed); `trust_unset` - a
+ * `503 { outcome: 'not_configured' }`, it serves the route but its trust in Canari's keys is not set.
+ */
+type UnreadyReason = 'route_missing' | 'trust_unset';
+
+/** What each not-ready answer is recorded as (`lastError`), and said as in a line. */
+const UNREADY: Readonly<Record<UnreadyReason, { lastError: string; says: string }>> = {
+  route_missing: {
+    lastError: 'HTTP 404 route_missing',
+    says: 'answers 404: it does not serve the route yet (its half of D54 not deployed)',
+  },
+  trust_unset: {
+    lastError: 'HTTP 503 not_configured',
+    says: "answers 503 not_configured: it serves the route but its trust in Canari's keys is unset",
+  },
+};
+
 /** A site job as the admin page shows it. `unready`: the site does not serve its endpoint yet. */
 export interface AlumniMergeSiteState {
   site: string;
@@ -92,7 +120,11 @@ class SiteBlockedError extends Error {
  * names the site once with its count. A site that serves the path never answers 404: an account it
  * does not hold is `absent`, a 2xx.
  */
-class SiteUnreadyError extends Error {}
+class SiteUnreadyError extends Error {
+  constructor(readonly reason: UnreadyReason) {
+    super(`unready: ${reason}`);
+  }
+}
 
 /**
  * A `401 { outcome: <class> }`: the site REFUSED the token (its signature, type, issuer, audience,
@@ -105,7 +137,10 @@ class SiteRefusedError extends Error {
   }
 }
 
-/** A 2xx that does not say what was done: the contract is broken, retried until it is not. */
+/**
+ * A 2xx that does not say what was done, or names an outcome its job's kind may not answer
+ * ({@link OUTCOMES_OF}): the contract is broken - said at ERROR, retried with backoff until it is not.
+ */
 class SiteContractError extends Error {
   readonly code = 'SITE_ANSWER_MALFORMED';
 }
@@ -152,8 +187,9 @@ function siteUrl(site: string): string {
  *
  * EACH JOB CARRIES THE SUBJECTS IT NEEDS and never reads its merge row. The target's erasure turns a
  * job still owed into an `erase` while a call may be in flight, so every write that settles an attempt
- * names the job's KIND as claimed and checks that it wrote one row: none means the job changed or left
- * under the call, said at ERROR, and the job as it now stands runs at its next turn.
+ * names the job's KIND as claimed and checks that it wrote one row. None is classified by re-reading
+ * the row: a job converted to an erase under the call is the expected race, said at info (and at WARN
+ * when the transfer had landed); a job gone or completed is a broken invariant, said at ERROR.
  *
  * IDEMPOTENCE FROM DURABLE STATE: the job row says what is owed, the site's own tables say what is
  * done - a duplicate subject with no account there is `absent`, whether it never signed in or a first
@@ -199,18 +235,19 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
     manager: EntityManager,
     mergeId: string,
     duplicateSubject: string,
-    targetSubject: string
+    targetSubject: string | null
   ): Promise<void> {
+    const kind: AlumniMergeSiteJobKind = targetSubject === null ? 'erase' : 'transfer';
     for (const site of ALUMNI_MERGE_SITES) {
       await manager.query(
-        `INSERT INTO alumni_merge_site_jobs ("mergeId", site, "duplicateSubject", "targetSubject")
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO alumni_merge_site_jobs ("mergeId", site, kind, "duplicateSubject", "targetSubject")
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT ("mergeId", site) DO NOTHING`,
-        [mergeId, site, duplicateSubject, targetSubject]
+        [mergeId, site, kind, duplicateSubject, targetSubject]
       );
     }
     this.logger.log(
-      `[ALUMNI_MERGE_SITE] jobs written merge=${mergeId.slice(0, 8)} sites=${ALUMNI_MERGE_SITES.join(',')}`
+      `[ALUMNI_MERGE_SITE] jobs written merge=${mergeId.slice(0, 8)} kind=${kind} sites=${ALUMNI_MERGE_SITES.join(',')}`
     );
   }
 
@@ -302,17 +339,23 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
         {},
         { headers: { authorization: `Bearer ${token}` }, timeout: CALL_TIMEOUT_MS }
       );
-      const outcome = OUTCOMES.find((o) => o === res.data?.outcome);
-      if (!outcome) throw new SiteContractError(`answer ${res.status} names no outcome`);
+      const named = res.data?.outcome;
+      const outcome = OUTCOMES_OF[job.kind].find((o) => o === named);
+      if (!outcome) {
+        throw new SiteContractError(
+          typeof named === 'string' && OUTCOMES.some((o) => o === named)
+            ? `answer ${res.status} names ${named}, which a ${job.kind} may not answer`
+            : `answer ${res.status} names no outcome`
+        );
+      }
       return outcome;
     } catch (err) {
       const e = err as { response?: { status?: number; data?: { code?: unknown } } };
       const status = e?.response?.status;
       const outcome = (e?.response?.data as { outcome?: unknown } | undefined)?.outcome;
       // Classified on the status and a TYPED body field, never on prose.
-      if (status === 404 || (status === 503 && outcome === 'not_configured')) {
-        throw new SiteUnreadyError();
-      }
+      if (status === 404) throw new SiteUnreadyError('route_missing');
+      if (status === 503 && outcome === 'not_configured') throw new SiteUnreadyError('trust_unset');
       if (status === 401) {
         throw new SiteRefusedError(
           typeof outcome === 'string' && REFUSAL_CLASS.test(outcome) ? outcome : 'unclassified'
@@ -345,7 +388,8 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
               tag,
               `UPDATE alumni_merge_site_jobs
                   SET "completedAt" = now(), outcome = $3, "lastError" = NULL, "unreadySince" = NULL`,
-              [outcome]
+              [outcome],
+              outcome
             );
       if (settled) {
         this.logger.log(
@@ -373,21 +417,26 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
         return;
       }
       if (err instanceof SiteUnreadyError) {
-        // NOT A FAILURE, SO NOT A WARN PER TRY: the site has not shipped its half. Asked again daily;
-        // the daily report names the site once, with how many jobs wait for it.
+        // NOT A FAILURE, SO NOT A WARN PER TRY: the site has not shipped or configured its half.
+        // Asked again daily; the daily report names the site once per answer, with its job count.
+        const unready = UNREADY[err.reason];
         const settled = await this.settle(
           job,
           tag,
           `UPDATE alumni_merge_site_jobs
-              SET "unreadySince" = COALESCE("unreadySince", now()), "lastError" = 'HTTP 404 site_unready',
-                  "nextAttemptAt" = now() + make_interval(hours => $3)`,
-          [UNREADY_RETRY_HOURS]
+              SET "unreadySince" = COALESCE("unreadySince", now()), "lastError" = $3,
+                  "nextAttemptAt" = now() + make_interval(hours => $4)`,
+          [unready.lastError, UNREADY_RETRY_HOURS]
         );
         if (settled) {
           this.logger.debug(
-            `[ALUMNI_MERGE_SITE] unready ${tag}: the site answers 404, asked again in ${UNREADY_RETRY_HOURS}h`
+            `[ALUMNI_MERGE_SITE] unready ${tag}: the site ${unready.says}, asked again in ${UNREADY_RETRY_HOURS}h`
           );
         }
+        return;
+      }
+      if (err instanceof SiteContractError) {
+        await this.recordFailure(job, err, tag, 'error');
         return;
       }
       await this.recordFailure(job, err, tag);
@@ -397,26 +446,49 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
   /**
    * Writes the result of one attempt on the job AS CLAIMED: still owed (`completedAt` null) and of the
    * kind it was claimed with. `statement` is an `UPDATE ... SET ...` or a `DELETE FROM`, its extra
-   * parameters from `$3`. False, said at ERROR, when no row matched: the job left (a cascade, which
-   * migration 030 makes impossible) or changed under the call (the target's erasure turned a transfer
-   * into an erase meanwhile); this attempt's result is then not recorded, and the job as it now
-   * stands runs at its next turn.
+   * parameters from `$3`. False when no row matched; this attempt's result is then not recorded.
+   *
+   * The miss is CLASSIFIED by re-reading the row, never assumed. The EXPECTED one: the row is still
+   * owed under the other kind - the target's erasure turned this transfer into an erase during the
+   * call (`alumni_merge_site_jobs_owed`) - said at info, and the erase runs at its next turn. When
+   * that transfer had LANDED on the site (`landed`: `transferred` or `merged`), the site moved the
+   * account onto a person since erased: one WARN names the site and the job, so the record survives
+   * the erase that follows. Anything else - the row gone (no statement deletes an owed job), or
+   * still of the claimed kind but completed - is a broken invariant, said at ERROR.
    */
   private async settle(
     job: ClaimedJob,
     tag: string,
     statement: string,
-    params: unknown[]
+    params: unknown[],
+    landed?: AlumniMergeSiteOutcome
   ): Promise<boolean> {
     const [rows] = (await this.dataSource.query(
       `${statement} WHERE id = $1 AND "completedAt" IS NULL AND kind = $2 RETURNING id`,
       [job.id, job.kind, ...params]
     )) as [unknown[], number];
     if ((rows ?? []).length === 1) return true;
+    const [now] = (await this.dataSource.query(
+      `SELECT kind, "completedAt" FROM alumni_merge_site_jobs WHERE id = $1`,
+      [job.id]
+    )) as Array<{ kind: AlumniMergeSiteJobKind; completedAt: Date | null }>;
+    if (now && now.completedAt === null && now.kind !== job.kind) {
+      this.logger.log(
+        `[ALUMNI_MERGE_SITE] ${tag} became an ${now.kind} during the call (its target erased ` +
+          'meanwhile) - this result is not recorded, the job as it stands runs next'
+      );
+      if (job.kind === 'transfer' && (landed === 'transferred' || landed === 'merged')) {
+        this.logger.warn(
+          `[ALUMNI_MERGE_SITE] site=${job.site} job=${job.id} ${landed} the duplicate's account onto ` +
+            'a target erased during the call - the erase that follows removes it'
+        );
+      }
+      return false;
+    }
     this.logger.error(
-      `[ALUMNI_MERGE_SITE] settled ${tag} but its row is gone or changed under the call (the ` +
-        'target erased meanwhile turns a transfer into an erase) - this result is not recorded, ' +
-        'the job as it stands runs next'
+      `[ALUMNI_MERGE_SITE] settled ${tag} but its row is ${now ? 'completed already' : 'gone'} - ` +
+        'an invariant broke (no statement deletes or completes an owed job under its lease); ' +
+        'this result is not recorded'
     );
     return false;
   }
@@ -447,7 +519,16 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
     );
   }
 
-  private async recordFailure(job: ClaimedJob, err: unknown, tag: string): Promise<void> {
+  /**
+   * A failed attempt, retried with backoff: at WARN for a transport or server failure, at ERROR
+   * (`level`) for a broken contract, which no retry alone fixes.
+   */
+  private async recordFailure(
+    job: ClaimedJob,
+    err: unknown,
+    tag: string,
+    level: 'warn' | 'error' = 'warn'
+  ): Promise<void> {
     const attempts = job.attempts + 1;
     const delaySeconds = Math.round(retryDelayMs(attempts) / 1000);
     const failure = describeFailure(err);
@@ -466,8 +547,10 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
         `[ALUMNI_MERGE_SITE] could not record a failure ${tag}: ${describeFailure(writeErr)}`
       );
     }
-    this.logger.warn(
-      `[ALUMNI_MERGE_SITE] attempt failed ${tag} attempts=${attempts} error=${failure} - retried in ${delaySeconds}s`
+    // A broken contract says what the site answered (Canari's own words, never the site's prose).
+    const detail = err instanceof SiteContractError ? ` (${err.message})` : '';
+    this.logger[level](
+      `[ALUMNI_MERGE_SITE] attempt failed ${tag} attempts=${attempts} error=${failure}${detail} - retried in ${delaySeconds}s`
     );
   }
 
@@ -511,17 +594,21 @@ export class AlumniMergeSiteJobsService implements OnModuleInit, OnModuleDestroy
            FROM alumni_merge_site_jobs`
       )) as Array<{ pending: number; unready: number; blocked: number }>;
       const waiting = (await this.dataSource.query(
-        `SELECT site, count(*)::int AS jobs, min("unreadySince") AS since
+        `SELECT site, "lastError", count(*)::int AS jobs, min("unreadySince") AS since
            FROM alumni_merge_site_jobs
           WHERE "completedAt" IS NULL AND "blockedAt" IS NULL AND "unreadySince" IS NOT NULL
-          GROUP BY site ORDER BY site`
-      )) as Array<{ site: string; jobs: number; since: Date }>;
+          GROUP BY site, "lastError" ORDER BY site, "lastError"`
+      )) as Array<{ site: string; lastError: string | null; jobs: number; since: Date }>;
       for (const w of waiting) {
+        const says =
+          Object.values(UNREADY).find((u) => u.lastError === w.lastError)?.says ??
+          `is not ready (${w.lastError ?? 'no answer recorded'})`;
         this.logger.warn(
-          `[ALUMNI_MERGE_SITE] site=${w.site} does not serve ${ALUMNI_MERGE_SITE_PATH} yet: ${w.jobs} ` +
-            `job(s) wait for it since ${new Date(w.since).toISOString()}, asked again daily`
+          `[ALUMNI_MERGE_SITE] site=${w.site} ${says}: ${w.jobs} job(s) wait for it since ` +
+            `${new Date(w.since).toISOString()}, asked again daily`
         );
       }
+
       for (const r of rows) {
         this.logger.error(
           `[ALUMNI_MERGE_SITE] ${r.blockedAt ? 'BLOCKED' : 'OVERDUE'} ${jobTag(r)} ` +

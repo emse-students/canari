@@ -7375,6 +7375,7 @@
   "admin_alumni_site_outcome_absent": "rien à transférer",
   "admin_alumni_site_outcome_transferred": "transféré",
   "admin_alumni_site_outcome_merged": "fusionné",
+  "admin_alumni_site_outcome_erased": "compte effacé (la cible a été supprimée)",
   "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question.",
   "mention_everyone_word": "tous",
   "mention_everyone_hint": "Notifie tous les membres",

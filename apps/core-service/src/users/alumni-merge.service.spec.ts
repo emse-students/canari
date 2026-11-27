@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
+import { DELETED_ACCOUNT } from '../account-erasure/erasure-policy';
 import {
   AlumniMergeService,
   MERGE_MARK,
@@ -238,7 +239,10 @@ describe('AlumniMergeService', () => {
         if (!row) return [[], 0];
         row.completedAt = new Date();
         row.completedBy = params[1] as string;
-        return [[{ id: row.id }], 1];
+        return [
+          [{ id: row.id, targetUuid: row.targetUuid, targetSubject: row.targetSubject ?? null }],
+          1,
+        ];
       }
       if (row && sql.includes('"cancelledAt" = now()')) {
         row.cancelledAt = new Date();
@@ -696,6 +700,31 @@ describe('AlumniMergeService', () => {
       );
       expect(siteJobs.drain).toHaveBeenCalled();
       expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('by the reconciler'));
+    });
+
+    it('reads the target from the closing UPDATE: one erased after the proof yields erase jobs', async () => {
+      const { service, rows, erasure, siteJobs } = make({
+        accounts: merged(),
+        canari: { [DUP_UUID]: 'canari-dup' },
+        rows: [{ markedAt: new Date(), ...subjects }],
+      });
+      // The target's erasure commits after the merge was read and proven, before the close.
+      erasure.requestErasure.mockImplementation(async () => {
+        rows[0].targetUuid = DELETED_ACCOUNT;
+        rows[0].targetSubject = null;
+      });
+      await service.completeFromPush(DUP_UUID, TARGET_UUID, 'row-0', {
+        duplicateSubject: 'sub-duplicate',
+        targetSubject: 'sub-target',
+      });
+      expect(siteJobs.writeJobs).toHaveBeenCalledWith(
+        expect.anything(),
+        'row-0',
+        'sub-duplicate',
+        null
+      );
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('target was erased meanwhile'));
+      expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('differs'));
     });
 
     it('refuses a duplicate that still exists: nothing written, at error', async () => {

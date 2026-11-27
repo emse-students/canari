@@ -7366,6 +7366,7 @@
   "admin_alumni_site_outcome_absent": "nothing to transfer",
   "admin_alumni_site_outcome_transferred": "transferred",
   "admin_alumni_site_outcome_merged": "merged",
+  "admin_alumni_site_outcome_erased": "account erased (the target was deleted)",
   "form_question_duplicates_identity": "This field is already sent with every answer ({field}). You can delete this question.",
   "mention_everyone_word": "everyone",
   "mention_everyone_hint": "Notifies every member",

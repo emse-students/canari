@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { AlumniMerge } from './alumni-merge.entity';
+import { ALUMNI_MERGE_SUBJECT_MAX_LENGTH } from '../../auth/handoff/handoff-token';
 
 /**
  * One sibling site's part of one completed Alumni merge (D53, D54; migration 030): the site moves
@@ -51,11 +52,11 @@ export class AlumniMergeSiteJob {
   kind!: 'transfer' | 'erase';
 
   /** The duplicate's OIDC subject, by which the site finds its account. */
-  @Column({ type: 'varchar', length: 255 })
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH })
   duplicateSubject!: string;
 
   /** The target's OIDC subject, onto which the site moves it; null for an `erase`. */
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: ALUMNI_MERGE_SUBJECT_MAX_LENGTH, nullable: true })
   targetSubject!: string | null;
 
   @Column({ type: 'timestamptz', default: () => 'now()' })
