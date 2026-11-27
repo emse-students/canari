@@ -74,6 +74,7 @@
   import type { PendingMediaFile } from '$lib/media';
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
+  import { pickCopy, watchNativePickCopy } from '$lib/utils/chat/pickCopyState.svelte';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -865,6 +866,11 @@
     });
   });
 
+  /** The Android file chooser's copy of a large pick is drawn below as one line. */
+  onMount(() => {
+    watchNativePickCopy();
+  });
+
   /** The emoji picker's first screen is fetched once the composer has painted and the thread is idle, so opening it (here or on a reaction) paints at once. */
   onMount(() => {
     whenIdleAfterPaint(() => {
@@ -1018,6 +1024,18 @@
         fraction={videoPreparation.fraction}
         oncancel={() => videoPreparation.cancel()}
       />
+    {/if}
+    <!-- A picked file being copied by the Android app before the page can read it. -->
+    {#if pickCopy.reading !== null}
+      <p
+        class="bg-cn-bg text-cn-dark mb-2 rounded-lg px-3 py-2 text-sm font-semibold"
+        aria-live="polite"
+        data-testid="pick-copy-progress"
+      >
+        {pickCopy.reading.percent === null
+          ? m.chat_media_reading()
+          : m.chat_media_reading_percent({ percent: pickCopy.reading.percent })}
+      </p>
     {/if}
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}

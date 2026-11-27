@@ -231,10 +231,25 @@ export function createRoutedFetch(
 ): typeof fetch {
   const conformed = conformPluginFetch(plugin);
   const conformedNative = conformNativeFetch(native);
+  routedPluginFetch = conformed;
   return ((input: RequestInfo | URL, init?: RequestInit) =>
     shouldUseNativeFetch(fetchInputUrl(input), init, input, firstPartyOrigins())
       ? conformedNative(input, init)
       : conformed(input, init)) as typeof fetch;
+}
+
+/** The plugin half of the routed `fetch` last built, typed and tagged; `null` off Tauri. */
+let routedPluginFetch: typeof fetch | null = null;
+
+/**
+ * The HTTP plugin's `fetch` as the app's routing uses it, for a caller that must ask THROUGH the
+ * plugin whatever its request would be routed to: the reachability probe, when a write on the
+ * plugin's stack earned the "unreachable" verdict and only that stack's answer may lift it. `null`
+ * where no routing is installed (the web build, a test), where there is one stack and the question
+ * does not arise.
+ */
+export function pluginFetch(): typeof fetch | null {
+  return routedPluginFetch;
 }
 
 /** Resolves the URL string of any `fetch` first argument, or `null` when it has none. */

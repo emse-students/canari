@@ -1342,6 +1342,39 @@ export class MediaService {
   }
 
   /**
+   * How long the server keeps each LIVE object from now, for the touch answer: the window a client
+   * may count on before the sweep could take it (the media cache cap's sole-copy rule,
+   * docs/wiki/services/media-service.md). `null` = no sweep ever takes it (an `archive`, a public
+   * asset, an unclassified entry); a number = ms from now until its own clock could run out - the
+   * idle window an `ephemeral` object was stamped with (the clock was just restarted by the touch),
+   * or the time left to a chat hold or a pending TTL, which reading does not move. Unknown, purged
+   * and malformed ids are absent: the server holds nothing for them. Keys are UUIDs (checked), so
+   * a plain object cannot be polluted.
+   */
+  holdWindows(mediaIds: string[], now = Date.now()): Record<string, number | null> {
+    const windows: Record<string, number | null> = {};
+    for (const mediaId of mediaIds) {
+      if (!UUID_REGEX.test(mediaId)) continue;
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) continue;
+      if (!this.isSweepable(entry)) {
+        windows[mediaId] = null;
+      } else if (entry.holds?.chat) {
+        windows[mediaId] = Math.max(0, entry.holds.chat.dueAt - now);
+      } else if (entry.retentionClass === 'chat-reel') {
+        windows[mediaId] = Math.max(0, entry.createdAt + CHAT_REEL_RETENTION_MS - now);
+      } else if (entry.retentionClass === 'reel-pending') {
+        windows[mediaId] = Math.max(0, entry.createdAt + PENDING_REEL_TTL_MS - now);
+      } else if (entry.retentionClass === 'poster-pending') {
+        windows[mediaId] = Math.max(0, entry.createdAt + POSTER_PENDING_TTL_MS - now);
+      } else {
+        windows[mediaId] = entry.idleRetentionMs ?? RETENTION_MS;
+      }
+    }
+    return windows;
+  }
+
+  /**
    * Sets the retention class of existing objects.
    *
    * Callers are all social-service, which owns the rows that cite an object. `'archive'` and

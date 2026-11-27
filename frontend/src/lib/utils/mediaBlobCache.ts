@@ -496,6 +496,15 @@ export function retainWarmDecryptedMediaBlobUrl(ref: MediaRef): string | null {
 }
 
 /**
+ * Calls `listener` once when this media's decrypted blob enters memory (the original's own bubble
+ * finished its download), so a reader that found it absent - a reply quote drawing a thumbnail -
+ * updates without a remount and without polling. Returns the cancel function.
+ */
+export function onDecryptedMediaHeld(ref: MediaRef, listener: () => void): () => void {
+  return decryptedPool.onArrival(decryptedKey(ref), listener);
+}
+
+/**
  * Puts plaintext that was decrypted ELSEWHERE - a segmented stream that has appended its last
  * segment - into the same pool {@link acquireDecryptedMediaBlobUrl} serves, and retains it once for
  * the caller. The lightbox and the download then reuse it rather than fetching the file again.

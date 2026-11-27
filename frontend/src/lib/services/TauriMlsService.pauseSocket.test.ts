@@ -192,6 +192,34 @@ describe('TauriMlsService.pauseSocket', () => {
     expect(svc.ws).toBeNull();
   });
 
+  it('issues the native release in the pagehide task itself, never after an awaited frame', async () => {
+    // The page is destroyed once `pagehide` returns: a release chained behind the frame's promise
+    // never ran, and the plugin's reader answered a dead channel at every gateway frame.
+    const NativeWebSocket = (await import('@tauri-apps/plugin-websocket')).default as unknown as {
+      connect: ReturnType<typeof vi.fn>;
+    };
+    const ws = {
+      // Neither promise ever settles: only what was CALLED synchronously counts.
+      send: vi.fn(() => new Promise<void>(() => {})),
+      disconnect: vi.fn(() => new Promise<void>(() => {})),
+      addListener: vi.fn().mockReturnValue(vi.fn()),
+    };
+    NativeWebSocket.connect.mockResolvedValue(ws);
+    const svc = new TauriMlsService() as unknown as Internals & {
+      connect(token: string, fence: number): Promise<void>;
+      socketFence(): number;
+    };
+    await svc.connect('tok', svc.socketFence());
+    const listenersBefore = ws.addListener.mock.calls.length;
+
+    window.dispatchEvent(new Event('pagehide'));
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    // No second listener: the release's watcher has nobody to report to.
+    expect(ws.addListener.mock.calls.length).toBe(listenersBefore);
+  });
+
   it('asks for a reconnect on pageshow when the page survived its pagehide', async () => {
     const NativeWebSocket = (await import('@tauri-apps/plugin-websocket')).default as unknown as {
       connect: ReturnType<typeof vi.fn>;
