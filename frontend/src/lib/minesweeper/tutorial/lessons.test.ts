@@ -1,26 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import type { MinesweeperBoard } from '../game';
 import { revealCell, toggleFlag } from '../game';
-import { boardFromLayout } from './layout';
+import { boardFromLayout, pictureOf } from './layout';
 import { LESSONS, lessonDone, markCells, type Coord, type Lesson } from './lessons';
 import { PATTERNS } from './patterns';
 
 /**
  * EVERY LESSON IS PROVED, NOT READ. A tutorial that teaches a pattern wrong is worse than none, so each
- * picture is checked against ALL the arrangements of mines its visible numbers allow:
+ * picture is checked against ALL the arrangements of mines its shown numbers allow:
  *
  * - what a lesson asks to open is safe in every one, what it asks to flag is a mine in every one, and
- *   nothing the numbers force is left unasked;
+ *   the goal IS everything the numbers force - nothing more is asked, nothing forced is left out;
  * - **with the mines counter**, which a player always reads: a lesson that does not teach the counter
  *   must not NEED it (same answer with and without), and the one that teaches it must need it;
  * - every highlight says something true: a red mark is a mine in every arrangement, a green one is safe
  *   in every arrangement, a yellow one holds exactly the mines its badge says;
- * - **a corner pattern cannot be bypassed** (owner, 2026-11-26: a board edge made the ends of the arms
- *   trivial and let the lesson skip the corner reasoning): no number of the picture settles its own
- *   neighbours, and the corner cell is decided WITH the corner number and NOT without it.
+ * - **a picture holds its pattern and nothing else** (owner, 2026-11-27: *"il faut que ces grilles ne soient
+ *   resolvables QUE en comprenant le pattern"*): every number shown is read by the explanation (the others
+ *   are `?`), every number read is NEEDED (without it the goal is no longer forced), and in an open picture
+ *   no read number sits on the border and a ring of fog around the picture changes nothing it forces - a wall
+ *   is information, and a pattern drawn against one can be solved by a smaller one;
+ * - **a corner pattern cannot be bypassed**: the corner and the ends of its arms are decided WITH the corner
+ *   number and NOT without it.
  *
- * A layout cannot be edited into a position that needs a guess, or a highlight into a claim the numbers
- * do not make, without this file failing.
+ * A layout cannot be edited into a position that needs a guess, a shortcut, or a highlight into a claim the
+ * numbers do not make, without this file failing.
  */
 
 const at = (board: MinesweeperBoard, [x, y]: Coord) => y * board.width + x;
@@ -40,38 +44,61 @@ function neighbours(board: MinesweeperBoard, i: number): number[] {
   return out;
 }
 
-/** A hidden cell no revealed number touches: in an open window the numbers say nothing about it. */
-function isFar(board: MinesweeperBoard, i: number): boolean {
-  return !neighbours(board, i).some((n) => board.cells[n].state === 'revealed');
+/** A lesson's picture as the proof reads it: the engine board, and what the picture hides. */
+interface Picture {
+  board: MinesweeperBoard;
+  open: boolean;
+  /** Hidden cells the picture only suggests: never playable, never part of a goal. */
+  fog: boolean[];
+  /** Open cells whose number is not shown: safe, and saying nothing. */
+  unknown: boolean[];
+}
+
+function pictureFor(rows: readonly string[], open: boolean): Picture {
+  return { board: boardFromLayout(rows), open, ...pictureOf(rows, open) };
+}
+
+/** A number the picture shows (an open cell that is not a `?`). */
+const shown = (p: Picture, i: number) => p.board.cells[i].state === 'revealed' && !p.unknown[i];
+
+/** A hidden cell the player may play. */
+const playable = (p: Picture, i: number) => p.board.cells[i].state === 'hidden' && !p.fog[i];
+
+interface Arrangements {
+  sols: Array<Set<number>>;
+  /** The cells the enumeration decides about; any other hidden cell is unknown to it. */
+  free: Set<number>;
 }
 
 /**
- * Every set of mines consistent with the revealed numbers; flags are premises, hidden cells are free.
- * `withCount` also requires the total the mines counter announces. An OPEN window leaves out the cells no
- * number touches (they are drawn dotted and cannot be played): they are unknown, so they are never a mine
- * of any arrangement here and never forced. A depth-first search that prunes on every number, so a window
- * of thirty cells costs what its numbers allow, not 2^30.
+ * Every set of mines consistent with the shown numbers; flags are premises, hidden cells are free. `withCount`
+ * also requires the total the mines counter announces. An OPEN picture leaves out the hidden cells no
+ * (counted) number touches: they are unknown, never a mine of any arrangement here and never forced. `ignore`
+ * leaves numbers out, as if they were `?`. A depth-first search that prunes on every number, so a picture of
+ * thirty cells costs what its numbers allow, not 2^30.
  */
 function arrangements(
-  board: MinesweeperBoard,
+  p: Picture,
   withCount: boolean,
-  /** A revealed number to leave out of the constraints, as if the player had not opened it. */
-  ignore?: number,
-  open = false
-): Array<Set<number>> {
+  ignore: readonly number[] = []
+): Arrangements {
+  const { board } = p;
+  const ignored = new Set(ignore);
+  const speaks = (i: number) => shown(p, i) && !ignored.has(i);
   const free: number[] = [];
   const fixed = new Set<number>();
   board.cells.forEach((cell, i) => {
-    if (cell.state === 'hidden' && !(open && isFar(board, i))) free.push(i);
-    else if (cell.state === 'flagged') fixed.add(i);
+    if (cell.state === 'flagged') fixed.add(i);
+    else if (cell.state === 'hidden' && (!p.open || neighbours(board, i).some(speaks)))
+      free.push(i);
   });
   expect(free.length).toBeLessThanOrEqual(40);
   const slot = new Map(free.map((cell, k) => [cell, k]));
-  // One constraint per revealed number: the mines it still needs, and the free cells it can take them from.
+  // One constraint per shown number: the mines it still needs, and the free cells it can take them from.
   const need: number[] = [];
   const cells: number[][] = [];
   board.cells.forEach((cell, i) => {
-    if (cell.state !== 'revealed' || i === ignore) return;
+    if (!speaks(i)) return;
     const around = neighbours(board, i);
     need.push(cell.adjacent - around.filter((n) => fixed.has(n)).length);
     cells.push(around.flatMap((n) => (slot.has(n) ? [slot.get(n)!] : [])));
@@ -79,12 +106,12 @@ function arrangements(
   const left = cells.map((c) => c.length);
   const touching: number[][] = free.map(() => []);
   cells.forEach((c, k) => c.forEach((v) => touching[v].push(k)));
-  const out: Array<Set<number>> = [];
+  const sols: Array<Set<number>> = [];
   const chosen: boolean[] = [];
   const search = (k: number, mines: number) => {
     if (k === free.length) {
       if (need.every((n) => n === 0) && (!withCount || mines + fixed.size === board.mineCount))
-        out.push(new Set([...fixed, ...free.filter((_, v) => chosen[v])]));
+        sols.push(new Set([...fixed, ...free.filter((_, v) => chosen[v])]));
       return;
     }
     for (const mine of [false, true]) {
@@ -102,20 +129,24 @@ function arrangements(
     }
   };
   search(0, 0);
-  return out;
+  return { sols, free: new Set(free) };
 }
 
 const numeric = (a: number, b: number) => a - b;
 
-/** The hidden cells the numbers force: safe in every arrangement, and mines in every arrangement. */
-function forced(board: MinesweeperBoard, sols: Array<Set<number>>, open = false) {
-  const hidden = board.cells.flatMap((cell, i) =>
-    cell.state === 'hidden' && !(open && isFar(board, i)) ? [i] : []
-  );
+/** The playable cells the numbers force: safe in every arrangement, and mines in every arrangement. */
+function forced(p: Picture, { sols, free }: Arrangements) {
+  const cells = [...free].filter((i) => playable(p, i));
   return {
-    safe: hidden.filter((i) => sols.every((s) => !s.has(i))).sort(numeric),
-    mine: hidden.filter((i) => sols.every((s) => s.has(i))).sort(numeric),
+    safe: cells.filter((i) => sols.every((s) => !s.has(i))).sort(numeric),
+    mine: cells.filter((i) => sols.every((s) => s.has(i))).sort(numeric),
   };
+}
+
+/** The same picture inside a ring of fog: what it forces must not depend on where the picture ends. */
+function inFog(rows: readonly string[]): string[] {
+  const ring = '~'.repeat(rows[0].length + 2);
+  return [ring, ...rows.map((r) => `~${r}~`), ring];
 }
 
 /** Every lesson of the tutorial AND every entry of the pattern catalogue (its annex). */
@@ -143,25 +174,28 @@ describe('the lessons are well formed', () => {
 });
 
 describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', (id, lesson) => {
-  const board = boardFromLayout(lesson.rows);
-  // An open grid is a window: its counter reads "?", so the proof leaves the total out.
+  // An open picture is a window: its counter reads "?", so the proof leaves the total out.
   const open = lesson.open === true;
-  const withCount = arrangements(board, !open, undefined, open);
-  const withoutCount = arrangements(board, false, undefined, open);
-  const mineIn = (c: Coord) => withCount.map((s) => s.has(at(board, c)));
+  const p = pictureFor(lesson.rows, open);
+  const { board } = p;
+  const withCount = arrangements(p, !open);
+  const withoutCount = arrangements(p, false);
+  const mineIn = (c: Coord) => withCount.sols.map((s) => s.has(at(board, c)));
   const goalSafe = lesson.goal.reveal.map((c) => at(board, c)).sort(numeric);
   const goalMine = lesson.goal.flag.map((c) => at(board, c)).sort(numeric);
+  const goal = [...goalSafe, ...goalMine];
+  const read = [...new Set(lesson.hints.flatMap((step) => step.numbers.map((c) => at(board, c))))];
 
   it('is consistent: the picture is one of the arrangements its numbers and counter allow', () => {
-    // A far cell of an open window is unknown, so the picture's mines there are not part of the proof.
+    // A cell the proof does not decide about is unknown to it, so the picture's mines there are not part of it.
     const truth = new Set(
       board.cells.flatMap((cell, i) =>
-        cell.mine && !(open && cell.state === 'hidden' && isFar(board, i)) ? [i] : []
+        cell.mine && (cell.state === 'flagged' || withCount.free.has(i)) ? [i] : []
       )
     );
-    expect(withCount.some((s) => s.size === truth.size && [...truth].every((i) => s.has(i)))).toBe(
-      true
-    );
+    expect(
+      withCount.sols.some((s) => s.size === truth.size && [...truth].every((i) => s.has(i)))
+    ).toBe(true);
   });
 
   it('asks to open only cells that are safe in EVERY arrangement', () => {
@@ -172,24 +206,76 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
     for (const c of lesson.goal.flag) expect(mineIn(c).every(Boolean)).toBe(true);
   });
 
-  it('leaves no deduction unasked: the goal IS what the numbers and the counter force', () => {
-    const f = forced(board, withCount, open);
-    if (lesson.partial) {
-      // A catalogue window: the goal is what the PATTERN concludes, and it must be forced.
-      expect(f.safe).toEqual(expect.arrayContaining(goalSafe));
-      expect(f.mine).toEqual(expect.arrayContaining(goalMine));
-      expect(goalSafe.length + goalMine.length).toBeGreaterThan(0);
-    } else {
-      expect(f.safe).toEqual(goalSafe);
-      expect(f.mine).toEqual(goalMine);
+  it('asks exactly what the numbers force: nothing more, and nothing forced is left out', () => {
+    const f = forced(p, withCount);
+    expect(f.safe).toEqual(goalSafe);
+    expect(f.mine).toEqual(goalMine);
+    expect(goal.length).toBeGreaterThan(0);
+    for (const i of goal) expect(playable(p, i), `goal cell ${i}`).toBe(true);
+  });
+
+  it('shows its pattern and nothing else: every number that speaks about a hidden cell is read by a step', () => {
+    for (const [i, cell] of board.cells.entries()) {
+      // A number beside flags and open cells only says nothing about what is unknown.
+      if (!shown(p, i) || !neighbours(board, i).some((n) => board.cells[n].state === 'hidden'))
+        continue;
+      expect(read.includes(i), `number ${cell.adjacent} at ${i} is not read: draw it as ?`).toBe(
+        true
+      );
     }
   });
+
+  if (!COUNTER_LESSONS.has(id)) {
+    it('needs every number it reads: without any one of them, part of the goal is no longer forced', () => {
+      // Without the counter, which such a lesson does not need (see below): the numbers alone must not suffice.
+      for (const n of read) {
+        const f = forced(p, arrangements(p, false, [n]));
+        const still = [...f.safe, ...f.mine];
+        expect(
+          goal.every((i) => still.includes(i)),
+          `the number at ${n} is not needed`
+        ).toBe(false);
+      }
+    });
+  }
+
+  it('never opens the fog: a safe cell to open with no mine around it has no fog beside it', () => {
+    for (const i of goalSafe) {
+      if (board.cells[i].adjacent > 0) continue;
+      expect(
+        neighbours(board, i).some((n) => p.fog[n]),
+        `cell ${i} would flood the fog`
+      ).toBe(false);
+    }
+  });
+
+  if (open) {
+    it('keeps its pattern off the border: a number it reads is never on the edge of the picture', () => {
+      for (const i of read) {
+        const x = i % board.width;
+        const y = Math.floor(i / board.width);
+        expect(
+          x > 0 && y > 0 && x < board.width - 1 && y < board.height - 1,
+          `number at ${i}`
+        ).toBe(true);
+      }
+    });
+
+    it('does not lean on the edge of the board: a ring of fog around the picture changes nothing', () => {
+      const q = pictureFor(inFog(lesson.rows), true);
+      const f = forced(q, arrangements(q, false));
+      const shift = (i: number) =>
+        (Math.floor(i / board.width) + 1) * (board.width + 2) + (i % board.width) + 1;
+      expect(f.safe).toEqual(goalSafe.map(shift).sort(numeric));
+      expect(f.mine).toEqual(goalMine.map(shift).sort(numeric));
+    });
+  }
 
   if (lesson.corner) {
     const corner = lesson.corner;
     it('is OPEN: no number settles its own neighbours, so no board edge bypasses the pattern', () => {
       for (const [i, cell] of board.cells.entries()) {
-        if (cell.state !== 'revealed') continue;
+        if (!shown(p, i)) continue;
         const hidden = neighbours(board, i).filter((n) => board.cells[n].state !== 'revealed');
         if (hidden.length === 0) continue;
         // A 0 clears its neighbours, and a number equal to its hidden neighbours marks them all: either
@@ -202,13 +288,15 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
     });
 
     it('needs the corner number: the corner AND the ends of the arms are forced WITH it, and unknown WITHOUT it', () => {
-      const status = (sols: Array<Set<number>>, cellIndex: number) =>
-        sols.every((s) => s.has(cellIndex))
-          ? 'mine'
-          : sols.every((s) => !s.has(cellIndex))
-            ? 'safe'
-            : '?';
-      const without = arrangements(board, !open, at(board, corner.number), open);
+      const status = (r: Arrangements, i: number) =>
+        !r.free.has(i)
+          ? '?'
+          : r.sols.every((s) => s.has(i))
+            ? 'mine'
+            : r.sols.every((s) => !s.has(i))
+              ? 'safe'
+              : '?';
+      const without = arrangements(p, !open, [at(board, corner.number)]);
       for (const c of [corner.cell, ...corner.also]) {
         expect(status(withCount, at(board, c)), `with the number, ${c}`).not.toBe('?');
         expect(status(without, at(board, c)), `without the number, ${c}`).toBe('?');
@@ -218,25 +306,17 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
 
   if (COUNTER_LESSONS.has(id)) {
     it('NEEDS the counter: the numbers alone force strictly less', () => {
-      const f = forced(board, withoutCount, open);
-      if (lesson.partial) {
-        // Something the pattern concludes is out of the numbers' reach.
-        expect(
-          goalSafe.some((i) => !f.safe.includes(i)) || goalMine.some((i) => !f.mine.includes(i))
-        ).toBe(true);
-        return;
-      }
+      const f = forced(p, withoutCount);
       // Whatever they force is part of the goal, and something of the goal is out of their reach.
       expect(f.safe.every((i) => goalSafe.includes(i))).toBe(true);
       expect(f.mine.every((i) => goalMine.includes(i))).toBe(true);
-      expect(f.safe.length + f.mine.length).toBeLessThan(goalSafe.length + goalMine.length);
+      expect(f.safe.length + f.mine.length).toBeLessThan(goal.length);
     });
   } else {
     it('does not need the counter: it forces exactly the same without it', () => {
-      const f = forced(board, withoutCount, open);
-      const g = forced(board, withCount, open);
-      expect(f.safe).toEqual(g.safe);
-      expect(f.mine).toEqual(g.mine);
+      const f = forced(p, withoutCount);
+      expect(f.safe).toEqual(goalSafe);
+      expect(f.mine).toEqual(goalMine);
     });
   }
 });
@@ -256,14 +336,15 @@ describe('the guided lesson', () => {
 describe('the highlights say something true', () => {
   for (const lesson of ALL) {
     describe(`lesson ${lesson.id}`, () => {
-      const board = boardFromLayout(lesson.rows);
-      const sols = lesson.guide ? [] : arrangements(board, !lesson.open, undefined, lesson.open);
+      const p = pictureFor(lesson.rows, lesson.open === true);
+      const { board } = p;
+      const sols = lesson.guide ? [] : arrangements(p, !p.open).sols;
 
       lesson.hints.forEach((step, k) => {
         it(`step ${k + 1}: reads real numbers, outlines unopened cells in the grid, and every colour is proved`, () => {
           for (const c of step.numbers) {
             const cell = board.cells[at(board, c)];
-            expect(cell.state).toBe('revealed');
+            expect(shown(p, at(board, c)), `reads ${c}, which is not a shown number`).toBe(true);
             expect(cell.adjacent).toBeGreaterThan(0);
           }
           for (const mark of step.marks) {
@@ -279,6 +360,8 @@ describe('the highlights say something true', () => {
             const cells = markCells(mark);
             // A rectangle is outlined as ONE shape: it must not hide a cell that is open.
             for (const c of cells) expect(board.cells[at(board, c)].state).not.toBe('revealed');
+            // Fog is never outlined: the picture says nothing about it.
+            for (const c of cells) expect(p.fog[at(board, c)], `mark on fog ${c}`).toBe(false);
             // The mark's cells are never listed twice (two rectangles of a mark do not overlap).
             expect(new Set(cells.map((c) => at(board, c))).size).toBe(cells.length);
             if (lesson.guide) continue; // a gesture lesson has no deduction to prove
