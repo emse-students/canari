@@ -23,6 +23,8 @@
     jumbo?: boolean;
     /** True inside the sender's own (accent-filled) bubble: a mention then takes the bubble's colour. */
     onOwnBubble?: boolean;
+    /** See `MessageInlineText`'s `everyoneHonoured`. */
+    everyoneHonoured?: boolean;
   }
 
   let {
@@ -32,6 +34,7 @@
     firstLink,
     jumbo = false,
     onOwnBubble = false,
+    everyoneHonoured = true,
   }: Props = $props();
 
   // NOT folded here: `splitWithHighlight` folds both sides itself, because it also needs the
@@ -69,7 +72,7 @@
               ><EmojiText text={part.text} /></mark
             >
           {:else}
-            <MessageInlineText text={part.text} {onOwnBubble} />
+            <MessageInlineText text={part.text} {onOwnBubble} {everyoneHonoured} />
           {/if}
         {/each}
       {/if}

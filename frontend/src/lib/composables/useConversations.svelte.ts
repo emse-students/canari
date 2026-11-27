@@ -1071,6 +1071,7 @@ export function useConversations() {
             serverTimestamp: decoded.message.serverTimestamp,
             isOwn: decoded.message.isOwn,
             isSystem: decoded.message.isSystem,
+            ...(decoded.message.everyoneVouched ? { everyoneVouched: true } : {}),
           });
         }
         return { loaded, clientIdOf, edits, pollMetas };
