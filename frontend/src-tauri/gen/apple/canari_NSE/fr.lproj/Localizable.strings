@@ -84,6 +84,8 @@
 "notif.social.admin_profile_correction.body" = "Une personne demande une correction de son profil.";
 "notif.social.admin_report.title" = "Nouveau signalement";
 "notif.social.admin_report.body" = "Un contenu ou une personne a été signalé.";
+"notif.social.admin_alumni_duplicate.title" = "Doublon Alumni à rattacher";
+"notif.social.admin_alumni_duplicate.body" = "Un compte créé par Alumni ressemble à un compte existant.";
 "notif.social.booking_cancelled.title" = "%@ a annulé une réservation";
 "notif.social.booking_cancelled.body" = "Elle n'aura pas lieu";
 "notif.social.booking_withdrawn.title" = "%@ a quitté votre réservation";

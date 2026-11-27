@@ -7,18 +7,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { PATTERNS } from '$lib/minesweeper/tutorial/patterns';
+import { FLAG_PRIMARY_STORAGE_KEY } from '$lib/minesweeper/controls';
 import Page from './+page.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
 
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
+  // The gestures were chosen already: the first-time choice has its own test.
+  localStorage.setItem(FLAG_PRIMARY_STORAGE_KEY, '0');
   app = mount(Page, { target: document.body });
   flushSync();
 });
 afterEach(() => {
   if (app) unmount(app, { outro: false });
   app = null;
+  localStorage.clear();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });

@@ -63,12 +63,19 @@ describe('adminQueueCounts', () => {
 
   it('asks the one endpoint, and the Administration entry is the sum of the queues held', async () => {
     apiFetch.mockResolvedValueOnce(
-      answer(200, { counts: { agenda: 1, moderation: 3, 'profile-corrections': 2 } })
+      answer(200, {
+        counts: { agenda: 1, moderation: 3, 'profile-corrections': 2, 'alumni-duplicates': 1 },
+      })
     );
     await loadAdminQueueCounts();
     expect(apiFetch).toHaveBeenCalledWith('https://social.test/api/moderation/admin-queues');
-    expect(adminQueueCounts.counts).toEqual({ agenda: 1, moderation: 3, 'profile-corrections': 2 });
-    expect(adminQueueCounts.total).toBe(6);
+    expect(adminQueueCounts.counts).toEqual({
+      agenda: 1,
+      moderation: 3,
+      'profile-corrections': 2,
+      'alumni-duplicates': 1,
+    });
+    expect(adminQueueCounts.total).toBe(7);
   });
 
   it('a BDE moderator is counted its reports only: the sum is that one queue', async () => {
