@@ -72,7 +72,7 @@ import {
 import { GROUP_CREATION_NARRATION, REVOKED_SIGN_OUT_NARRATION, admissionMemberNarration, consoleLines, stripStamp } from '../watch.mjs';
 import { answerAsk, awaitAsk } from './grouplink.mjs';
 import { spawnSync } from 'node:child_process';
-import { HARNESS_ROOT } from '../scriptpath.mjs';
+import { requireScript } from '../scriptpath.mjs';
 import { hasKeyPackage } from '../devices.mjs';
 
 const MEMBER = 'W6';
@@ -133,7 +133,7 @@ async function replayCommit(cx, body) {
 
 /** Runs a rig atom (`login.mjs`, `pin.mjs`) for the subject seat in its own process; throws on failure. */
 function atom(script) {
-  const r = spawnSync(process.execPath, [`${HARNESS_ROOT}/${script}`, '--device', SUBJECT], { encoding: 'utf8', timeout: 240_000 });
+  const r = spawnSync(process.execPath, [requireScript(script), '--device', SUBJECT], { encoding: 'utf8', timeout: 240_000 });
   const tail = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split('\n').slice(-3).join(' | ');
   console.log(`[admitcard] ${script}: exit ${r.status} - ${tail.slice(0, 300)}`);
   if (r.status !== 0) throw new Error(`${script} --device ${SUBJECT} failed (exit ${r.status})`);
