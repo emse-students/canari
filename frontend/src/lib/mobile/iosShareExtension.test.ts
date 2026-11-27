@@ -531,18 +531,27 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     expect(swiftRules).toContain('id.hasPrefix("c:") && (3...200).contains(id.count)');
   });
 
-  it('takes a picked suggestion only for the account signed in, never another account senders', () => {
-    // The notification extension's donations may outlive a sign-out until its next run erases
-    // them (`settleMessageDonations`): the extension decides on ids, never on what the sheet showed.
-    expect(swiftRules).toContain(
-      'guard let me = signedInUserId, !me.isEmpty else { return .noAccountSignedIn }'
+  it('drops a picked suggestion only when nobody is signed in, and leaves WHICH one to the page', () => {
+    // The one refusal: no whole push context. Its body has exactly two outcomes, false for a
+    // missing or empty id, and nothing else can refuse.
+    const usable = capture(
+      swiftRules,
+      /static func suggestionUsable\(signedInUserId: String\?\) -> Bool \{([\s\S]*?)\n {4}\}/
     );
-    expect(swiftRules).toContain(
-      'if let owner = donationsOwner, !owner.isEmpty, owner != me { return .donationsOfAnotherAccount }'
+    expect(usable.match(/return /g)?.length).toBe(2);
+    expect(usable).toContain('guard let me = signedInUserId else { return false }');
+    expect(usable).toContain('return !me.isEmpty');
+    // The picked hint goes through it and nothing else: the new account's own suggestions are
+    // never refused on the notification donations' owner (a leftover sender of a previous
+    // account preselects nothing in the page instead - `suggestionIfHeld`, shareTargets.test.ts).
+    const picked = capture(
+      swiftController,
+      /private func suggestedTarget\(\) -> String\? \{([\s\S]*?)\n {4}\}\n/
     );
-    expect(swiftController).toMatch(
-      /ShareRules\.suggestionAccount\([\s\S]*?\)\s*switch verdict \{\s*case \.usable:\s*return target\s*case \.noAccountSignedIn:[\s\S]*?return nil\s*case \.donationsOfAnotherAccount:[\s\S]*?return nil\s*\}/
+    expect(picked).toMatch(
+      /guard ShareRules\.suggestionUsable\(signedInUserId: signedInUserId\(store\)\) else \{[\s\S]*?return nil\s*\}\s*return target\s*$/
     );
+    expect(swiftController).not.toContain('message_donations_owner');
     // The same proof of an account the notification extension reads: the context WHOLE.
     expect(swiftController).toContain('store.appendingPathComponent("push_context.json")');
     expect(swiftController).toContain('!baseUrl.isEmpty');

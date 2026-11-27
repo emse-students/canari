@@ -39,23 +39,13 @@ enum ShareRules {
         return nil
     }
 
-    /// Whether a picked suggestion may be taken as a hint, given the account signed in and the
-    /// account the notification extension's donations belong to (2026-11-27).
-    enum SuggestionAccount: Equatable {
-        case usable
-        /// No whole `push_context.json`: nobody is signed in to share to.
-        case noAccountSignedIn
-        /// The notification extension still holds another account's senders (its erase is owed to
-        /// its next run): a suggestion may be one of them, so none is trusted.
-        case donationsOfAnotherAccount
-    }
-
-    /// The decision, on ids alone - the same comparison the notification extension erases on
-    /// (`NotificationService.donationLedgerStep`).
-    static func suggestionAccount(signedInUserId: String?, donationsOwner: String?) -> SuggestionAccount {
-        guard let me = signedInUserId, !me.isEmpty else { return .noAccountSignedIn }
-        if let owner = donationsOwner, !owner.isEmpty, owner != me { return .donationsOfAnotherAccount }
-        return .usable
+    /// Whether a picked suggestion may be taken as a hint at all (2026-11-27): only while an account
+    /// is signed in. WHICH conversation it may preselect is the page's question
+    /// (`suggestionIfHeld`, against the signed-in account's list), so a leftover sender of a previous
+    /// account preselects nothing there, and the new account's own suggestions are never refused here.
+    static func suggestionUsable(signedInUserId: String?) -> Bool {
+        guard let me = signedInUserId else { return false }
+        return !me.isEmpty
     }
 }
 

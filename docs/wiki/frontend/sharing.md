@@ -349,15 +349,14 @@ and the picker still opens**. What differs is only what the platform holds.
   `target`. The app's import carries every manifest key through unchanged (a Rust test pins
   `target`), and from there the page is Android's: `conversationIdFromShareTarget`, then
   `suggestionIfHeld` against the signed-in account.
-- **And the extension takes a pick only for the account signed in now (2026-11-27).** The sheet
-  can still show another account's senders: the notification extension's donations outlive the
-  app's sign-out delete until that extension's next run erases them
-  ([mobile](mobile.md#communication-notifications-owner-2026-11-21), "the extension erases its
-  own"). So `ShareRules.suggestionAccount` compares two ids read from the App Group store - the
-  signed-in account in `push_context.json` (whole, as the notification extension reads it) and the
-  owner in `message_donations_owner` - and drops the hint, said at `notice`, when nobody is signed
-  in or the donations still name another account. Ids, never what the sheet showed; the share
-  itself is still captured, with no conversation preselected.
+- **A pick is a hint only while an account is signed in (2026-11-27).** `ShareRules.suggestionUsable`
+  drops it, said at `notice`, when `push_context.json` (whole, as the notification extension reads
+  it) names nobody. WHICH conversation it may preselect stays the page's question: the sheet can
+  still show a previous account's senders (the notification extension erases its donations on its
+  next run, [mobile](mobile.md#communication-notifications-owner-2026-11-21)), and such a pick
+  preselects nothing because `suggestionIfHeld` takes only a conversation the signed-in account
+  holds (`shareTargets.test.ts`). Refusing in the extension on the donations' owner would also have
+  dropped the new account's own suggestions until that run.
 - **Intents is linked by hand** in `project.pbxproj` into the app (where the plugin's static library
   donates) and `CanariShare` (which reads the picked intent). No capability, no entitlement and no
   portal step: Apple documents none for donating an interaction or declaring `IntentsSupported` in

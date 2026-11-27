@@ -253,6 +253,12 @@ describe('the extension erases its own donations once their account left (2026-1
     /static func settleMessageDonations\(then: @escaping \(\) -> Void\) \{([\s\S]*?)\n {2}\}\n/
   );
   const step = capture(nse, /static func donationLedgerStep\(([\s\S]*?)\n {2}\}\n/);
+  const record = capture(nse, /static func recordDonationsOwner\(([\s\S]*?)\n {2}\}\n/);
+  /** The erase's completion, from its first line to the end of the settle. */
+  const completion = capture(
+    settle,
+    /INInteraction\.delete\(with: messageNotificationsGroup\) \{ error in([\s\S]*)\}\s*$/
+  );
 
   it('settles the ledger before ANY run dispatches, so no run draws or donates first', () => {
     const receive = capture(nse, /override func didReceive\(([\s\S]*?)\n {2}\}\n/);
@@ -262,40 +268,85 @@ describe('the extension erases its own donations once their account left (2026-1
     expect(receive.match(/dispatch\(type:/g)?.length).toBe(1);
   });
 
-  it('decides on ids alone: erase only when an owner is recorded and is not the account signed in', () => {
-    expect(step).toContain('guard let owner = owner, !owner.isEmpty else { return .keep }');
-    expect(step).toContain('return owner == signedInUserId ? .keep : .erase');
-    expect(settle).toContain(
-      'donationLedgerStep(owner: owner, signedInUserId: signedInUserId()) == .erase'
+  it('decides on ids and the era marker alone: three answers, each from one fact', () => {
+    // No owner: kept in the ledger era, erased once before it (an install from 1.8.2 or older).
+    expect(step).toContain(
+      'guard let owner = owner, !owner.isEmpty else { return eraMarked ? .keep : .eraseUnnamed }'
     );
-  });
-
-  it('records the owner BEFORE donating, and donates nothing it could not record', () => {
-    const record = styleStep.indexOf('guard Self.recordDonationsOwner(donor) else {');
-    expect(record).toBeGreaterThan(-1);
-    expect(record).toBeLessThan(styleStep.indexOf('interaction.donate {'));
-    // A ledger still naming another account is never overwritten: its donations are not erased yet.
-    const recordOwner = capture(nse, /static func recordDonationsOwner\(([\s\S]*?)\n {2}\}\n/);
-    expect(recordOwner).toMatch(/if owner != nil \{[\s\S]*?ERROR[\s\S]*?return false\s*\}/);
-  });
-
-  it('deletes exactly its own group, keeps the ledger on a failure, and clears only what it erased', () => {
-    expect(settle).toContain('INInteraction.delete(with: messageNotificationsGroup)');
-    expect(settle).not.toContain('deleteAll');
+    expect(step).toContain('return owner == signedInUserId ? .keep : .eraseOwner(owner)');
     expect(settle).toMatch(
-      /if let error = error \{[\s\S]*?ERROR[\s\S]*?the ledger is kept[\s\S]*?\} else \{\s*if Self\.readDonationsOwner\(dir\) == erased \{\s*do \{\s*try FileManager\.default\.removeItem/
+      /donationLedgerStep\(\s*owner: readDonationsOwner\(dir\), signedInUserId: signedInUserId\(\),\s*eraMarked: FileManager\.default\.fileExists\(atPath: marker\.path\)\)/
     );
   });
 
-  it('holds the runs that arrive during an erase, and resumes them once it answered - no clock', () => {
-    expect(settle).toMatch(/if donationErasing \{\s*runsAwaitingErase\.append\(then\)/);
-    expect(settle).not.toMatch(/DispatchSemaphore|asyncAfter|\.wait\(/);
-    expect(settle.match(/then\(\)/g)?.length).toBe(3); // no store, nothing to erase, after the erase
+  it('records the owner BEFORE donating, and donates nothing the ledger cannot name', () => {
+    const at = styleStep.indexOf('let record = Self.recordDonationsOwner(donor)');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(styleStep.indexOf('interaction.donate {'));
+    expect(styleStep).toMatch(/guard record == \.recorded else \{[\s\S]*?finish\(\)\s*return\s*\}/);
+    // In this order: an erase in flight, the pre-ledger donations not erased yet, another account
+    // still named - none is overwritten - and only then a write.
+    const order = [
+      'if donationErasing { return .eraseInFlight }',
+      'return .unnamedNotErased',
+      'if owner == donor { return .recorded }',
+      'if owner != nil { return .anotherAccountNotErased }',
+      'return writeDonationsOwner(dir, donor) ? .recorded : .unwritable',
+    ].map((line) => record.indexOf(line));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('names the same ledger file the share extension reads', () => {
-    const file = capture(nse, /static let messageDonationsOwnerFile = "([^"]+)"/);
-    const share = read(resolve(APPLE, 'canari_Share/ShareViewController.swift'));
-    expect(share).toContain(`store.appendingPathComponent("${file}")`);
+  it('a run that meets an erase in flight proceeds at once and never waits on another run', () => {
+    expect(settle).toMatch(
+      /if donationErasing \{\s*donationLedgerLock\.unlock\(\)[\s\S]*?then\(\)\s*return\s*\}/
+    );
+    expect(nse).not.toContain('runsAwaitingErase');
+    expect(settle).not.toMatch(/DispatchSemaphore|asyncAfter|\.wait\(/);
+  });
+
+  it('resets the in-flight flag on success AND failure, before either branch, then resumes on a global queue', () => {
+    const reset = completion.indexOf('Self.donationErasing = false');
+    expect(reset).toBeGreaterThan(-1);
+    expect(reset).toBeLessThan(completion.indexOf('if let error = error {'));
+    expect(completion.match(/donationErasing = false/g)?.length).toBe(1);
+    expect(completion).toMatch(
+      /Self\.donationLedgerLock\.unlock\(\)\s*DispatchQueue\.global\(qos: \.userInitiated\)\.async\(execute: then\)\s*$/
+    );
+  });
+
+  it('deletes exactly its own group, and on success clears only what it erased or marks the era', () => {
+    expect(settle).not.toContain('deleteAll');
+    expect(completion).toMatch(
+      /case \.eraseOwner\(let erased\):\s*if Self\.readDonationsOwner\(dir\) == erased \{\s*do \{\s*try FileManager\.default\.removeItem/
+    );
+    expect(completion).toMatch(/case \.eraseUnnamed:[\s\S]*?createFile\(\s*atPath: marker\.path/);
+  });
+
+  it('a permanent erase failure says ONE error per push: the run that meets it donates silently', () => {
+    expect(completion.match(/NseLog\.log\.error\(/g)?.length).toBe(3); // failure, remove, marker
+    const failure = capture(completion, /if let error = error \{([\s\S]*?)\} else \{/);
+    expect(failure.match(/NseLog\.log\.error\(/g)?.length).toBe(1);
+    // The refusals that follow a failure are not errors again.
+    expect(record).not.toMatch(/NseLog\.log\.(error|warning)/);
+    expect(styleStep).toMatch(
+      /guard record == \.recorded else \{[\s\S]*?NseLog\.log\.debug\([\s\S]*?finish\(\)/
+    );
+  });
+
+  it('an overtaken donation it cannot withdraw is named again, for the next run to erase', () => {
+    expect(styleStep).toMatch(
+      /INInteraction\.delete\(with: \[donationId\]\) \{ error in\s*if let error = error \{[\s\S]*?let named = Self\.reassertDonationsOwner\(donor\)[\s\S]*?ERROR[\s\S]*?the next run erases it/
+    );
+    expect(nse).not.toContain("the app's erase owed on disk takes it");
+  });
+
+  it('names the ledger and the era marker as files of their own', () => {
+    expect(capture(nse, /static let messageDonationsOwnerFile = "([^"]+)"/)).toBe(
+      'message_donations_owner'
+    );
+    expect(capture(nse, /static let donationLedgerEraMarkerFile = "([^"]+)"/)).toBe(
+      'message_donations_ledger_era'
+    );
   });
 });
