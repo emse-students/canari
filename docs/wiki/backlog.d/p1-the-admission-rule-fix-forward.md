@@ -2,7 +2,9 @@
 
 target: 1.8.3
 
-_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped. Step 3's rig reading was TAKEN on 2026-11-26 on a built state
+([slice 2's reading](../protocols/admission-fix-forward.md#slice-2s-reading-on-a-built-state-2026-11-26));
+what is left is the floor and the two production readings, each behind its wait._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
@@ -76,8 +78,19 @@ stores.
    such a person, in a GROUP conversation, is raised as that card, only on a tree confirmed at the
    server's epoch (`askAMemberToAdmit`); a Decline sends the epoch of the confirmed tree they are
    absent from, and the server removes the seat under the seat lock only while the group is still at
-   that epoch (`removed`), else touches nothing (`epoch-moved`; `declineSeat`). **Owed:** one rig
-   reading on the pre-release that carries it (a member revokes their only device and enrols a new
-   one: the other member sees the card; Refuser removes the seat and the person's external commit is
-   refused; Accepter brings them back), then `minClientVersion` raised to that build once BOTH stores
-   serve it - what slice 3 waits on. *Size: the reading, then a store cycle.*
+   that epoch (`removed`), else touches nothing (`epoch-moved`; `declineSeat`).
+
+   **READ 2026-11-26 on dev (`1.8.2-alpha.9` clients), PASS on both halves**
+   ([slice 2's reading](../protocols/admission-fix-forward.md#slice-2s-reading-on-a-built-state-2026-11-26)):
+   S15's product-path attempts never reached the card, so the rig now BUILDS the state
+   (`archive/admitcard.mjs`, rows ADM-11 and ADM-12): the person's only device revoked from a new
+   session not yet unlocked, their leaf removed by a member's commit while the seat stands, then a new
+   device whose external commit a fault keeps from the server. The member showed the card in both
+   groups; Refuser removed the seat and the kept external commit, sent again, was refused
+   `403 NOT_A_MEMBER` (`committer_not_member`); Accepter brought the person back and their new device
+   read the next message. **Owed:** `minClientVersion` raised to a build carrying slice 2 once BOTH
+   stores serve it - what slice 3 waits on. Slice 2 first shipped in `v1.7.1` and the floor reads
+   `1.7.0` ([the floor rule](../legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24)),
+   so no new build is owed: the floor's next raise to the latest stable both stores serve closes this
+   step. That raise is a production setting, made as that rule says. *Size: one gesture, after the
+   store read.*

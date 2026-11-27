@@ -112,7 +112,9 @@ export const DEV_AUTHENTIK = { url: "<https://... dev's VITE_AUTHENTIK_URL>", cl
 // like W3, owner account like W3, and its CAS session paid once by a human like W3's.
 // W7 AND W8 ARE SECOND SEATS OF THE PEER AND THE THIRD ACCOUNT (1.4.1 campaign, BIG-1..3): every
 // account but the fourth then has more than one device in the large group.
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, W6: 9228, W7: 9229, W8: 9230, A2: 9335, I1: 9444 };
+// W9 IS THE FIFTH ACCOUNT'S ONLY SEAT (ADM-11, ADM-12): the row revokes every device of that account, so no
+// other row may rest on it.
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, W4: 9226, W5: 9227, W6: 9228, W7: 9229, W8: 9230, W9: 9231, A2: 9335, I1: 9444 };
 
 /**
  * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
@@ -151,7 +153,7 @@ export const UDID_OF = { I1: "<UDID of the iPhone>" };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, W6: SITE, W7: SITE, W8: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, W4: SITE, W5: SITE, W6: SITE, W7: SITE, W8: SITE, W9: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost", I1: "tauri://localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -174,6 +176,7 @@ export const ACCOUNT_OF = {
   W5: "<fourth key>",
   W7: "<peer key>",
   W8: "<third key>",
+  W9: "<fifth key>",
 };
 
 /**
