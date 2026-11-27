@@ -710,6 +710,8 @@ export function mergeOEmbedIntoPayload(
 }
 
 const GALLERY_HOST = 'gallery.mitv.fr';
+/** An Immich album id, exactly. */
+const GALLERY_ALBUM_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
 
 /**
@@ -780,6 +782,10 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   if (!match) return null;
 
   const albumId = match[1];
+  // Only an exact UUID (an Immich album id, which is all MiGallery ever names) is placed in the path
+  // sent with the key: the loose path pattern above also matches `---` or `abc`, and no string a
+  // message chose should decide which MiGallery route the key reaches.
+  if (!GALLERY_ALBUM_ID_RE.test(albumId)) return null;
   // NEVER THE ALBUM ID IN A LOG LINE: for an unlisted album the id IS the bearer link, and a log
   // is read by people the link was never sent to. The host and the outcome say all a reader needs.
   const galleryBaseUrl = (process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`).replace(

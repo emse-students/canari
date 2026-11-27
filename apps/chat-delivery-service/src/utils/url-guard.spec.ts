@@ -504,6 +504,8 @@ describe('MiGallery album cover', () => {
     it('leaves a URL that is not an album link to the page path, without a request', async () => {
       answerWith(200, { name: 'Gala' });
       expect(await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums`))).toBeNull();
+      // The path pattern is loose; only an exact UUID ever reaches MiGallery with the key.
+      expect(await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/abc-def`))).toBeNull();
       expect(await fetchMiGalleryPreview(new URL(`https://example.org/albums/${ID}`))).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
     });
