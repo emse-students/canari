@@ -11,6 +11,7 @@
     Images,
     Hash,
     Ellipsis,
+    Trash2,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -26,6 +27,7 @@
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import ProfileLink from '../shared/ProfileLink.svelte';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
   import { Log } from '$lib/utils/Log';
 
   interface Props {
@@ -68,6 +70,11 @@
     onGroupSetImage?: (mediaId: string) => void;
     /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
+    /**
+     * Deletes "Mes notes" (it asks first): the one control a self conversation offers in place of
+     * the settings it does not have.
+     */
+    onDeleteSelfConversation?: () => void;
     /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
     /** Callback to remove a specific member from the group. */
@@ -105,6 +112,7 @@
     onGroupRename,
     onGroupSetImage,
     onGroupDelete,
+    onDeleteSelfConversation,
     onGroupLeave,
     onGroupRemoveMember,
     onOpenSettings,
@@ -206,13 +214,21 @@
         active: searchActive,
       });
     }
-    // "Mes notes" has no settings to open: no peer to block or report, no one to name it for.
+    // "Mes notes" has no settings to open: no peer to block or report, no one to name it for. Its
+    // one action of that kind is its delete.
     if (!isSelfConversation) {
       items.push({
         id: 'settings',
         label: m.chat_settings_title(),
         icon: Settings,
         onSelect: () => onOpenSettings?.(),
+      });
+    } else if (onDeleteSelfConversation) {
+      items.push({
+        id: 'delete-self',
+        label: m.conversation_self_delete_label(),
+        icon: Trash2,
+        onSelect: onDeleteSelfConversation,
       });
     }
     return items;
@@ -544,6 +560,17 @@
       >
         <Settings size={20} strokeWidth={2.5} />
       </button>
+    {:else if onDeleteSelfConversation}
+      <Button
+        variant="ghost"
+        icon
+        onclick={onDeleteSelfConversation}
+        aria-label={m.conversation_self_delete_label()}
+        title={m.conversation_self_delete_label()}
+        data-self-conversation-delete
+      >
+        <Trash2 size={20} strokeWidth={2.5} />
+      </Button>
     {/if}
   </div>
 </header>

@@ -40,6 +40,15 @@ describe('deleteGroupAndBroadcast - the server failure', () => {
 
     await expect(deleteGroupAndBroadcast({ mlsService, ...args })).resolves.toBeUndefined();
   });
+
+  it('states the kind for "Mes notes", which the server deletes only when it is stated', async () => {
+    const mlsService = createMlsServiceStub({
+      deleteGroupOnServer: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await deleteGroupAndBroadcast({ mlsService, ...args, kind: 'self' });
+    expect(mlsService.deleteGroupOnServer).toHaveBeenCalledWith(G, 'self');
+  });
 });
 
 describe('leaveGroupAndBroadcast - the server failure', () => {

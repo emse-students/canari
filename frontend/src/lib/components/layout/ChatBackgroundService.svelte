@@ -7,6 +7,14 @@
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { drainNativePushLog } from '$lib/mobile/nativePushLog';
   import { resolve } from '$app/paths';
+  import {
+    confirmNotepadMoved,
+    notepadDoneMark,
+    readNotepadForMove,
+    runNotepadMigration,
+  } from '$lib/utils/chat/notepadMigration';
+  import { findSelfConversation } from '$lib/utils/chat/conversations';
+  import { getTabLeadership } from '$lib/mls-client/tabLeader';
   /**
    * Always-on layout component for the MLS session lifecycle.
    *
@@ -542,6 +550,50 @@
       restartOffered = false;
     }
   });
+  // THE NOTEPAD MOVES INTO "MES NOTES" (`notepadMigration.ts`): once per signed-in account whose
+  // conversations are all drawn, from the leader tab only (a follower neither creates nor posts on
+  // its own), and again when "Mes notes" itself appears here - the one fact a run waiting for it was
+  // waiting on. A run in flight is never doubled: the second trigger joins it.
+  //
+  // THE KEY, NOT THE MAP: iterating the conversations subscribes to EVERY row's change, so a run that
+  // ended owing the move (queued, waiting, unanswered) was started again - a notepad read, a key read
+  // and a decrypt - by every message landing anywhere. Derived to the self row's key, the effect
+  // re-runs only when "Mes notes" appears, goes or changes key.
+  let notepadRun: Promise<unknown> | null = null;
+  const selfConversationKey = $derived(
+    findSelfConversation(globalConvs.conversations)?.[0] ?? null
+  );
+  $effect(() => {
+    const accountId = globalSession.userId;
+    if (!globalSession.isLoggedIn || !accountId || !globalConvs.conversationSourcesSettled) return;
+    void selfConversationKey;
+    untrack(() => {
+      if (getTabLeadership() === 'follower' || notepadRun) return;
+      notepadRun = runNotepadMigration({
+        userId: accountId,
+        readNotepad: readNotepadForMove,
+        ensureSelfConversation: async () => {
+          const outcome = await globalConvs.openSelfConversation(convCtx(), { silent: true });
+          if (!outcome.ok) return { waiting: outcome.reason };
+          return outcome.key ? { key: outcome.key } : { waiting: 'no conversation key answered' };
+        },
+        heldAs: (messageId) => globalMessaging.heldAs(messageId, msgCtx()),
+        send: async (text, key, messageId) =>
+          (await globalMessaging.sendTextTo(text, key, msgCtx(), messageId)).outcome,
+        confirmMoved: confirmNotepadMoved,
+        doneMark: notepadDoneMark(accountId),
+        log: appendLog,
+      })
+        // Silent once the move is behind this account: that is every later session.
+        .then((outcome) => {
+          if (outcome !== 'done-before') appendLog(`[NOTEPAD] run ended: ${outcome}`);
+        })
+        .finally(() => {
+          notepadRun = null;
+        });
+    });
+  });
+
   // A NOTIFICATION NAMES A MEMBER BY THEIR NICKNAME IN THAT CONVERSATION (owner, 2026-11-14), and
   // the native push path reads it from the device's copy (`nicknameMirror.ts`): every register this
   // account stores is restated once per signed-in account, and every salon is placed in its

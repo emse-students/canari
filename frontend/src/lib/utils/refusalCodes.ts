@@ -82,6 +82,10 @@ export function revokedDeviceOfRefusal(body: unknown): RevokedDeviceIdentity | n
  * worded on purpose" from "forgotten".
  */
 export const TYPED_ELSEWHERE_CODES: readonly string[] = [
+  // The notepad's retirement into "Mes notes": read by its mover as answers (`notepadMigration.ts`),
+  // never shown to anyone.
+  'NOTEPAD_MOVED',
+  'NOTEPAD_CHANGED',
   'DEVICE_REVOKED',
   // An owner's revocation is a typed `DeviceRevokedByOwnerError` (delivery service) or
   // `SessionEndedByDeviceRevocationError` (a refused refresh), answered by signing out and wiping.

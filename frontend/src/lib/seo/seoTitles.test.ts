@@ -104,7 +104,7 @@ describe('a route group is not part of the URL', () => {
 
 describe('a profile section is named for what it holds', () => {
   it('resolves its own title and noindex, and an unknown segment keeps the generic one', () => {
-    const meta = resolveSeoForPath('/profile/me/notepad');
+    const meta = resolveSeoForPath('/profile/me/bio');
     expect(meta.title).not.toBe(SITE.defaultTitle);
     expect(meta.noindex).toBe(true);
     expect(resolveSeoForPath('/profile/me/nope').title).toBeTruthy();

@@ -57,6 +57,20 @@ describe('the pending group exits table', () => {
     expect(owed[0]).toEqual({ groupId: G1, kind: 'leave', requestedAt: 2 });
   });
 
+  it('reads the delete of "Mes notes" back, and leaves a verb it does not know unrun', async () => {
+    const storage = await open();
+    await storage.savePendingGroupExit({ groupId: G1, kind: 'delete-self', requestedAt: 1 });
+    // A later build's verb: kept on disk for a build that knows it, never run as something else.
+    await storage.savePendingGroupExit({
+      groupId: G2,
+      kind: 'archive' as unknown as 'delete',
+      requestedAt: 2,
+    });
+    expect(await storage.getPendingGroupExits()).toEqual([
+      { groupId: G1, kind: 'delete-self', requestedAt: 1 },
+    ]);
+  });
+
   it('returns the oldest decision first, so a backlog drains in the order it was made', async () => {
     const storage = await open();
     await storage.savePendingGroupExit({ groupId: G2, kind: 'leave', requestedAt: 200 });
