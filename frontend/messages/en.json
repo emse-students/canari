@@ -7405,5 +7405,11 @@
   "minesweeper_controls_action_flag": "flag",
   "minesweeper_controls_touch": "Short press: {short} · long press: {long}",
   "minesweeper_controls_mouse": "Left click: {short} · right click: {long}",
-  "minesweeper_controls_invert": "Swap"
+  "minesweeper_controls_invert": "Swap",
+  "mail_quote_attribution": "On {date}, {sender} wrote:",
+  "mail_forward_header": "---------- Forwarded message ----------",
+  "mail_forward_from": "From: {value}",
+  "mail_forward_date": "Date: {value}",
+  "mail_forward_subject": "Subject: {value}",
+  "mail_forward_to": "To: {value}"
 }

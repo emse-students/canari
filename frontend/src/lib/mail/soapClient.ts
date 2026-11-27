@@ -1,5 +1,5 @@
 import { Log } from '$lib/utils/Log';
-import { Http1Connection } from './http1';
+import { Http1Connection, type HttpRequest, type HttpResponse } from './http1';
 import type { PlaintextStream } from './tlsConnection';
 
 /**
@@ -102,10 +102,9 @@ export class ZimbraSoapClient {
   /** Calls Zimbra with `body` (`{ GetInfoRequest: {...} }`), resolving with the answer's `Body`. */
   async call(body: Record<string, unknown>, authToken?: string): Promise<Record<string, unknown>> {
     const request = Object.keys(body).join(',');
-    const connection = await this.usableConnection();
     const payload = new TextEncoder().encode(JSON.stringify(soapEnvelope(body, authToken)));
     Log.d('MAIL-SOAP', `${request} (${payload.length} bytes)`);
-    const response = await connection.request({
+    const response = await this.exchange({
       method: 'POST',
       path: SOAP_PATH,
       headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json' },
@@ -120,6 +119,16 @@ export class ZimbraSoapClient {
       else Log.w('MAIL-SOAP', `${request} unreadable`, err);
       throw err;
     }
+  }
+
+  /**
+   * One plain HTTP exchange on the SAME connection as the SOAP calls - the upload servlet and the
+   * attachment download are HTTP/1.1 on the same host, so they need no second client. Never re-sent,
+   * for the same reason as {@link call}.
+   */
+  async exchange(request: HttpRequest): Promise<HttpResponse> {
+    const connection = await this.usableConnection();
+    return connection.request(request);
   }
 
   /** Ends the connection, if one is open. */

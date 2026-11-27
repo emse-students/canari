@@ -7414,5 +7414,11 @@
   "minesweeper_controls_action_flag": "drapeau",
   "minesweeper_controls_touch": "Appui court : {short} · appui long : {long}",
   "minesweeper_controls_mouse": "Clic gauche : {short} · clic droit : {long}",
-  "minesweeper_controls_invert": "Inverser"
+  "minesweeper_controls_invert": "Inverser",
+  "mail_quote_attribution": "Le {date}, {sender} a écrit :",
+  "mail_forward_header": "---------- Message transféré ----------",
+  "mail_forward_from": "De : {value}",
+  "mail_forward_date": "Date : {value}",
+  "mail_forward_subject": "Objet : {value}",
+  "mail_forward_to": "À : {value}"
 }

@@ -372,3 +372,233 @@ and an HS256 token signed with that secret.
 - **Lot 3's "Activer le mail" button** (`startSchoolMailActivation`), for the accounts signed in
   before the stable.
 - The macOS runner's Homebrew LLVM path for the ring build is written but has not run in CI yet.
+
+## As built - lot 2
+
+Lot 2 is the Zimbra client on top of the pipe: a session, a typed API over every call the screens
+of lot 3 will make, and a small store. **Still nothing a user sees**: no route, no tab, no screen
+imports it. Every file is in `frontend/src/lib/mail/`.
+
+```
+  MailStore (mailStore.svelte.ts)       runes: folders, list, selection, inbox badge, D1
+      |
+  MailApi (mailApi.ts)                   folders, lists, read, actions, send, drafts, files, directory
+      |                                  builders: zimbraRequests.ts   parsers: zimbraParse.ts
+  MailSession (mailSession.ts)           the token, its renewal, D7 classification, D8
+      |            \
+      |             sealedMailPassword.ts (D6)   mailLocalData.ts (D8 allowlist)
+  ZimbraSoapClient (lot 1) - call() for SOAP, exchange() for the upload servlet and downloads
+```
+
+### The session (D6, D7, D8)
+
+`MailSession` holds the Zimbra token in its own memory and nowhere else. It is built with the SOAP
+client and a `MailContext` - the Canari account id, a getter for the session's device key, and
+`mailAddress()`, the account's OWN school address. It is wired in ONE place,
+`canariMailContext(userId, deviceKey)` (`mailContext.ts`), whose `mailAddress` is lot 1's
+`schoolMailAddress()` (`stores/auth.ts`); the session itself reaches into no session module.
+
+- **The sign-in asks ONLY the password** (owner, 2026-11-27): `signIn(password, remember)` takes the
+  address from `mailAddress()` - the `school_mail` claim MiConnect named at the Canari sign-in, kept
+  client-side by lot 1 - never from what a user typed. No address is `address_unknown`. **D1 comes from that same address**
+  (`MailSession.eligibility()`, `MailStore.loadEligibility()`): the tab's verdict before any mail
+  sign-in, not a relay refusal.
+- An address `mailClassOf` (lot 1's `eligibility.ts`, held to `libs/contracts/mail-domains.json`) gives no class is refused BEFORE a byte is sent (`not_eligible`); then `AuthRequest`, then `GetInfoRequest`, whose canonical
+  address is checked again (an alias may differ from what was typed - an ineligible one ends the new
+  session on the server and is refused). The renewal does the same before ANY byte: the remembered
+  entry's address must be `mailAddress()`'s, and eligible - one for another address is removed.
+- **A sign-out cannot be undone by an `await` in flight: the session EPOCH.** `signOut()`, a new
+  `signIn()` and the erasure of a closed account bump it; a sign-in or a renewal captures it and
+  re-checks it after every `await`. A token that comes back for an older epoch is ended on the server
+  (`EndSessionRequest`) and never installed, and the call throws `not_signed_in`. The remembered
+  write is gated too: `rememberMailPassword(..., stillWanted)` checks the epoch synchronously between
+  the seal and `setItem`, inside the storage gate, so a sign-out that ran while the write waited
+  behind a device-key change is not overwritten by it. Tested with the `AuthRequest` held, and with
+  the write held behind `holdStorageForKeyChange`.
+- A sign-in over a live session ends the session it replaces on the server. A password that cannot be
+  stored (no device key, a storage that throws) still ends `ready`, typed `remembered: false` - never
+  a session half open.
+- **Renewal is driven by the server's answer, never a clock.** The token lasts about two days
+  (measured) and the `lifetime` Zimbra sends is NOT read. A call answered `service.AUTH_EXPIRED` or
+  `service.AUTH_REQUIRED` renews the session from the remembered password and is sent ONCE more: a
+  fault is a refusal before the call ran, so the resend cannot do it twice (a connection lost
+  mid-call is still never re-sent - lot 1's rule). Calls that saw the same token end share ONE
+  renewal (a single promise; a call whose failure arrives after it finds the newer token and uses
+  it). A renewal the network failed keeps the old token, so the next call is refused again and
+  renews again - driven by that answer. A renewal that cannot succeed drops the token and the state
+  asks for the password, saying why (`PasswordAskReason`: not remembered, refused by the server,
+  unopenable under this device key, device locked, or `session_refused` - the server refused the
+  token the renewal had just issued). In `needs_password`, a call throws `session_expired` at once and
+  sends nothing: there is nothing to renew with. `resume()` goes through the same single renewal.
+- **A remembered password the server refuses is FORGOTTEN at once** (`account.AUTH_FAILED` or
+  `account.CHANGE_PASSWORD` at a renewal): a stale password replayed at every renewal would lock the
+  school account.
+- **Sign-out** drops the token and forgets the password before its first `await`, then sends
+  `EndSessionRequest`, then closes the connection.
+
+#### D6 - the remembered password, sealed under the device key
+
+`sealedMailPassword.ts` is the backup recovery code's model, reused rather than reinvented
+([auth](frontend/modules/auth.md#what-the-device-key-seals-and-what-a-pin-change-does-with-each)):
+
+- the seal is `sealBytes` (AES-256-GCM, fresh IV) under the session's device key - on a phone the
+  random key the hardware keystore holds, on the web and the desktop the PIN-derived key;
+- the plaintext is `{userId, account, password}`: it opens only for the Canari account that sealed
+  it, and a password is never tried against another mailbox;
+- an entry the device key cannot open (or this build did not write) is REMOVED, at a renewal and in
+  the re-seal of a key change: nothing will ever open it, and it is asked for again;
+- the entry is `localStorage` `ACCOUNT_KEY.mailSealedPassword(userId)` - ciphertext only, never the
+  password in the clear - written and read INSIDE the storage gate (`withDeviceKeyHeld`,
+  `liveDeviceKey`), so a key change running meanwhile either re-seals it or is already done;
+- every device key change re-seals it beside the stores (`moveRememberedMailPassword` in
+  `pinChange.ts`, at both call sites of `moveDeviceRecoveryCode`), idempotently, and NEVER fatally:
+  a password that could not move costs one password prompt, not a half-moved key change;
+- the account deletion sweeps it (`exactKeys` in `accountLocalKeys.ts`).
+
+Unticked, nothing is written and any earlier entry is removed: the token lives in memory only and
+the password is asked again when it lapses.
+
+**Offered everywhere, with no warning (owner, 2026-11-27, the review's I2).** The exposure: on the
+web and the desktop the device key is derived from the PIN, so a stolen `localStorage` lets the
+sealed password be guessed OFFLINE against the PIN; on a phone the key is the hardware keystore's.
+The owner keeps "remember the password" on phones, web and desktop alike, with no warning: the ENT
+sign-in itself requires a second factor, and this is no worse than a browser remembering the
+password or keeping a session cookie. Measured on Partage: `AuthRequest` accepts the password ALONE,
+no second factor - so on the web and the desktop the mailbox itself is protected by the PIN only.
+
+#### D7 - the typed errors
+
+`mailErrors.ts`: `classifyMailFailure` turns what a lower layer threw into ONE `MailError` by CLASS
+and CODE, at the one seam every call goes through. The screens switch on `kind`.
+
+| `kind` | From | What the session does |
+|---|---|---|
+| `bad_credentials` | `account.AUTH_FAILED` | at a renewal: forgets the remembered password, asks for it |
+| `password_change_required` | `account.CHANGE_PASSWORD` | the same |
+| `account_closed` | `account.NO_SUCH_ACCOUNT` answered to the session's OWN `AuthRequest` or `GetInfoRequest` (`FaultOrigin` `auth`) | D8 erasure, state `closed` |
+| `account_unavailable` | `account.ACCOUNT_INACTIVE` (Zimbra's code for a locked or pending account too) | drops the token, state `unavailable`, NOTHING erased; the next `resume()` tries again |
+| `maintenance` | `account.MAINTENANCE_MODE` | nothing: temporary, nothing erased |
+| `session_expired` | `service.AUTH_EXPIRED`, `service.AUTH_REQUIRED`, HTTP 401 on upload/download | one renewal, one resend; if that fails, asks for the password |
+| `not_found` | `mail.NO_SUCH_MSG` / `_CONV` / `_FOLDER` / `_ITEM` / `_PART` / `_UPLOAD`, `account.NO_SUCH_ACCOUNT` on any other call (it names ANOTHER account), HTTP 404 | - |
+| `invalid_query` | `mail.QUERY_PARSE_ERROR`; a reader query whose parentheses do not balance, refused before sending | - |
+| `not_sent` | lot 1's `HttpProtocolError` `not_sent`: the connection was spent before the request's turn | nothing; the request was never sent, so sending it again is safe, `SendMsg` included |
+| `incompatible` | lot 1's `MailTlsError` `incompatible`: a TLS this build cannot speak | nothing; permanent until an update |
+| `too_large` | `mail.MESSAGE_TOO_BIG`, `mail.UPLOAD_REJECTED`, HTTP or servlet 413 | - |
+| `quota_exceeded` | `mail.QUOTA_EXCEEDED` | - |
+| `address_unknown` | the account's identity carries no address | refused before sending |
+| `not_eligible` | an address `mailClassOf` gives no class (D1) | refused before sending |
+| `not_signed_in` | a call with no token | - |
+| `transport` | `MailTransportError`, `MailTlsError` (other kinds), `MailTlsLoadError`, `HttpProtocolError` (other kinds) | - |
+| `server` | any other fault code, an unreadable answer, an answer missing what the call is for | - |
+| `internal` | a throw no layer typed - logged as a defect | - |
+
+#### D8 - a closed account
+
+`account_closed` - `account.NO_SUCH_ACCOUNT` answered to the session's OWN `AuthRequest` or
+`GetInfoRequest`, and nothing else (the same code on another call names another account) - erases
+`mailLocalKeys(userId)` - an explicit allowlist, today the one sealed-password key, never a prefix -
+and nothing else on the device, then sets the state `closed`; `MailStore` empties itself on that
+state. `account.ACCOUNT_INACTIVE` is NOT a closure: it also covers a locked or pending account, so
+it erases nothing (`account_unavailable`).
+
+**The erase waits for a probe on Partage.** Which code Partage answers for a deleted account is not
+measured (no closed account was available). Zimbra may answer `account.AUTH_FAILED` to the
+`AuthRequest` of an account that no longer exists, so as not to say it existed: then a closed account
+looks like a refused password - the remembered password is forgotten and asked for, but the D8
+erasure of other mail data would not run. Today the allowlist holds only that password, so the
+outcome is the same; a lot that persists mail must settle it on Partage first. `resume()` leaves a closed
+mailbox closed: only a new sign-in reopens one. **A lot that persists mail adds its key to
+`mailLocalKeys`**, and `mailLocalData.test.ts` asserts the list.
+
+### The API (`mailApi.ts`)
+
+One or two calls through the session per method, returning the small types of `mailTypes.ts`
+(Zimbra's abbreviations are read in `zimbraParse.ts` only):
+
+- `folders()` - the tree under the root, mail views only, system roles by Zimbra's fixed ids (2
+  inbox, 3 trash, 4 junk, 5 sent, 6 drafts); `u` absent is 0 unread.
+- `conversations(...)` / `messages(...)` - `SearchRequest` newest first, paged by `offset`/`limit`,
+  `more` read; the folder is named by ID (`inid:"2"`, quoted by `quoteSearchValue`, never a
+  localised name) and the reader's query is ANDed in parentheses - refused as `invalid_query` when
+  its own parentheses do not balance outside quotes, so a `)` cannot close the folder's scope. A
+  screen that builds a term from text (`subject:...`) quotes it with `quoteSearchValue`.
+- `conversation(id)` (`GetConv`, `fetch: 'all'`, `html: 1`), `message(id)` (`GetMsg`, `html: 1`):
+  the defanged HTML (D9 still sandboxes it in lot 3), the text, attachments and inline images.
+- `act(target, op, ids, ...)` - ONE `MsgAction` / `ConvAction` for every id (bulk), ops `read`,
+  `unread`, `flag`, `unflag`, `move` (`l`), `trash`, `spam`, `not_spam`, `delete`. A conversation
+  action carries Zimbra's target constraint `tcon`: it leaves alone the messages in Trash, Junk,
+  Sent and Drafts unless that is the folder listed (the webmail's rule).
+- `send(...)` / `saveDraft(...)` - `multipart/alternative` when there is HTML, uploads by `aid`,
+  existing parts by `mid` + `part`, reply/forward by `origid` + `rt` + `irt`, the draft deleted on
+  send (`did`) or overwritten on save (`id`). Every `OutgoingMessage` carries its own `suid`
+  (`crypto.randomUUID()` when it is created), sent with `SendMsg`: Zimbra will not send one `suid`
+  twice, so a second press or a resend cannot send the message twice.
+- `upload(...)` / `download(...)` - plain HTTP on the SAME connection (`ZimbraSoapClient.exchange`,
+  added in this lot): `POST /service/upload?fmt=raw,extended` and
+  `GET /service/home/~/?auth=co&id=..&part=..`, both with the `ZM_AUTH_TOKEN` cookie. The filename
+  goes in `Content-Disposition` with every non-ASCII character, `"`, `&` and `\` as an HTML numeric entity
+  (the webmail's own encoding; measured to round-trip `é`).
+- `directory(text)` - `AutoCompleteRequest` with the school directory (`includeGal`).
+
+`mailCompose.ts` prefills reply, reply-all and forward: the recipients (Reply-To first, the
+original's recipients when the account sent it, never the account itself - its address AND its
+`zimbraMailAlias` aliases, read by `GetInfo` - no duplicates), `Re:` / `Fwd:` (not translated, as in
+every client; never doubled), the quote in text (`> `) and in HTML (`<blockquote type="cite">`), and
+every attachment of a forward by reference. The quoted HTML is ALWAYS rebuilt from the text,
+escaped - never the server's HTML, whose `dfsrc` remote images and markup would travel on under the
+account's name. The attribution line
+and the forwarded header are Paraglide strings (`mail_quote_attribution`, `mail_forward_*`).
+
+### The store (`mailStore.svelte.ts`)
+
+`MailStore` (Svelte 5 runes, memory only): the session state, the folder tree, the folder listed
+and its search, the conversations (every page loaded, de-duplicated across pages), `hasMore`,
+`loading`, the last typed `error`, the selection, and two derived values - `inboxUnread` (the D10
+badge) and `eligibility` (D1, from the address the session names: `unknown` / `eligible` /
+`not_eligible`). A list answer is applied only to the list it was asked for: every open bumps a
+generation and an older answer is dropped. `act()` sends ONE call for the selection; an answer that
+arrives after the list changed is not applied. A row leaving the folder or a flag is applied in
+place; `read` / `unread` re-read the listed rows from the server instead of guessing their counts.
+Then the folder counts reload - a reload failing after a reset is ignored, not shown. A sign-out or a closed account empties it.
+
+### Tests
+
+Vitest, with `FakeZimbra` (`frontend/src/test/mailFakes.ts`: a fake mailbox at the HTTP level over
+lot 1's `FakeStream`): every builder (`zimbraRequests.test.ts`) and parser (`zimbraParse.test.ts`),
+every fault to its kind (`mailErrors.test.ts`), the session - the renewal exactly once for three
+calls that saw the token end, the refused password forgotten, the network-failed renewal retried by
+the next answer, D8 erasing only its allowlist, maintenance erasing nothing, the sign-out order
+(`mailSession.test.ts`) - the API's bulk actions, upload and download with their renewal
+(`mailApi.test.ts`), the seal and its move by a key change (`sealedMailPassword.test.ts`), the
+allowlist (`mailLocalData.test.ts`), the composer (`mailCompose.test.ts`) and the store
+(`mailStore.svelte.test.ts`).
+
+#### The end-to-end test of lot 2
+
+`frontend/src/lib/mail/mailApi.e2e.test.ts`, SKIPPED unless `CANARI_MAIL_TEST_TOKEN_FILE` names a
+JSON file `{ "authToken", "account" }` - a session TOKEN of the test account, never a password,
+never committed. It reads `GetInfo`, `GetFolder`, a search restricted to
+`subject:"[test Canari]"`, and one search of 500 messages over the whole mailbox whose answer must
+exceed 64 KiB - of which only the count and the byte length are read (no real mail is read). With `CANARI_MAIL_TEST_SEND=1` it uploads a small
+attachment with a non-ASCII name, sends ONE mail to the account ITSELF (subject
+`[test Canari] ...`), reads it back and downloads the attachment. The transport is the relay when
+`CANARI_MAIL_E2E_RELAY` is set, otherwise a plain TCP socket from the test process to
+`partage.emse.fr:443` (the TLS is still the WASM's). Needs `bun run wasm:build`.
+
+**Run 2026-11-27, passed** (Windows workstation, direct socket): read-only in 5.5 s, then with the
+send in 4.1 s - the upload's entity-encoded filename, the send with HTML and an attachment, `GetMsg`
+of the sent copy and the attachment download all round-tripped. **Rerun 2026-11-27 on lot 1's
+fixes merged** (WASM rebuilt, direct socket, read-only): passed; the large search answered 500
+messages in 242,732 bytes (about 237 KiB), framed whole through the WASM TLS and lot 1's HTTP/1.1.
+
+### Still open after lot 2
+
+- **Archive** is a `move` to a folder the caller names: Zimbra has no system archive folder, and
+  which folder "Archiver" targets (an existing `Archives`, one created on first use) is a decision
+  for lot 3.
+- **A mail cache at rest** does not exist yet: everything but the sealed password is in memory. A
+  lot that adds one adds its key to `mailLocalKeys` (D8) and decides whether it is sealed under the
+  device key (and then re-sealed by a key change).
+- **The closed-account answer is not measured on Partage** (see D8): `account.NO_SUCH_ACCOUNT` to
+  the session's own sign-in is Zimbra's documented code, but Partage may answer `AUTH_FAILED`. A
+  lot that persists mail probes it before relying on the erasure.
