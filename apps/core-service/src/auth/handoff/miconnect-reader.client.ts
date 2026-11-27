@@ -90,8 +90,15 @@ export const CONSENT_FLOW_ALLOWLIST: ReadonlyMap<
  * THE ALUMNI GATE (D42-D43, 60-applications.yaml), recognised on these applications only, and only
  * in its exact shape: engine mode `any`, the policy {@link ALUMNI_GATE_POLICY} and the group
  * `acces-<application>`, both not negated, and nothing else bound. Answered by alumni-access.ts.
+ * The SAME list as the blueprint's gated applications: MinoWiki joined on 2026-11-27 (owner). It is
+ * in no handoff registry today, so the mint never asks about it; listing it keeps the allowlist equal
+ * to what MiConnect binds, for the day it is.
  */
-export const ALUMNI_GATED_APPLICATIONS: ReadonlySet<string> = new Set(['migallery', 'cercle']);
+export const ALUMNI_GATED_APPLICATIONS: ReadonlySet<string> = new Set([
+  'migallery',
+  'cercle',
+  'mino-wiki',
+]);
 export const ALUMNI_GATE_POLICY = 'miconnect-access-window-post-or-cotisant';
 
 /** The slug of the Alumni SAML source, whose user connection the link step asks about. */

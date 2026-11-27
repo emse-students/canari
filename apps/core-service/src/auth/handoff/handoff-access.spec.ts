@@ -480,6 +480,28 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       expect(verdict).toBe(admitted ? 'admitted' : HandoffAccessClass.alumniCotisantRequired);
     });
 
+    // MinoWiki carries the same gate since 2026-11-27 (60-applications.yaml): its shape is recognised,
+    // not refused policy_bound, and its own group admits.
+    it.each<[string, string[], boolean]>([
+      ['in no group', [], false],
+      ['in acces-mino-wiki', ['acces-mino-wiki'], true],
+      ['in acces-migallery only', ['acces-migallery'], false],
+    ])('on MinoWiki, promo 2020 %s, past the window', async (_label, groups, admitted) => {
+      const { access } = on(
+        {
+          ...OPEN_WORLD,
+          appBindings: { 'mino-wiki': gate('mino-wiki') },
+          users: person([2020], { groups }),
+        },
+        '2030-01-01'
+      );
+      const verdict = await access.assertMayEnter('user-a', 'mino-wiki').then(
+        () => 'admitted',
+        (e: unknown) => (e instanceof HandoffAccessRefused ? e.accessClass : String(e))
+      );
+      expect(verdict).toBe(admitted ? 'admitted' : HandoffAccessClass.alumniCotisantRequired);
+    });
+
     it.each<[string, Partial<World>, string]>([
       [
         'engine mode all',

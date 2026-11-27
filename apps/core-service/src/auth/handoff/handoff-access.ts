@@ -48,7 +48,7 @@ export const HandoffAccessClass = {
    */
   alumniLinkRequired: 'alumni_link_required',
   /**
-   * MiGallery or Le Cercle's Alumni gate (D42-D43) would refuse this person: past their free
+   * MiGallery, Le Cercle or MinoWiki's Alumni gate (D42-D43) would refuse this person: past their free
    * window, with no post, no cotisant read this year and no `acces-<app>` group (alumni-access.ts).
    */
   alumniCotisantRequired: 'alumni_cotisant_required',
@@ -109,7 +109,7 @@ export interface HandoffAccess {
  *     (`terms_not_accepted` when it is not the current text);
  *   - the Alumni link step on the same flow (D44): its reminder is skippable and never stops a
  *     mint; its block is answered by alumni-access.ts (`alumni_link_required`);
- *   - the Alumni gate of MiGallery and Le Cercle (D42-D43), answered by alumni-access.ts
+ *   - the Alumni gate of MiGallery, Le Cercle and MinoWiki (D42-D43), answered by alumni-access.ts
  *     (`alumni_cotisant_required`).
  * Each of those re-derives a rule MiConnect also applies, from ONE contract both run
  * (libs/contracts/alumni-access.json, and the consent version's five places). Copying any OTHER

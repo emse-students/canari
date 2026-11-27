@@ -25,14 +25,14 @@ What it proves, in order:
      POST are ignored for the server's; an IMPERSONATED session is neither shown nor written;
   6. every provider authorizing through this flow ends on a code once the terms are accepted;
   7. PRODUCTION: exactly the providers in BOUND name this flow (50-providers.yaml declares it: every
-     provider since the hold was lifted on 2026-11-20, nine with the Reseau console's), and
+     provider since the hold was lifted on 2026-11-20, eight since Archives MINO was retired), and
      production's provider shows the page to a person who never accepted, writing nothing until the
      tick;
   8. THE ALUMNI RULE (D42-D44), every case of libs/contracts/alumni-access.json - the table
      core-service's handoff gate runs too (apps/core-service/src/auth/handoff/alumni-access.spec.ts),
      so the two implementations cannot drift: the link page each person meets through the REAL
      authorization flow on that day ("today" is put in the plan as `miconnect_today`, never read
-     from the wall clock), and MiGallery's and Le Cercle's answer through authentik's own policy
+     from the wall clock), and MiGallery's, Le Cercle's and MinoWiki's answer through authentik's own policy
      engine; Sky stays unbound;
   9. the reminder links to the link flow with THIS authorization as `next`, is skippable and shows
      once per session (a new session meets it again); the blocking page shows at every
@@ -89,12 +89,12 @@ TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
 # The providers that ask for the terms (50-providers.yaml): every one since the hold of 2026-10-17 was
-# lifted on 2026-11-20 (nine since the Reseau console's, 2026-11-25). Holding one again is removing it
+# lifted on 2026-11-20 (eight since Archives MINO was retired, 2026-11-27). Holding one again is removing it
 # here and in that file, in one pull request.
-BOUND = {"miconnect-archives", "miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-reseau", "miconnect-sky"}
+BOUND = {"miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-reseau", "miconnect-sky"}
 PRODUCTION = "miconnect-canari"
 # What enrolment leaves on an account; the consent write must keep every key of it unchanged.
-# A post, so the cotisant gate of MiGallery and Le Cercle (60-applications.yaml) admits them in step 6; no
+# A post, so the cotisant gate of MiGallery, Le Cercle and MinoWiki (60-applications.yaml) admits them in step 6; no
 # cursus, so the Alumni link step never shows.
 PROFILE = {"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": ["EMSE"]}, "school_status": "Elève", "promo": 2024, "formation": "ICM"}
 PROMPT_KEYS =["cgu_notice", "cgu_accept", "attributes.cgu_version", "attributes.cgu_accepted_at"]
@@ -393,7 +393,7 @@ with Tenant.objects.get(ready=True):
             keys = list(fields(page))
             return (keys[0] if keys else page.get("component")), page, query
 
-        for slug in ("migallery", "cercle"):
+        for slug in ("migallery", "cercle", "mino-wiki"):
             check(Application.objects.get(slug=slug).policy_engine_mode == "any", f"{slug} admits on ANY binding")
         for case in ALUMNI_ACCESS["cases"]:
             today = date.fromisoformat(case["today"])
@@ -402,7 +402,7 @@ with Tenant.objects.get(ready=True):
             # session an earlier case was reminded in would read "none".
             shown, _, _ = met(today, new_session(student.username))
             check(pages.get(shown) == case["link"], f"{case['name']}: the link step is {case['link']} ({shown})")
-            for slug in ("migallery", "cercle"):
+            for slug in ("migallery", "cercle", "mino-wiki"):
                 student.groups.clear()
                 if case["accessGroup"]:
                     student.groups.add(Group.objects.get(name=f"acces-{slug}"))

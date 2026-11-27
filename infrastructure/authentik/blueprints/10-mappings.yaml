@@ -104,7 +104,7 @@ entries:
       name: "miconnect-claim-avatar"
     attrs:
       expression: |-
-        # The avatar URL MinoWiki and Archives receive: a per-person HMAC that MiGallery verifies
+        # The avatar URL MinoWiki receives: a per-person HMAC that MiGallery verifies
         # (src/lib/server/avatar-signature.ts), so no API key travels in claims. The key is the env var
         # MIGALLERY_AVATAR_SIGNING_KEY, the same value as MiGallery's AVATAR_SIGNING_KEY.
         import base64, hashlib, hmac, os

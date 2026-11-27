@@ -7,7 +7,7 @@
 # NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
 #
 # WHY THE AUTHORIZATION FLOW, and not the enrolment flow: a provider (Canari, Sky, MiGallery, Le
-# Cercle, the archives...) that names this flow asks for the terms whichever source signed the person
+# Cercle, the wiki...) that names this flow asks for the terms whichever source signed the person
 # in - the CAS and the Alumni source alike - for the accounts that already exist (enrolment runs once,
 # at the first sign-in) and for every future version of the text.
 #

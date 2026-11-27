@@ -1,4 +1,4 @@
-# The application each provider is attached to, its launch URL, and who may enter MiGallery and Le Cercle (D42-D43) and the Reseau console.
+# The application each provider is attached to, its launch URL, and who may enter MiGallery, Le Cercle and MinoWiki (D42-D43) and the Reseau console.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -9,13 +9,15 @@ metadata:
   labels:
     blueprints.goauthentik.io/instantiate: "false"
 entries:
+  # RETIRED (owner, 2026-11-27): Archives MINO (Omeka S). Its content now lives in MinoWiki. An entry
+  # merely removed from this file would leave the object in authentik, so it is deleted here; its
+  # provider goes in 50-providers.yaml, and its logout redirect, which MinoWiki shares, is renamed and
+  # pointed at the wiki in 40-authentication.yaml (docs/wiki/infrastructure/mino-access.md, "Archives
+  # MINO is retired"). Delete this entry once production has taken it.
   - model: authentik_core.application
+    state: absent
     identifiers:
       slug: "archives"
-    attrs:
-      name: "Archives MINO"
-      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-archives"]]
-      meta_launch_url: "https://archives.canari-emse.fr"
   - model: authentik_core.application
     identifiers:
       slug: "canari"
@@ -74,6 +76,8 @@ entries:
       slug: "mino-wiki"
     attrs:
       name: "MinoWiki"
+      # D43 (owner, 2026-11-27): any ONE binding admits (the policy, or the `acces-mino-wiki` group).
+      policy_engine_mode: "any"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-mino-wiki"]]
       meta_launch_url: "https://mino.emse.fr"
   - model: authentik_core.application
@@ -101,7 +105,8 @@ entries:
       name: "Sky"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-sky"]]
       meta_launch_url: "https://sky.emse.fr"
-  # THE COTISANT GATE (D42-D43, owner 2026-11-23), on MiGallery and Le Cercle only. A person enters
+  # THE COTISANT GATE (D42-D43, owner 2026-11-23), on MiGallery and Le Cercle, and on MinoWiki since
+  # 2026-11-27 (owner: the wiki is gated exactly like them, by the SAME policy). A person enters
   # when ANY of these holds:
   #   - the free window: one of their cursus has entry year P and today is on or before 31 August P+5;
   #   - a post (EMSE, ME or ALUMNI) - staff are not alumni and are not asked to be;
@@ -110,12 +115,12 @@ entries:
   #   - membership of the group `acces-<app>`: the nominative exception an admin grants.
   # This is the binding shape WP5 describes for every application (backlog.d/the-miconnect-profile-
   # reform-wp5-is-next.md, D15): expression policies plus a group `acces-<app>`, engine mode `any`.
-  # WP5 extends it to the others; it does not replace these two. `cotisant` reaches no application
+  # WP5 extends it to the others; it does not replace these three. `cotisant` reaches no application
   # in a claim (D43); core-service's handoff gate reads it through its read-only account, below.
   #
   # THE SIGN-IN HANDOFF ANSWERS THIS GATE ITSELF (lead, 2026-11-23): core-service's gate recognises
   # it in this EXACT shape (engine mode `any`, this policy and the group `acces-<app>`, nothing else
-  # bound, on these two applications) and re-evaluates the rule from what its read-only account
+  # bound, on these three applications) and re-evaluates the rule from what its read-only account
   # reads, refusing `alumni_cotisant_required`; Canari then opens the site through its MiConnect
   # sign-in, which applies this gate and tells the person why. Any other shape refuses
   # `policy_bound`. The window and the posts are ONE rule run by both sides: change them here and in
@@ -158,6 +163,9 @@ entries:
   - model: authentik_core.group
     identifiers:
       name: "acces-cercle"
+  - model: authentik_core.group
+    identifiers:
+      name: "acces-mino-wiki"
   - model: authentik_policies.policybinding
     identifiers:
       target: !Find [authentik_policies.policybindingmodel, [application__slug, "migallery"]]
@@ -177,6 +185,16 @@ entries:
     identifiers:
       target: !Find [authentik_policies.policybindingmodel, [application__slug, "cercle"]]
       group: !Find [authentik_core.group, [name, "acces-cercle"]]
+      order: 1
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "mino-wiki"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-access-window-post-or-cotisant"]]
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "mino-wiki"]]
+      group: !Find [authentik_core.group, [name, "acces-mino-wiki"]]
       order: 1
   # THE RESEAU CONSOLE (owner, 2026-11-25): the group alone admits. Its members are the population, not
   # the configuration: an authentik administrator adds them by hand, and no apply touches the list.

@@ -69,9 +69,12 @@ describe('the Alumni access rule', () => {
     it(`meets the link step ${c.link}`, () => {
       expect(alumniLinkStep(facts(c, 'migallery'), c.today)).toBe(c.link);
     });
-    it.each(['migallery', 'cercle'])(`is ${c.gate ? 'admitted' : 'refused'} by %s`, (app) => {
-      expect(alumniGateAdmits(facts(c, app), app, c.today)).toBe(c.gate);
-    });
+    it.each(['migallery', 'cercle', 'mino-wiki'])(
+      `is ${c.gate ? 'admitted' : 'refused'} by %s`,
+      (app) => {
+        expect(alumniGateAdmits(facts(c, app), app, c.today)).toBe(c.gate);
+      }
+    );
   });
 
   // A constant no case straddles could change on one side alone and every case would still pass.
