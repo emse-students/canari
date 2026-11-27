@@ -9,7 +9,7 @@ attribute and claim NAMES and SHAPES were read, never the values. Configuration 
 
 ```
   CAS EMSE (OIDC)  --\                              /--> Canari, Sky, MiGallery, Le Cercle,
-                      >-- MiConnect account -------<      MinoWiki, Archives MINO
+                      >-- MiConnect account -------<      MinoWiki, the Reseau console
   Alumnforce (SAML) --/   (username, name, e-mail,  \--> their own claims (below), never the
                            attributes.profile, ...)       raw source data
 ```

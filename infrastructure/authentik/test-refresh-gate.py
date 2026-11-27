@@ -2,7 +2,7 @@
 
 authentik 2026.8.6's `refresh_token` grant evaluates no application binding (`create_refresh_response`
 in providers/oauth2/views/token.py), so on a provider whose application carries bindings (the D43 gate
-and `acces-<app>` on MiGallery and Le Cercle) the refresh grant is CLOSED: no `refresh_token` grant
+and `acces-<app>` on MiGallery, Le Cercle and MinoWiki) the refresh grant is CLOSED: no `refresh_token` grant
 type, no `offline_access` scope mapping (docs/wiki/infrastructure/authentik.md, "The refresh grant is
 closed on gated providers").
 
@@ -13,7 +13,7 @@ control). It prints `REFRESH-GATE-OK` when every assertion held and raises other
 What it asserts:
   a. read from the instance, not from the files: every application with a policy binding (expired ones
      included) has an OAuth2 provider with no `refresh_token` grant type and no `offline_access` scope
-     mapping - and MiGallery and Le Cercle are among them, so the guard is never vacuous;
+     mapping - and MiGallery, Le Cercle and MinoWiki are among them, so the guard is never vacuous;
   b. a live probe on each such provider: a refresh token planted in the database (the shape one minted
      before the grant was closed would have) is refused `400 invalid_grant` at the token endpoint, and
      nothing is minted;
@@ -34,7 +34,7 @@ from authentik.providers.oauth2.id_token import IDToken
 from authentik.providers.oauth2.models import AccessToken, OAuth2Provider, RefreshToken, ScopeMapping
 
 USERNAME = "refresh-gate-probe"
-MUST_BE_GATED = {"migallery", "cercle"}
+MUST_BE_GATED = {"migallery", "cercle", "mino-wiki"}
 
 
 def refresh(provider, raw):

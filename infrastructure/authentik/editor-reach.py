@@ -26,7 +26,7 @@ THREE PARTS (docs/wiki/infrastructure/authentik.md, "The profile editor's one wr
      say: WHICH fields a PATCH changed (authentik records the diff only under its enterprise licence).
   4. THE REFRESH GRANT ON GATED PROVIDERS (1.8.1). authentik's `refresh_token` grant evaluates no
      application binding, so the provider of every application carrying a policy binding (the D43
-     gate on MiGallery and Le Cercle) offers no refresh: no `offline_access` scope mapping, and - once
+     gate on MiGallery, Le Cercle and, since 2026-11-27, MinoWiki) offers no refresh: no `offline_access` scope mapping, and - once
      the given `50-providers.yaml` (`PROVIDERS`, the same tree's) closes the D43 providers, i.e. from
      the stable that closed them - no `refresh_token` grant type. The read-only form of
      test-refresh-gate.py's check (a): docs/wiki/infrastructure/authentik.md, "The refresh grant is
@@ -193,6 +193,10 @@ print(f"{counted} write event(s) authored by the account examined", flush=True)
 # 4. THE REFRESH GRANT ON GATED PROVIDERS.
 # Whether the given providers blueprint closes the refresh grant on the D43 providers: the RELEASED file
 # before the stable that closed it still grants it, and production with it - not a finding until then.
+# NOT miconnect-mino-wiki, gated on 2026-11-27: this tuple only says WHETHER the released file is past
+# the 1.8.1 closure, and the released file before the stable that gates the wiki still grants it a
+# refresh, which would read as "not yet closed" and silence the check on these two until then. Once
+# gated, the wiki's provider is checked by the loop below like every application with a binding.
 D43_PROVIDERS = ("miconnect-migallery", "miconnect-cercle")
 declared = {}
 for entry in Importer.from_string(PROVIDERS).blueprint.iter_entries():  # noqa: F821 - prefixed

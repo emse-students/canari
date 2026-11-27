@@ -23,8 +23,9 @@
 # 403, which would read every person as unlinked), which the Alumni link step (D44, 45-consent.yaml)
 # asks. Canari mints only when the user is active, nothing is bound on the application, on either
 # flow or on a stage of them beyond the bindings it recognises by an allowlist (the terms, the Alumni
-# link step, the Alumni gate of MiGallery and Le Cercle - each answered from what this account reads,
-# apps/core-service/src/auth/handoff/), the authorization flow asks no more than an authenticated
+# link step, the Alumni gate of MiGallery and Le Cercle in its two-binding shape - MinoWiki adds a
+# roles policy, so it is not recognised, and it is in no handoff registry - each answered from what
+# this account reads, apps/core-service/src/auth/handoff/), the authorization flow asks no more than an authenticated
 # user, and the flag is true - and refuses otherwise.
 #
 # THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's

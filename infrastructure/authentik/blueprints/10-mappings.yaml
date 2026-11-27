@@ -104,7 +104,7 @@ entries:
       name: "miconnect-claim-avatar"
     attrs:
       expression: |-
-        # The avatar URL MinoWiki and Archives receive: a per-person HMAC that MiGallery verifies
+        # The avatar URL MinoWiki receives: a per-person HMAC that MiGallery verifies
         # (src/lib/server/avatar-signature.ts), so no API key travels in claims. The key is the env var
         # MIGALLERY_AVATAR_SIGNING_KEY, the same value as MiGallery's AVATAR_SIGNING_KEY.
         import base64, hashlib, hmac, os
@@ -139,8 +139,7 @@ entries:
     attrs:
       expression: |-
         # MinoWiki 3: the groups sent to the wiki (claim minoGroups). The wiki uses only the names it knows.
-        rel = getattr(request.user, "ak_groups", None) or request.user.groups
-        names = [g.name for g in rel.all()]
+        names = [g.name for g in request.user.groups.all()]
         out = [n for n in names if n.startswith("mino-")]
         st = (request.user.attributes.get("school_status") or "").strip().lower()
         if st.startswith(("eleve", "elève", "élève", "éleve")):
@@ -164,12 +163,11 @@ entries:
       name: "miconnect-claim-reseau-profile"
     attrs:
       expression: |-
-        rel = getattr(request.user, "ak_groups", None) or request.user.groups
         return {
             "name": request.user.name,
             "given_name": request.user.name,
             "preferred_username": request.user.username,
-            "groups": ["acces-reseau"] if rel.filter(name="acces-reseau").exists() else [],
+            "groups": ["acces-reseau"] if request.user.groups.filter(name="acces-reseau").exists() else [],
         }
       scope_name: "profile"
       description: "Gives the name, the username and the acces-reseau group only"
