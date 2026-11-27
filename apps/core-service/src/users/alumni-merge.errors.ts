@@ -16,6 +16,7 @@ export const ALUMNI_MERGE_CODES = {
   reasonRequired: 'ALUMNI_MERGE_REASON_REQUIRED',
   targetBusy: 'ALUMNI_MERGE_TARGET_BUSY',
   notMerged: 'ALUMNI_MERGE_NOT_MERGED',
+  dismissed: 'ALUMNI_MERGE_DISMISSED',
 } as const;
 
 /**
@@ -84,6 +85,23 @@ export class AlumniMergeInProgressError extends HttpException {
   constructor() {
     super(
       { code: ALUMNI_MERGE_CODES.inProgress, message: 'A merge of this account is already open.' },
+      HttpStatus.CONFLICT
+    );
+  }
+}
+
+/**
+ * The duplicate was answered "Pas un doublon" (`alumni_duplicate_flags.dismissedAt`): that answer is
+ * terminal, so a "Rattacher" that arrives after it - a stale page, a second admin - is refused rather
+ * than landing on an account the admins closed. Nothing was marked.
+ */
+export class AlumniMergeDismissedError extends HttpException {
+  constructor() {
+    super(
+      {
+        code: ALUMNI_MERGE_CODES.dismissed,
+        message: 'An admin answered "not a duplicate" for this account.',
+      },
       HttpStatus.CONFLICT
     );
   }

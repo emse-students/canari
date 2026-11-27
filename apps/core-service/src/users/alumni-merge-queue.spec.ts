@@ -1,0 +1,445 @@
+import { Logger } from '@nestjs/common';
+import axios from 'axios';
+import type { DataSource } from 'typeorm';
+import type { AccountErasureService } from '../account-erasure/account-erasure.service';
+import {
+  AlumniMergeService,
+  DROP_DUPLICATE_FLAG_SQL,
+  duplicateShapeRefusal,
+} from './alumni-merge.service';
+import type { AlumniMergeSiteJobsService } from './alumni-merge-site-jobs.service';
+import type { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
+import type { MiconnectEditorClient, MiconnectUserListing } from './miconnect-editor.client';
+
+jest.mock('axios');
+
+const DUP_UUID = '11111111-1111-4111-8111-111111111111';
+const TARGET_UUID = '22222222-2222-4222-8222-222222222222';
+
+const person = (over: Partial<MiconnectUserListing>): MiconnectUserListing => ({
+  pk: 1,
+  uuid: DUP_UUID,
+  username: 'alumni-0001',
+  name: 'Camille Durand',
+  type: 'internal',
+  email: 'camille@example.org',
+  is_active: true,
+  last_login: null,
+  uid: 'sub-1',
+  attributes: { profile: { cursus: [{ formation: 'ICM', promo: 2020 }] } },
+  ...over,
+});
+const DUP = person({});
+const TARGET = person({ pk: 2, uuid: TARGET_UUID, username: 'camille.durand' });
+
+/**
+ * What the Alumni duplicates' admin queue is TOLD by the merge service (the SQL of what is pending
+ * is proved in social-service's `bell-target-rows.integration.spec`): a duplicate found at the sign-in
+ * that creates its account, and the badges recounted when a merge of it is marked or cancelled.
+ */
+describe('AlumniMergeService and the admin queue', () => {
+  let queue: {
+    flag: jest.Mock;
+    changed: jest.Mock;
+    dismissedAmong: jest.Mock;
+    dismiss: jest.Mock;
+  };
+  let error: jest.SpyInstance;
+  const env = { ...process.env };
+
+  beforeEach(() => {
+    queue = {
+      flag: jest.fn(async () => undefined),
+      changed: jest.fn(async () => undefined),
+      dismissedAmong: jest.fn(async () => new Set<string>()),
+      dismiss: jest.fn(async () => undefined),
+    };
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    delete process.env.DEPLOY_BUILD;
+  });
+  afterEach(() => {
+    process.env = { ...env };
+    jest.restoreAllMocks();
+  });
+
+  function make(accounts: MiconnectUserListing[], query: jest.Mock = jest.fn(async () => [])) {
+    const editor = {
+      assertAvailable: jest.fn(),
+      userByUuid: jest.fn(
+        async (uuid: string) =>
+          accounts.find((a) => a.uuid.toLowerCase() === uuid.toLowerCase()) ?? null
+      ),
+      searchUsers: jest.fn(async (q: string) =>
+        accounts.filter(
+          (a) =>
+            a.username.toLowerCase().includes(q.toLowerCase()) ||
+            a.name.toLowerCase().includes(q.toLowerCase())
+        )
+      ),
+      // The Alumni-created account holds the Alumni link only; the others hold the CAS's.
+      sourceSlugsOf: jest.fn(async (pk: number) => {
+        const a = accounts.find((x) => x.pk === pk);
+        return a?.username.startsWith('alumni-') ? ['alumni'] : ['cas-emse'];
+      }),
+      writeUser: jest.fn(async () => undefined),
+    };
+    const service = new AlumniMergeService(
+      {
+        query,
+        transaction: async (cb: (m: { query: typeof query }) => unknown) => cb({ query }),
+      } as unknown as DataSource,
+      editor as unknown as MiconnectEditorClient,
+      {} as AccountErasureService,
+      {} as AlumniMergeSiteJobsService
+    );
+    Object.assign(service, { queue: queue as unknown as AlumniDuplicateQueue });
+    return { service, editor, query };
+  }
+
+  describe('a new Canari account (flagNewAccount)', () => {
+    it('flags an Alumni-created account that matches an existing one - the admins are told at its creation', async () => {
+      const { service } = make([DUP, TARGET]);
+      await service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).toHaveBeenCalledWith(DUP_UUID);
+    });
+
+    it('flags a duplicate with SEVERAL candidates (homonyms): a merge by hand is its action (D55), nothing is merged by itself', async () => {
+      const homonym = person({
+        pk: 3,
+        uuid: '44444444-4444-4444-8444-444444444444',
+        username: 'camille.durand2',
+      });
+      await make([DUP, TARGET, homonym]).service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).toHaveBeenCalledWith(DUP_UUID);
+    });
+
+    it('NEVER flags an alumnus no eligible CAS account matches: it is not a duplicate (the lead reading of D55)', async () => {
+      await make([DUP]).service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).not.toHaveBeenCalled();
+    });
+
+    it('a candidate that holds an Alumni link, is inactive, a superuser or named by an open merge is no candidate', async () => {
+      const linked = make([DUP, TARGET]);
+      linked.editor.sourceSlugsOf.mockImplementation(async (pk: number) =>
+        pk === 1 ? ['alumni'] : ['cas-emse', 'alumni']
+      );
+      await linked.service.flagNewAccount(DUP_UUID);
+      await make([DUP, { ...TARGET, is_active: false }]).service.flagNewAccount(DUP_UUID);
+      await make([DUP, { ...TARGET, is_superuser: true }]).service.flagNewAccount(DUP_UUID);
+      const open = jest.fn(async (sql: string) =>
+        sql.includes('FROM alumni_merges')
+          ? [{ id: 'r', duplicateUuid: 'other', targetUuid: TARGET_UUID, requestedAt: new Date() }]
+          : []
+      );
+      await make([DUP, TARGET], open).service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).not.toHaveBeenCalled();
+    });
+
+    it('stops reading candidates at the first eligible one, and reads at most TARGET_SEARCH_MAX', async () => {
+      const many = Array.from({ length: 40 }, (_, i) =>
+        person({ pk: 10 + i, uuid: `5555555${i}-5555-4555-8555-555555555555`, username: `x.${i}` })
+      );
+      const { service, editor } = make([DUP, ...many]);
+      editor.sourceSlugsOf.mockImplementation(async (pk: number) =>
+        pk === 1 ? ['alumni'] : ['alumni']
+      );
+      await service.flagNewAccount(DUP_UUID);
+      // 1 for the duplicate's own links, then at most 25 candidates, none eligible.
+      expect(editor.sourceSlugsOf).toHaveBeenCalledTimes(1 + 25);
+      expect(queue.flag).not.toHaveBeenCalled();
+    });
+
+    it('never flags a duplicate whose links are not exactly [alumni]', async () => {
+      const { service, editor } = make([DUP, TARGET]);
+      editor.sourceSlugsOf.mockImplementation(async () => ['alumni', 'cas-emse']);
+      await service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).not.toHaveBeenCalled();
+    });
+
+    it('flags nothing for an account no Alumni sign-in created, and reads no links', async () => {
+      const { service, editor } = make([TARGET]);
+      await service.flagNewAccount(TARGET_UUID);
+      expect(queue.flag).not.toHaveBeenCalled();
+      expect(editor.sourceSlugsOf).not.toHaveBeenCalled();
+    });
+
+    it('reads nothing on the dev estate, which shares production MiConnect and tells production nothing', async () => {
+      process.env.DEPLOY_BUILD = 'dev-build';
+      const { service, editor } = make([DUP, TARGET]);
+      await service.flagNewAccount(DUP_UUID);
+      expect(editor.userByUuid).not.toHaveBeenCalled();
+      expect(queue.flag).not.toHaveBeenCalled();
+    });
+
+    it('never throws: a failed read is said at error, the page reading finds the duplicate later', async () => {
+      const { service, editor } = make([DUP, TARGET]);
+      editor.userByUuid.mockRejectedValueOnce(new Error('authentik down'));
+      await expect(service.flagNewAccount(DUP_UUID)).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT checked for a duplicate'));
+    });
+  });
+
+  it('the flag is dropped by ONE statement keyed on the closed duplicate, never on a row that may be erased', () => {
+    expect(DROP_DUPLICATE_FLAG_SQL).toContain('DELETE FROM alumni_duplicate_flags');
+    expect(DROP_DUPLICATE_FLAG_SQL).not.toContain('alumni_merges');
+    expect(DROP_DUPLICATE_FLAG_SQL.match(/;/g)).toBeNull();
+  });
+
+  describe('the one rule of what an admin can act on (duplicateShapeRefusal)', () => {
+    it('accepts a person created by an Alumni sign-in whose links are exactly [alumni]', () => {
+      expect(duplicateShapeRefusal(DUP, ['alumni'])).toBeNull();
+    });
+    it.each([
+      ['links beyond alumni', DUP, ['alumni', 'cas-emse'], 'not [alumni]'],
+      ['no link', DUP, [], 'not [alumni]'],
+      ['an account no Alumni sign-in created', TARGET, ['alumni'], 'not created by an Alumni'],
+      [
+        'a service account',
+        person({ type: 'service_account' }),
+        ['alumni'],
+        'not created by an Alumni',
+      ],
+    ])('refuses %s', (_name, user, slugs, reason) => {
+      expect(duplicateShapeRefusal(user, slugs)).toContain(reason);
+    });
+  });
+
+  describe('what the admin page lists is what the queue holds (listDuplicates)', () => {
+    const homonym = person({
+      pk: 3,
+      uuid: '44444444-4444-4444-8444-444444444444',
+      username: 'camille.durand2',
+    });
+    const lonely = person({
+      pk: 4,
+      uuid: '66666666-6666-4666-8666-666666666666',
+      username: 'alumni-0002',
+      name: 'Zoe Nobody',
+    });
+    const read = async (accounts: MiconnectUserListing[]) => {
+      const { duplicates, flaggable } = await make(accounts).service.listDuplicates();
+      return { listed: duplicates.map((d) => d.duplicate.uuid), flaggable };
+    };
+
+    it('lists an Alumni account nobody matches (to attach by hand) but FLAGS only the one with a candidate - homonyms included', async () => {
+      expect(await read([DUP, TARGET, homonym, lonely])).toEqual({
+        listed: [DUP_UUID, lonely.uuid],
+        flaggable: [DUP_UUID],
+      });
+    });
+
+    it('searches MiConnect ONCE by the duplicate name: the candidate check and the matches share it', async () => {
+      const { service, editor } = make([DUP, TARGET]);
+      await service.listDuplicates();
+      const byName = editor.searchUsers.mock.calls.filter(([q]: [string]) => q === DUP.name);
+      expect(byName).toHaveLength(1);
+    });
+
+    it('does not list a duplicate an admin answered "Pas un doublon" for', async () => {
+      queue.dismissedAmong.mockResolvedValue(new Set([DUP_UUID]));
+      expect(await read([DUP, TARGET])).toEqual({ listed: [], flaggable: [] });
+    });
+
+    it('does not list an account whose links are not exactly [alumni]', async () => {
+      const { service, editor } = make([DUP, TARGET]);
+      editor.sourceSlugsOf.mockImplementation(async (pk: number) =>
+        pk === 1 ? ['alumni', 'cas-emse'] : ['cas-emse']
+      );
+      expect(await service.listDuplicates()).toEqual({ duplicates: [], flaggable: [] });
+    });
+  });
+
+  describe('"Pas un doublon" (dismiss) refuses what it must not hide', () => {
+    it('dismisses an Alumni-shaped duplicate no merge names', async () => {
+      await make([DUP, TARGET]).service.dismiss(DUP_UUID);
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.anything());
+    });
+
+    it('keys its lock and its reads on the uuid MiConnect answers, so an uppercase route parameter cannot get past the lock a mark takes', async () => {
+      const query = jest.fn(async () => []);
+      await make([DUP, TARGET], query).service.dismiss(DUP_UUID.toUpperCase());
+      const calls = query.mock.calls as unknown as [string, unknown[]][];
+      expect(calls[0][1]).toEqual([`alumni-merge-duplicate:${DUP_UUID}`]);
+      expect(calls[1][1]).toEqual([DUP_UUID]);
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.anything());
+    });
+
+    it('refuses (409, in progress) a duplicate an OPEN merge names, and (409, already merged) one a COMPLETED merge names - writing nothing', async () => {
+      const rowsOf = (completedAt: Date | null) =>
+        jest.fn(async (sql: string) =>
+          sql.includes('SELECT "completedAt" FROM alumni_merges') ? [{ completedAt }] : []
+        );
+      await expect(
+        make([DUP, TARGET], rowsOf(null)).service.dismiss(DUP_UUID)
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_IN_PROGRESS' } });
+      await expect(
+        make([DUP, TARGET], rowsOf(new Date())).service.dismiss(DUP_UUID)
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_ALREADY_MERGED' } });
+      expect(queue.dismiss).not.toHaveBeenCalled();
+      expect(queue.changed).not.toHaveBeenCalled();
+    });
+
+    it('the check and the write are ONE step: under the duplicate advisory lock, the one a mark takes, and on the same transaction', async () => {
+      const query = jest.fn(async () => []);
+      await make([DUP, TARGET], query).service.dismiss(DUP_UUID);
+      const sqls = query.mock.calls.map((c) => String((c as unknown[])[0]));
+      expect(sqls[0]).toContain('pg_advisory_xact_lock');
+      expect((query.mock.calls[0] as unknown[])[1]).toEqual([`alumni-merge-duplicate:${DUP_UUID}`]);
+      expect(sqls[1]).toContain('FROM alumni_merges');
+      // The write joins the transaction (its manager is passed), the badges follow the commit.
+      expect(queue.dismiss).toHaveBeenCalledWith(DUP_UUID, expect.objectContaining({ query }));
+      expect(queue.changed).toHaveBeenCalledTimes(1);
+    });
+
+    it('a mark REFUSES (409, dismissed) a duplicate the admins answered "Pas un doublon" for, inside the lock, writing nothing', async () => {
+      const query = jest.fn(async (sql: string) =>
+        sql.includes('FROM alumni_duplicate_flags') && sql.includes('"dismissedAt" IS NOT NULL')
+          ? [{}]
+          : []
+      );
+      const { service } = make([DUP, TARGET], query);
+      await expect(
+        (service as unknown as { openMerge: (t: string, m: unknown) => Promise<string> }).openMerge(
+          't',
+          {
+            actorId: 'a',
+            dup: DUP,
+            target: TARGET,
+            targetUserId: null,
+            held: {},
+            mode: 'auto',
+            reason: null,
+          }
+        )
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_DISMISSED' } });
+      const sqls = query.mock.calls.map((c) => String((c as unknown[])[0]));
+      expect(sqls.some((q) => q.includes('INSERT INTO alumni_merges'))).toBe(false);
+      // Read AFTER the duplicate lock, which a dismissal takes too.
+      const lock = sqls.findIndex((q) => q.includes('pg_advisory_xact_lock'));
+      expect(sqls.findIndex((q) => q.includes('"dismissedAt" IS NOT NULL'))).toBeGreaterThan(lock);
+    });
+
+    it('a mark takes the SAME advisory lock before it writes its row', async () => {
+      const query = jest.fn(async (sql: string) =>
+        sql.includes('INSERT INTO alumni_merges') ? [{ id: 'row-1' }] : []
+      );
+      const { service } = make([DUP, TARGET], query);
+      await (
+        service as unknown as { openMerge: (t: string, m: unknown) => Promise<string> }
+      ).openMerge('t', {
+        actorId: 'a',
+        dup: DUP,
+        target: TARGET,
+        targetUserId: null,
+        held: {},
+        mode: 'auto',
+        reason: null,
+      });
+      const calls = query.mock.calls.map((c) => [String((c as unknown[])[0]), (c as unknown[])[1]]);
+      const lock = calls.findIndex(
+        ([, p]) => Array.isArray(p) && p[0] === `alumni-merge-duplicate:${DUP_UUID}`
+      );
+      const insert = calls.findIndex(([sql]) => String(sql).includes('INSERT INTO alumni_merges'));
+      expect(lock).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeLessThan(insert);
+    });
+
+    it('refuses (404) an account MiConnect does not have, and (409) one that is not duplicate-shaped', async () => {
+      await expect(make([TARGET]).service.dismiss(DUP_UUID)).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'ALUMNI_MERGE_NOT_FOUND' },
+      });
+      await expect(make([TARGET]).service.dismiss(TARGET_UUID)).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'ALUMNI_MERGE_NOT_DUPLICATE' },
+      });
+      expect(queue.dismiss).not.toHaveBeenCalled();
+    });
+  });
+
+  it('the manual search and the queue read ONE rule of an eligible target: an open merge names the target for the queue, but frees it for its own duplicate', async () => {
+    const open = jest.fn(async (sql: string) =>
+      sql.includes('FROM alumni_merges')
+        ? [
+            {
+              id: 'r',
+              duplicateUuid: DUP_UUID,
+              targetUuid: TARGET_UUID,
+              requestedAt: new Date(),
+            },
+          ]
+        : []
+    );
+    const { service } = make([DUP, TARGET], open);
+    // The duplicate's OWN open merge keeps its target a candidate of that very duplicate...
+    expect((await service.eligibleTargets(DUP_UUID, 'Camille')).map((a) => a.uuid)).toEqual([
+      TARGET_UUID,
+    ]);
+    // ...while another duplicate may not take it.
+    const other = person({
+      pk: 9,
+      uuid: '99999999-9999-4999-8999-999999999999',
+      username: 'alumni-0009',
+    });
+    const busy = make([DUP, other, TARGET], open);
+    expect((await busy.service.eligibleTargets(other.uuid, 'Camille')).map((a) => a.uuid)).toEqual(
+      []
+    );
+  });
+
+  it('a mark that fails half-way still recounts the admins (the requested row keeps the item pending)', async () => {
+    let inserted = false;
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes('INSERT INTO alumni_merges')) {
+        inserted = true;
+        return [{ id: 'row-1' }];
+      }
+      if (sql.includes('FROM alumni_merges') && inserted) {
+        return [
+          {
+            id: 'row-1',
+            duplicateUuid: DUP_UUID,
+            duplicateUsername: 'alumni-0001',
+            targetUuid: TARGET_UUID,
+            held: {},
+            requestedAt: new Date(),
+            markedAt: null,
+          },
+        ];
+      }
+      return [];
+    });
+    const { service, editor } = make([DUP, TARGET], query);
+    (axios.get as jest.Mock).mockResolvedValue({
+      data: {
+        personalPosts: 0,
+        associations: 0,
+        communities: 0,
+        formSubmissions: 0,
+        conversations: 0,
+      },
+    });
+    editor.writeUser.mockRejectedValueOnce(new Error('authentik down'));
+    await expect(service.merge(DUP_UUID, TARGET_UUID, 'admin-1')).rejects.toThrow('authentik down');
+    expect(editor.writeUser).toHaveBeenCalledTimes(1);
+    expect(queue.changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelling a mark recounts the admins: the duplicate waits again', async () => {
+    const open = {
+      id: 'row-1',
+      duplicateUuid: DUP_UUID,
+      duplicateUsername: 'alumni-0001',
+      targetUuid: TARGET_UUID,
+      held: {},
+      requestedAt: new Date(),
+      markedAt: new Date(),
+    };
+    const query = jest.fn(async (sql: string) => (sql.includes('SELECT id') ? [open] : []));
+    const { service } = make([DUP, TARGET], query);
+    await service.cancel(DUP_UUID, 'admin-1');
+    expect(queue.changed).toHaveBeenCalledTimes(1);
+  });
+});

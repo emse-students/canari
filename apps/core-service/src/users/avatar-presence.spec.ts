@@ -43,7 +43,8 @@ describe('avatar presence', () => {
       {} as ProfileCorrectionService,
       {} as AccountErasureService,
       {} as never, // AuthSessionsService: no admin flag route here
-      {} as AlumniMergeService
+      {} as AlumniMergeService,
+      {} as never // AlumniDuplicateQueue: the duplicates route is not under test
     );
   }
 

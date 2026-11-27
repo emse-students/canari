@@ -99,12 +99,13 @@ database, legacy cotisations - configure or inspect, nothing waits there):
 | `profile-corrections` | `profile_correction_requests.status = 'pending'` (an `applying` claim is in an admin's hands) | a global admin only | - |
 | `moderation` | `content_reports.status = 'pending'` (not reviewed, not dismissed) | a global admin (all) or a content moderator (`isContentModerator`) | `reportInBdeScopeSql` - what the queue page lists for that moderator |
 | `agenda` | `association_calendar_events.status = 'pending'` | a global admin (all) or an event validator (`isUserBdeAdmin`) | `holdsBdeAgendaRightOverSql` - each event's own `canValidate` |
+| `alumni-duplicates` | core's `alumni_duplicate_flags` row not `resolvedAt`, with NO live `alumni_merges` row that is MARKED or completed (`alumniDuplicatePendingSql`: a merge only requested - the editor write interrupted - removes nothing; a cancelled mark brings it back) | a global admin only | - |
 
 The predicates are one fragment each (`apps/social-service/src/admin-queues/admin-queue-sql.ts`),
 read by the counts, the bell gates and the announcement alike.
 
 **The counts: `GET /api/moderation/admin-queues`** (`AdminQueuesController`) answers
-`{ counts: { agenda?, moderation?, 'profile-corrections'? } }` from the queues' own rows in ONE
+`{ counts: { agenda?, moderation?, 'profile-corrections'?, 'alumni-duplicates'? } }` from the queues' own rows in ONE
 statement, at every read - no counter is kept, so a count is right after a reload, on another device,
 and the moment another admin handles an item. Open to every signed-in caller; a queue the caller
 cannot act on is ABSENT (a member with no tier gets `{}`), never zero, so the route tells nobody the
@@ -124,6 +125,58 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   announced by its next report (review of 2026-11-18). The read and the write run under the subject's
   transaction-scoped advisory lock (`LOCK_REPORT_SUBJECT_SQL`), so two reports filed at once write
   one notice. Opens `/admin/moderation`.
+- `admin_alumni_duplicate` (owner, 2026-11-26: "quand il y a une fusion d'alumni, je devrais recevoir
+  une notif, comme toutes les autres fonctionnalités de la console admin"; what a duplicate IS: the
+  lead's reading of D55, [decisions of 2026-11-27](../../decisions/owner-decisions-of-2026-11-27.md)):
+  an Alumni-created account holding only the Alumni link AND for which a search by its name finds at
+  least one eligible CAS account (homonyms included, `AlumniMergeService.eligibleAmong`, at most 25
+  candidates read); an alumnus nobody matches is LISTED on the page (to attach by hand, or "Pas un
+  doublon") but never flagged, announced, pushed or counted. EVERY global admin
+  is told (nobody asked for it, so nobody is excluded), ONCE per duplicate: core-service's
+  `AlumniDuplicateQueue.flag` writes the `alumni_duplicate_flags` row and tells social-service through
+  ONE door, `POST /internal/notifications/alumni-duplicates-found` (1 to 200 uuids): ONE push and ONE
+  bell row for the whole batch, keyed on its first duplicate and listing every one in `meta.duplicateUuids`
+  (it stays while ANY of them waits; `BELL_ROW_GATE`), ONCE PER DUPLICATE through a per-duplicate ledger, `alumni_duplicate_announcements` (claimed in the SAME transaction as
+  the bell rows, keyed on the flag's incarnation, only the newly claimed told, the push after the
+  commit, swept once the flag is gone): a lost answer replayed, a grown set or two flushes at once ring nothing twice - a backlog found by a first reading is a
+  push and a badge, never one row per duplicate in every admin's bell. A row that exists is never
+  announced again, however often the page is read or a mark is cancelled (charter principle 3, "your
+  attention is not for sale"); the notice is DURABLE: `announcedAt` is written only after social
+  accepted it, so a refused or failed call (a 400, a 5xx) leaves it null and the next reading tells
+  again, batch by batch (one failing batch never drops the others), at the next reading or the next
+  sign-in (which flushes one batch at most). The push is content-free as the
+  other two (`social_admin_alumni_duplicate`, "Doublon Alumni à rattacher", no name) and opens
+  `/admin/alumni-duplicates`; floor `1.8.3` (`ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION`). Its text
+  ("looks like an existing one") is true of EVERY flagged item, since a flag needs a candidate.
+  A duplicate is FOUND, since it lives at MiConnect, at the Canari sign-in that creates its account
+  (`AlumniMergeService.flagNewAccount`, production only, fire-and-forget) and whenever the admin page is read
+  (`AlumniDuplicateQueue.reconcile`, which also converges the table on what the page lists: a flag no
+  longer listed is resolved, but only if it is older than the reading's start - read from the
+  DATABASE's clock, not the application's; one that matches again waits again with NO new notice). A
+  duplicate created at MiConnect that signs in nowhere in Canari and that no admin reads waits for the
+  next reading; a push at MiConnect's creation of it is a MiConnect-side event, not built.
+  **"Pas un doublon"** (`POST /users/admin/alumni-duplicates/:uuid/dismiss`) is the admin's TERMINAL
+  answer: `dismissedAt` is durable and never cleared, so no later reading or sign-in flags the account
+  again, and it leaves every admin's list and count; it is refused for an account a non-cancelled merge names or that is not duplicate-shaped, and survives the erasure of either account. **It clears for every admin when one marks it for
+  a merge** (the marked `alumni_merges` row is the state; no write to the flag), and the badges are
+  told by `POST /internal/notifications/alumni-duplicates-changed` (mark, cancel, dismiss,
+  resolution) with NO push. **What the badge counts** is the flagged duplicates (the page's subset with a candidate), plus a
+  merge only REQUESTED whose mark was interrupted (listed under the open merges, "Reprendre"): both
+  need an admin. When MiConnect completes the merge nothing is announced: the item has been gone since
+  the mark. The flag is DELETED then - on the main path by the erasure of the duplicate's Canari
+  account (`erasure-policy.ts`, requested just before), and by `DROP_DUPLICATE_FLAG_SQL` in the closing
+  transaction of `AlumniMergeService.complete` for the rest (a duplicate with no Canari account, an
+  erasure still queued, a duplicate deleted at MiConnect that was never merged): the one place every
+  completion path - reconciler, push, a "Rattacher" resumed over a vanished duplicate - closes a row.
+  The unpaired duplicates of the manual merge ([profiles-and-access](../../profiles-and-access.md)) are
+  queue items when they have a candidate. Proved in `alumni-duplicate-queue.service.spec.ts` (once,
+  never again, durable retry, batches, dismissal), `alumni-merge-queue.spec.ts` (the sign-in, the
+  candidate rule, the page's list), `alumni-merge.service.spec.ts` (every completion path drops the
+  flag), `alumni-duplicates-page.spec.ts` (the database clock, the dismissal),
+  `admin-queues.service.spec.ts` and `internal-alumni-duplicates.controller.spec.ts` (one row and one
+  push per batch), `bell-target-rows.integration.spec.ts` and `bde-moderation.integration.spec.ts`
+  (the predicate against PostgreSQL: marked, requested, cancelled, completed, resolved), and
+  `alumni-duplicate-queue.wiring.spec.ts` (the dependencies are required).
 - **The agenda is not announced here**: its validators are already told by `event_proposed` (and the
   global admins when no BDE governs the event), so a second notice would say the same thing twice.
 
@@ -181,7 +234,7 @@ delivers to none and says so at ERROR, so the gateway ships with or before the s
 names it - both are in the same release.
 
 **Content-free**: the push carries the key only (`social_admin_profile_correction`,
-`social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title
+`social_admin_report`, `social_admin_alumni_duplicate`), composed on the device from fixed sentences; the `full` mode's legacy title
 and body name nobody either, and the `wake` mode (`push_mode`) applies as to every push. No switch
 silences them (category `null`, never counted by the daily cap). Floor `1.7.1`
 (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`): no older build is served or pushed either type.

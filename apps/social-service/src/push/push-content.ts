@@ -49,6 +49,7 @@ export type PushContentKey =
   | 'social_live_reinstated'
   | 'social_admin_profile_correction'
   | 'social_admin_report'
+  | 'social_admin_alumni_duplicate'
   | 'social_booking_cancelled'
   | 'social_booking_withdrawn'
   | 'social_booking_added'
@@ -154,7 +155,8 @@ export type PushContent = {
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
-   * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
+   * - the three admin queue keys (`social_admin_profile_correction`, `social_admin_report`,
+   *   `social_admin_alumni_duplicate`): nothing,
    *   always empty - the content-free rule
    * - `form_paid_over_capacity` and `form_paid_over_capacity_waitlisted`: the form's own title -
    *   never the payer's name, never the amount
@@ -1168,6 +1170,21 @@ export function adminReportContent(): PushContent {
     arg: '',
     legacyTitle: 'Nouveau signalement',
     legacyBody: 'Un contenu ou une personne a été signalé.',
+  };
+}
+
+/**
+ * An Alumni sign-in created an account that matches an existing one: it waits for an admin to attach
+ * it. See {@link adminProfileCorrectionContent} - the same content-free rule, so no name: who the two
+ * accounts are is on the duplicates page, never on a lock screen.
+ */
+export function adminAlumniDuplicateContent(): PushContent {
+  return {
+    key: 'social_admin_alumni_duplicate',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Doublon Alumni à rattacher',
+    legacyBody: 'Un compte créé par Alumni ressemble à un compte existant.',
   };
 }
 

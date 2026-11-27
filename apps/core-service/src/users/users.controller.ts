@@ -25,6 +25,7 @@ import { AvatarService, AVATAR_SUBJECT_ID } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
 import { AlumniMergeService } from './alumni-merge.service';
+import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -163,7 +164,8 @@ export class UsersController {
     private readonly corrections: ProfileCorrectionService,
     private readonly accountErasure: AccountErasureService,
     private readonly sessions: AuthSessionsService,
-    private readonly alumniMerge: AlumniMergeService
+    private readonly alumniMerge: AlumniMergeService,
+    private readonly alumniQueue: AlumniDuplicateQueue
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -658,14 +660,53 @@ export class UsersController {
   }
 
   /**
-   * The Alumni duplicates (D47): every account an Alumni sign-in created (`alumni-<af_id>`) whose
-   * name and promo match an existing account, read from MiConnect. Global admin only; production
+   * The Alumni duplicates (D47): every account an Alumni sign-in created (`alumni-<af_id>`) and no open merge
+   * holds, with the accounts it matches by name and promo (none: it is attached by hand, D55), read
+   * from MiConnect. Global admin only; production
    * only, like the profile edit (dev shares production MiConnect): the refusals are its codes.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Get('admin/alumni-duplicates')
-  listAlumniDuplicates() {
-    return this.alumniMerge.listDuplicates();
+  async listAlumniDuplicates() {
+    // The reading's start is the DATABASE's clock, the one that writes `flaggedAt`. If it cannot be
+    // read the page is answered and the queue waits for the next reading (said at error).
+    let readStartedAt: Date;
+    try {
+      readStartedAt = await this.alumniQueue.databaseNow();
+    } catch (err) {
+      this.logger.error(
+        `[ALUMNI_QUEUE] the reading's start was NOT read, the queue is not reconciled: ${String(err)}`
+      );
+      return (await this.alumniMerge.listDuplicates()).duplicates;
+    }
+    // What the queue holds as pending is the page's FLAGGABLE subset (`AlumniMergeService.listDuplicates`:
+    // an account with a candidate to attach to, not dismissed, not in an open merge) - an account the
+    // page lists with no candidate is on the page only: the queue converges on the subset (a flaggable
+    // duplicate is flagged and told once, a flag no longer flaggable is resolved if the reading began
+    // after it was flagged, `AlumniDuplicateQueue`). A failed reading is not "no longer listed": it
+    // throws before any reconcile. Never throws after it.
+    const { duplicates, flaggable } = await this.alumniMerge.listDuplicates();
+    await this.alumniQueue.reconcile(flaggable, readStartedAt);
+    return duplicates;
+  }
+
+  /**
+   * "Pas un doublon": the admins' TERMINAL answer for an Alumni-created account that is not a
+   * duplicate - closed for every admin for good, never flagged again by a later reading or sign-in.
+   * Global admin only; the write is durable (`alumni_duplicate_flags.dismissedAt`).
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/alumni-duplicates/:duplicateUuid/dismiss')
+  @HttpCode(204)
+  async dismissAlumniDuplicate(
+    @Param('duplicateUuid') duplicateUuid: string,
+    @Headers('x-user-id') actorId: string
+  ): Promise<void> {
+    if (!UUID_RE.test(duplicateUuid)) throw new BadRequestException('duplicateUuid must be a uuid');
+    this.logger.log(
+      `[ALUMNI_QUEUE] "not a duplicate" by ${actorId?.slice(0, 8)} for ${duplicateUuid.slice(0, 8)}`
+    );
+    await this.alumniMerge.dismiss(duplicateUuid);
   }
 
   /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */
