@@ -10,6 +10,7 @@
   import { resetSuggestions } from '$lib/follows/suggestions.svelte';
   import { Log } from '$lib/utils/Log';
   import Toggle from '$lib/components/ui/Toggle.svelte';
+  import MailNotificationsSetting from './MailNotificationsSetting.svelte';
 
   /**
    * One switch per notification category, per ACCOUNT: the choice is stored server-side, which
@@ -143,6 +144,8 @@
       {/if}
     {/each}
   </div>
+
+  <MailNotificationsSetting />
 
   <SettingsAccountBells />
 </div>

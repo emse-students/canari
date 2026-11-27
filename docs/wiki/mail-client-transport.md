@@ -796,3 +796,193 @@ links accepted only from its own frame, the height capped).
 - **A v1 LIMIT, decided (lead, 2026-11-27): the composer sends plain text.** A reply quotes the
   original as `> ` lines; an HTML composer is not built in v1.
 - **No reading on a phone yet**: the screens were seen only in the dev preview (headless Chrome).
+
+## As built - lot 4
+
+Lot 4 is D11's first version: a notification for each new mail, behind a switch that is off. It is
+built on lot 2's session and API. **No server sees the password or a mail for it.** The server-side
+path (Zimbra's alert sent to a service mailbox) stays parked (owner, 2026-11-27).
+
+### What was measured on Partage (2026-11-27, read-only, the owner's token)
+
+- **`NoOpRequest wait="1"` is unusable on Partage.** The fault reads `Cannot execute a NoOpRequest
+  with wait="1" without a session`. A SOAP session is never created for our calls.
+- **A wait set works.** `CreateWaitSetRequest` on the account's messages (`defTypes="m"`) is
+  accepted. `WaitSetRequest block="1"` then holds the request on the server.
+- **How long a wait holds, by the timeout asked for:**
+
+  | Timeout asked | Answered after |
+  | --- | --- |
+  | 60 s | 63 s, every time: twenty empty waits in a row, 63.0 to 63.4 s, `seq` unchanged |
+  | 1 s or 15 s | about 33 s (the server has a floor near 30 s) |
+  | none | 303 s (bun's own 300 s fetch timeout cut the first try) |
+
+- **A real change has not been observed yet.** No mail arrived during the 21-minute probe, and the
+  probe sends nothing. So the shape of a change answer (an `a` entry naming the account) is
+  Zimbra's documented one, and a reading on Partage is owed (below).
+
+### The design: two questions, and neither is a clock
+
+The design obeys "idempotence from durable state, termination from a proof". It splits the work
+into two questions:
+
+- **"Has anything changed?" is the server's answer.** The wait set blocks until the account's
+  messages change.
+- **"What is new to me?" is the device's durable answer.** The device keeps a cursor:
+  `mailWatchCursor.ts`, under `canari_mail_watch_cursor:v1:<id>`. It holds `{account, highest}`,
+  the highest inbox item id already considered.
+  - The delta reads the inbox by id, newest first (`sortBy: idDesc`). It stops at the first id at
+    or below the cursor. Zimbra hands out item ids in increasing order, so that id **proves** nothing
+    older is new, whatever the page size.
+  - With no cursor (first run, another mailbox, after D8), the delta takes a **baseline** and
+    notifies nothing. Old mail is never announced as new.
+
+**The order of steps closes the gap.** The wait set is created FIRST. Then the delta is read. Then
+the wait starts from the wait set's first `seq`. A mail that lands while the delta is being read is
+still a change the wait set holds, so the wait answers at once.
+
+**"Never twice" comes from writing the cursor before posting the notification.** A process killed
+between the two loses that one notification, but never doubles it. The notification's id is the
+message's (Android tag `canari_mail` + item id; web tag `canari-mail-<id>`; Tauri
+`stableNotifId('mail:' + id)`), so a repost replaces the first one rather than adding a second.
+
+**A mail read elsewhere is not notified.** A change that only reads, flags or moves mail wakes the
+wait, finds nothing above the cursor, and posts nothing. A new mail already read elsewhere before
+this device looks is skipped: only UNREAD items above the cursor are notified.
+
+**What the timers mean.** `WAIT_TIMEOUT_SECONDS = 60` is not a decision. It only keeps an idle
+connection under the web relay's `IDLE_DEADLINE` (100 s, `mail_relay.rs`), with the measured 3 s
+of overshoot; `mailWatcher.test.ts` reads both numbers. If the value were wrong:
+
+- a wait would end with nothing, which costs one more empty round trip;
+- or the relay would cut the wait, which is a transport failure and is retried.
+
+In neither case is a mail missed or notified twice, because neither question reads the timeout.
+
+**The retry ladder bounds only the rate.** It starts at 2 s and doubles up to a 5-minute cap
+(`retryDelayMs`). The pause ends early when the network comes back (`online`) or the app returns on
+screen. A lapsed wait set (`admin.NO_SUCH_WAITSET`, the typed `wait_lost`) is recreated at once.
+
+**The wait has its own connection** (`MailSession.callOver`), because lot 1's client serialises
+calls on one connection. Stopping the watcher closes that connection, which ends a wait in flight.
+The run releases its wait set best effort.
+
+**The watcher runs only while four facts are true, all of them read** (`watcherShouldRun`):
+
+- `mail_mode` is `on`;
+- the address is eligible;
+- the session is `ready`;
+- the switch is on.
+
+Any one turning false stops it: a mail sign-out, a Canari sign-out, D8, the switch off, or the
+server's switch off. **D8 erases the cursor and the switch** (both are on `MAIL_LOCAL_KEYS`, the
+allowlist in `mailLocalData.ts`).
+
+### The switch
+
+"Notifications de nouveaux mails" sits in Settings > Notifications, shown only while the Mail tab is
+(`MailNotificationsSetting.svelte`).
+
+- It is per account and per device, **off by default**, stored as
+  `canari_mail_notifications:v1:<id>` (`mailWatchSwitch.svelte.ts`).
+- Turning it on asks the notification permission first. On a refusal the switch stays off and the
+  row says why.
+- Its one-line hint differs per platform:
+  - Android: the battery cost of a persistent connection;
+  - iOS: when the system allows;
+  - web and desktop: while Canari is open.
+- Charter principle 3: one gesture turns it off.
+
+### What a notification says
+
+`mailNotify.ts`:
+
+- **The title** is the sender's name, else the address, else `mail_sender_unknown`.
+- **The body** is the subject, else `mail_no_subject`.
+- **Never the body of the mail.**
+- **The lock screen** shows a public version that names neither sender nor subject
+  (`mail_notif_public_title`). On Android this is `VISIBILITY_PRIVATE` + `publicVersion`.
+- There is no in-app lock-screen privacy setting in Canari. The OS setting decides, as for chat.
+- **A tap opens the conversation in the Mail tab**:
+  - Android: the deep link `fr.emse.canari://mail/<conversation id>`, which `deepLinkRoutes.ts`
+    maps to `/mail/<id>`. The native side accepts only that shape (`mailNoticeOf`, an allowlist).
+  - Web: the notification's click handler.
+
+### Per platform
+
+- **Web and desktop:** the watcher runs while the app is open. On the web, a Web Lock per account
+  (`canari-mail-watch-<id>`) makes exactly one tab watch.
+- **Android: `MailWatchService`**, a foreground service, the K-9 model.
+  - Its type is **`specialUse`**: `dataSync` is capped at 6 h a day on Android 15, and
+    `remoteMessaging` does not fit a client that only receives.
+  - It holds a persistent, low-importance, silent notification (channel `canari_mail_watch`).
+  - It is `START_NOT_STICKY`, and it leaves on any of: switch off, watcher stopped, page destroyed
+    (`MainActivity.onDestroy`), task removed.
+  - **It never outlives the page.** The watcher, its TLS and the session token live in the page
+    (D3, D6), so a service with no page would keep the process alive for nothing.
+  - For the same reason it is **NOT restarted at boot**: at boot there is no page, so there is no
+    watcher. See "Still open".
+  - Android refuses a foreground start from the background (`off-screen`). The next return on
+    screen asks again; that event triggers the retry, never a timer.
+  - New-mail notices are posted natively (`MailWatchBridge.post`) on the channel `canari_mail`.
+    They are silent while a call holds the sound.
+  - Pure decisions live in `mail/MailWatch.kt`, tested by `MailWatchTest.kt`.
+- **iOS: `BGAppRefreshTask` `fr.emse.canari.mailRefresh`**, best effort (`canari_ios.mm`).
+  - In the foreground, the watcher runs as anywhere else.
+  - In the background, each run asks the page for ONE check (`window.__canariMailRefresh`). The
+    check resumes the mailbox from the sealed password if it can, then reads the delta.
+  - Whether to keep asking is the flag file `mail_watch_on` in the app data dir. The Rust command
+    `mail_watch_flag` writes it, and only the events that change the want write it
+    (`backgroundRefreshWanted`).
+  - A request is submitted when the app enters the background and after each run.
+
+### Battery measurement (owed)
+
+The procedure, on the bench Mi 9T, with an idle mailbox:
+
+1. Charge fully. Unplug. Run `adb shell dumpsys batterystats --reset`.
+2. Leave the switch **off**, with the app open then backgrounded, for 1 h.
+3. Run `adb shell dumpsys batterystats --charged fr.emse.canari`. Note the estimated power use
+   (mAh), wakelocks, mobile/Wi-Fi radio active time and network bytes.
+4. Reset again, turn the switch **on**, and repeat for 1 h.
+5. Write both readings here. The hint's "battery" line is believed only once they exist.
+
+**The numbers are owed.** No reading has been taken yet.
+
+### Tests
+
+- **`mailWatcher.test.ts`**, against `FakeZimbra` with held waits:
+  - the order Create, then Search, then Wait;
+  - a baseline notifies nothing;
+  - one notification per new mail, never twice across wakes nor across a restart;
+  - nothing on read-elsewhere changes;
+  - a lapsed wait set; a transport retry;
+  - stop releases the wait set; a sign-out ends the run; `checkOnce`;
+  - the delta's paging and a foreign cursor;
+  - D8 clears the cursor;
+  - the timeout against `IDLE_DEADLINE`.
+- **`mailNotify.test.ts`:** the payload, the public version, the fallbacks, Android through the
+  native builder, and the web.
+- **`mailWatch.svelte.test.ts`:**
+  - the four facts;
+  - the iOS flag;
+  - the background check (`off`, `not_ready`);
+  - the pause ends on `online`;
+  - the switch: off by default, persisted, forgotten after D8.
+- **Kotlin `MailWatchTest.kt`:** the service lifecycle and the link allowlist.
+- **Rust `mail_watch.rs`:** the flag file.
+- `deepLinkRoutes.test.ts` covers the mail link.
+- `nativeLogContent.test.ts` holds the new native log lines to ids, counts and statuses.
+
+### Still open after lot 4
+
+- **A change answer on Partage**: send one mail to the account during a wait and read the answer's
+  shape (`a`, `seq`). Then also read the full path on the Mi 9T and the iPhone (device-verification
+  `MAIL-N`).
+- **Boot restart on Android**: not built, on purpose. Building it would need a NATIVE watcher, and so
+  the token or the sealed password handed to Kotlin. That is a change to D6 for the owner to decide.
+- **Play Console**: the `specialUse` foreground service must be declared with its justification
+  before a store build carrying it goes to review.
+- **iOS taps and desktop taps** open the app but not the conversation. Only Android and the web
+  route to it.
+- **The battery numbers** above.

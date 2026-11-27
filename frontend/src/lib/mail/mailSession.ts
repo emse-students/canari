@@ -249,6 +249,18 @@ export class MailSession {
   }
 
   /**
+   * {@link call} over ANOTHER connection: the new-mail watcher's blocking `WaitSetRequest` holds its
+   * connection for up to a minute, and lot 1's client sends one request at a time per connection, so
+   * on the screens' connection it would stall every other call. Same token, same single renewal.
+   */
+  async callOver(
+    channel: Pick<MailSoap, 'call'>,
+    body: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    return this.withToken((token) => channel.call(body, token));
+  }
+
+  /**
    * One plain HTTP exchange carrying the session as Zimbra's `ZM_AUTH_TOKEN` cookie (the upload
    * servlet, an attachment download), read by `read`, renewed once like {@link call}.
    */

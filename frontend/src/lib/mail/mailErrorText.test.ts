@@ -27,6 +27,7 @@ const KINDS = {
   internal: true,
   not_sent: true,
   incompatible: false,
+  wait_lost: true,
 } satisfies Record<MailErrorKind, boolean>;
 
 const REASONS = {

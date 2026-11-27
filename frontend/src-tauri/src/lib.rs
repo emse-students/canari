@@ -2010,6 +2010,7 @@ pub fn run() {
             mail_socket_write,
             mail_socket_close,
             mail_socket_close_all,
+            commands::mail_watch::mail_watch_flag,
             notify_native_message,
             record_read_elsewhere,
             cancel_conversation_notifications,

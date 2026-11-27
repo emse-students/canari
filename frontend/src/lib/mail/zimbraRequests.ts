@@ -66,6 +66,12 @@ export interface SearchOptions {
   query: string;
   offset: number;
   limit: number;
+  /**
+   * The order: newest first by date (the default, what the screens list), or by item id, newest
+   * first (`idDesc`, measured on Partage 2026-11-27) - the order the new-mail watcher reads, because
+   * Zimbra hands ids out in increasing order, so a page in that order is ITS proof of where to stop.
+   */
+  sortBy?: 'dateDesc' | 'idDesc';
 }
 
 /**
@@ -118,7 +124,7 @@ export function searchRequest(types: 'conversation' | 'message', options: Search
       _jsns: MAIL,
       query: searchQuery(options),
       types,
-      sortBy: 'dateDesc',
+      sortBy: options.sortBy ?? 'dateDesc',
       offset: options.offset,
       limit: options.limit,
     },
@@ -254,4 +260,29 @@ export function saveDraftRequest(message: OutgoingMessage): Body {
 /** `AutoCompleteRequest`: addresses matching `name`, the school directory (GAL) included. */
 export function autoCompleteRequest(name: string): Body {
   return { AutoCompleteRequest: { _jsns: MAIL, name, includeGal: 1 } };
+}
+
+/**
+ * `CreateWaitSetRequest` (lot 4, the new-mail watcher): a server-held wait over THIS account's
+ * messages (`defTypes: "m"`), named by its address. Measured on Partage 2026-11-27: the SOAP session
+ * `NoOpRequest wait=1` needs is never created there, so a wait set is the one blocking wait it
+ * offers. Answered with the wait set's id and the sequence to wait from.
+ */
+export function createWaitSetRequest(address: string): Body {
+  return { CreateWaitSetRequest: { _jsns: MAIL, defTypes: 'm', add: { a: [{ name: address }] } } };
+}
+
+/**
+ * `WaitSetRequest`: blocks on the server until the account's messages change after `seq`, or
+ * `timeoutSeconds` pass with no change (Partage answers no sooner than about 30 s, measured).
+ */
+export function waitSetRequest(waitSet: string, seq: string, timeoutSeconds: number): Body {
+  return {
+    WaitSetRequest: { _jsns: MAIL, waitSet, seq, block: 1, timeout: timeoutSeconds },
+  };
+}
+
+/** `DestroyWaitSetRequest`: releases the wait set on the server (it also lapses by itself). */
+export function destroyWaitSetRequest(waitSet: string): Body {
+  return { DestroyWaitSetRequest: { _jsns: MAIL, waitSet } };
 }

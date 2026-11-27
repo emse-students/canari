@@ -174,6 +174,12 @@ let watching = false;
 export function watchMailTab(): void {
   if (watching) return;
   watching = true;
+  // The new-mail notifications follow the same client (lot 4). Loaded apart: it imports this module.
+  void import('./mailWatch.svelte')
+    .then((watch) => watch.watchMailNotifications())
+    .catch((err: unknown) =>
+      Log.w('MAIL', `ERROR: the new-mail watch could not be loaded (${String(err)})`)
+    );
   $effect.root(() => {
     $effect(() => {
       const userId = currentUserId();

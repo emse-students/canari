@@ -9,7 +9,11 @@ beforeEach(() => localStorage.clear());
 
 describe('the D8 erasure', () => {
   it('the allowlist is exactly the mail keys of the account', () => {
-    expect(mailLocalKeys('u1')).toEqual([ACCOUNT_KEY.mailSealedPassword('u1')]);
+    expect(mailLocalKeys('u1')).toEqual([
+      ACCOUNT_KEY.mailSealedPassword('u1'),
+      ACCOUNT_KEY.mailWatchCursor('u1'),
+      ACCOUNT_KEY.mailNotifications('u1'),
+    ]);
   });
 
   it("removes the allowlisted keys of that account only, never a neighbour's or another account's", () => {

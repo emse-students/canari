@@ -16,6 +16,10 @@
          the status line) comes from the page's Paraglide messages; only the channel is named here,
          because Android names a channel once, at creation, from the app's resources. -->
     <string name="notif_channel_call_ongoing_name">Appel en cours</string>
+    <string name="notif_channel_mail_name">Nouveaux mails</string>
+    <string name="notif_channel_mail_desc">Un nouveau mail dans la boîte de l\'école</string>
+    <string name="notif_channel_mail_watch_name">Réception des mails</string>
+    <string name="notif_channel_mail_watch_desc">La notification affichée tant que Canari attend les nouveaux mails</string>
     <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
     <!-- The ongoing-call notification's microphone action; its label is the state it goes TO. -->
     <string name="notif_action_call_mute">Couper le micro</string>

@@ -5,6 +5,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <AVKit/AVKit.h>
+#import <BackgroundTasks/BackgroundTasks.h>
 #import <CoreMotion/CoreMotion.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
@@ -2232,6 +2233,103 @@ static void CanariInstallSceneLaunchUrlHook(void) {
   NSLog(@"[CanariDeepLink] launch-url hook installed on TaoSceneDelegate");
 }
 
+// ---------------------------------------------------------------------------------------------------
+// THE NEW-MAIL WATCHER'S BACKGROUND REFRESH (mail lot 4, D11; docs/wiki/mail-client-transport.md).
+//
+// iOS freezes the app in the background, so the page's watcher cannot wait on the school mailbox
+// there. When the system ALLOWS - best effort, no promise of immediacy (owner, 2026-11-27) - a
+// BGAppRefreshTask asks the page for ONE check (`window.__canariMailRefresh`, `mailWatch.svelte.ts`):
+// the delta since the device's cursor, notified. Whether to keep asking is the page's fact, read from
+// ONE flag file it writes when the want changes (`mail_watch_flag`, `mail_watch.rs`): present while
+// the account's switch is on, the server's `mail_mode` on and its mailbox open.
+//
+// No earliest begin date is set: when to run is the system's decision, and no clock of ours is part
+// of it. The request is submitted at every background entry and after every run, while the flag
+// says so; a run with the flag gone submits nothing more.
+// ---------------------------------------------------------------------------------------------------
+
+/// The task identifier; MUST match BGTaskSchedulerPermittedIdentifiers in Info.plist.
+static NSString *const kCanariMailRefreshTaskId = @"fr.emse.canari.mailRefresh";
+/// The flag's file name in the app's data directory - `MAIL_WATCH_FLAG_FILE` in `mail_watch.rs`.
+static NSString *const kCanariMailWatchFlagFile = @"mail_watch_on";
+
+/// Whether the page last said the refresh is wanted (the flag file exists).
+static BOOL CanariMailRefreshWanted(void) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariMail] no data directory - the refresh is not asked for");
+    return NO;
+  }
+  return [[NSFileManager defaultManager]
+      fileExistsAtPath:[dir stringByAppendingPathComponent:kCanariMailWatchFlagFile]];
+}
+
+/// Asks the system for the next refresh while the flag says so; withdraws any pending one otherwise.
+static void CanariSubmitMailRefresh(void) {
+  if (!CanariMailRefreshWanted()) {
+    [[BGTaskScheduler sharedScheduler] cancelTaskRequestWithIdentifier:kCanariMailRefreshTaskId];
+    NSLog(@"[CanariMail] refresh not wanted - no request pending");
+    return;
+  }
+  BGAppRefreshTaskRequest *request =
+      [[BGAppRefreshTaskRequest alloc] initWithIdentifier:kCanariMailRefreshTaskId];
+  NSError *error = nil;
+  if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
+    NSLog(@"[CanariMail] refresh submit failed: code=%ld", (long)error.code);
+  } else {
+    NSLog(@"[CanariMail] refresh requested");
+  }
+}
+
+/// Registers the refresh's launch handler. MUST run before the app finishes launching (same rule as
+/// `CanariRegisterBackgroundTasks`): called from `canari_ios_bootstrap`.
+static void CanariRegisterMailRefreshTask(void) {
+  [[BGTaskScheduler sharedScheduler]
+      registerForTaskWithIdentifier:kCanariMailRefreshTaskId
+                         usingQueue:dispatch_get_main_queue()
+                      launchHandler:^(__kindof BGTask *task) {
+                        // The system keeps one pending request per identifier: the next one first.
+                        CanariSubmitMailRefresh();
+                        __block BOOL completed = NO;
+                        void (^complete)(BOOL, NSString *) = ^(BOOL success, NSString *why) {
+                          if (completed) return;
+                          completed = YES;
+                          NSLog(@"[CanariMail] refresh ended: %@ success=%d", why, success);  // log-safe: a fixed reason literal and a BOOL, never a mail
+                          [task setTaskCompletedWithSuccess:success];
+                        };
+                        task.expirationHandler = ^{
+                          dispatch_async(dispatch_get_main_queue(), ^{
+                            complete(NO, @"expired");
+                          });
+                        };
+                        if (!CanariMailRefreshWanted()) {
+                          complete(YES, @"not-wanted");
+                          return;
+                        }
+                        WKWebView *webView = CanariFindWebView();
+                        if (webView == nil) {
+                          complete(NO, @"no-page");
+                          return;
+                        }
+                        [webView callAsyncJavaScript:
+                                     @"return window.__canariMailRefresh ? await window.__canariMailRefresh() : 'absent';"
+                                           arguments:@{}
+                                             inFrame:nil
+                                      inContentWorld:WKContentWorld.pageWorld
+                                   completionHandler:^(id result, NSError *error) {
+                                     if (error != nil) {
+                                       complete(NO, @"page-error");
+                                       return;
+                                     }
+                                     BOOL done = [result isKindOfClass:[NSString class]] &&
+                                                 ([result isEqualToString:@"done"] ||
+                                                  [result isEqualToString:@"off"]);
+                                     complete(done, done ? @"page-done" : @"page-not-done");
+                                   }];
+                      }];
+  NSLog(@"[CanariMail] refresh handler registered");
+}
+
 void canari_ios_bootstrap(void) {
   NSLog(@"[CanariIOS] bootstrap dataDir=%@", CanariTauriDataDir());
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -2273,6 +2371,8 @@ void canari_ios_bootstrap(void) {
                 // if its camera is still live (`cameraHardware.svelte.ts`).
                 CanariApplyCameraArmed(NO, @"didEnterBackground");
                 CanariPublishForeground(nil);
+                // The new-mail watcher cannot wait in the background: the system's refresh may.
+                CanariSubmitMailRefresh();
               }];
   // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped
   // notification reaches the delegate in between, and its link rides the edge.
@@ -2344,6 +2444,8 @@ void canari_ios_bootstrap(void) {
   // BGTaskScheduler requires every launch handler to be registered before the app finishes
   // launching, and registering later (e.g. from the DidFinishLaunching observer) would throw.
   CanariRegisterBackgroundTasks();
+  // The new-mail watcher's refresh (mail lot 4), under the same deadline.
+  CanariRegisterMailRefreshTask();
   [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]

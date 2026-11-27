@@ -199,6 +199,17 @@ export const ACCOUNT_KEY = {
    */
   mailSealedPassword: (userId: string) => `canari_mail_sealed_password:v1:${userId}`,
   /**
+   * `mail/mailWatchCursor.ts`: the new-mail watcher's high-water mark - the mailbox address and the
+   * highest inbox item id already considered, never a subject or a sender - so a message is notified
+   * once across restarts (lot 4). Erased with the mail data (D8).
+   */
+  mailWatchCursor: (userId: string) => `canari_mail_watch_cursor:v1:${userId}`,
+  /**
+   * `mail/mailWatchSwitch.svelte.ts`: whether this account wants new-mail notifications on THIS
+   * device ("Notifications de nouveaux mails", off by default). Erased with the mail data (D8).
+   */
+  mailNotifications: (userId: string) => `canari_mail_notifications:v1:${userId}`,
+  /**
    * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
    * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
    * truth; this is the optimistic copy that keeps a help from replaying offline.
@@ -319,6 +330,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.backupRecoveryCode(userId),
     ACCOUNT_KEY.backupOwedAfterKeyMove(userId),
     ACCOUNT_KEY.mailSealedPassword(userId),
+    ACCOUNT_KEY.mailWatchCursor(userId),
+    ACCOUNT_KEY.mailNotifications(userId),
   ];
 }
 

@@ -367,3 +367,42 @@ export function parseUploadAnswer(text: string): { status: number; uploads: Uplo
   });
   return { status, uploads };
 }
+
+/** A wait set the server holds for the watcher: its id, and the sequence to wait from. */
+export interface WaitSetHandle {
+  waitSet: string;
+  seq: string;
+}
+
+/** `CreateWaitSetResponse`: the wait set and its first sequence. */
+export function parseCreatedWaitSet(body: Json): WaitSetHandle {
+  const response = responseOf(body, 'CreateWaitSetResponse');
+  const waitSet = str(response.waitSet);
+  const seq = str(response.seq);
+  if (!waitSet || seq === null) throw new MailError('server', 'malformed-CreateWaitSetResponse');
+  // An account the server could not add is listed under `error`: the wait would never wake.
+  if (list(response.error).length > 0) throw new MailError('server', 'waitset-account-refused');
+  return { waitSet, seq };
+}
+
+/** What one `WaitSetRequest` answered. */
+export interface WaitSetAnswer {
+  /** The sequence the next wait starts from. */
+  seq: string;
+  /** Whether the account's messages changed (Zimbra lists the account under `a`). */
+  changed: boolean;
+  /** Whether the server cancelled the wait set (it must be created again). */
+  canceled: boolean;
+}
+
+/** `WaitSetResponse`: a change, a timeout with none, or the wait set cancelled. */
+export function parseWaitSetAnswer(body: Json): WaitSetAnswer {
+  const response = responseOf(body, 'WaitSetResponse');
+  const seq = str(response.seq);
+  if (seq === null) throw new MailError('server', 'malformed-WaitSetResponse');
+  return {
+    seq,
+    changed: list(response.a).length > 0,
+    canceled: response.canceled === true || response.canceled === '1',
+  };
+}

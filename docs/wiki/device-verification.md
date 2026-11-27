@@ -1083,6 +1083,30 @@ nothing and looks like a dead WebView rather than a wrong name.
 
 ---
 
+## MAIL-N. A new school mail is notified once, and the switch's battery cost is measured - owed on BOTH phones (mail lot 4)
+
+**Proves** what no gate here reaches for D11 ([mail-client-transport](mail-client-transport.md#as-built---lot-4)): Partage's answer to a REAL change, the foreground service on Android, and the background refresh on iOS. Tests prove the watcher against a fake Zimbra only.
+
+**Precondition:** a build carrying lot 4. `mail_mode` must be `on` on the estate the phone points at. A test account must have an eligible school mailbox signed in with "remember" ticked. Turn "Notifications de nouveaux mails" on in Settings > Notifications.
+
+1. **Android (Mi 9T).**
+   1. Turn the switch on. The persistent "Réception des mails" notification appears, silent.
+   2. Put the app in the background.
+   3. From another mailbox, send one mail to the account.
+   4. **Pass:** one notification. Its title is the sender, its body the subject. The lock screen shows "Nouveau mail" only. A tap opens the conversation in the Mail tab.
+   5. Kill and reopen the app. The same mail is not notified again.
+   6. Read the mail in the webmail, then send nothing: no notification.
+   7. Turn the switch off: the persistent notification goes.
+2. **Battery (Mi 9T).** Follow the procedure in [mail-client-transport](mail-client-transport.md#battery-measurement-owed): 1 h switch off, then 1 h switch on, `dumpsys batterystats`. Write both numbers there.
+3. **iOS (iPhone 12).**
+   1. Turn the switch on and background the app.
+   2. Send a mail, then wait for a background refresh. In Xcode you can force one with `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"fr.emse.canari.mailRefresh"]`.
+   3. **Pass:** one notification with the sender and subject; `[CanariMail] refresh ended: done success=1` in the log.
+
+**Where to look:**
+- Android: `adb logcat -s MailWatchService MailWatchBridge` and the page's `[MAIL-WATCH]` lines (`the mailbox changed - reading the delta`).
+- iOS: `python -m pymobiledevice3 syslog live`, filtered on `CanariMail`.
+
 ## B. Decrypted push, app killed, screen locked
 
 **Proves** the whole background chain: FCM wakes the extension, the keychain hands back the device

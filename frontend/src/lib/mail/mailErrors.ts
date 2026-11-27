@@ -63,6 +63,12 @@ export type MailErrorKind =
    * retrying does nothing.
    */
   | 'incompatible'
+  /**
+   * The server no longer holds the new-mail watcher's wait set (`admin.NO_SUCH_WAITSET`, measured on
+   * Partage 2026-11-27): it lapsed or was cancelled. The watcher creates another; nothing is lost,
+   * because what is new is read from the device's own cursor, not from the wait set.
+   */
+  | 'wait_lost'
   /** The server answered with a fault this client does not name, or an unreadable answer. */
   | 'server'
   /** A throw no layer typed: a bug, logged as one. */
@@ -105,6 +111,7 @@ const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
   'mail.MESSAGE_TOO_BIG': 'too_large',
   'mail.UPLOAD_REJECTED': 'too_large',
   'mail.QUOTA_EXCEEDED': 'quota_exceeded',
+  'admin.NO_SUCH_WAITSET': 'wait_lost',
 };
 
 /**

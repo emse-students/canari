@@ -85,6 +85,8 @@ describe('the per-account key list is the one list', () => {
   const USER_NAMES_NOT_STORAGE_KEYS: Record<string, string> = {
     'lib/db/deviceKeyGate.ts:`canari-device-key:${userId}':
       'a Web Lock name, which holds nothing once released',
+    'lib/mail/mailWatch.svelte.ts:`canari-mail-watch-${userId}':
+      'a Web Lock name (one tab watches the mailbox), which holds nothing once released',
     'lib/db/indexeddb.ts:`CanariDB_${userId}': 'a database name - deleted by accountIndexedDbNames',
     'lib/db/sqlite.ts:`sqlite:canari_${userId}':
       'a native database path - deleted by delete_user_database',

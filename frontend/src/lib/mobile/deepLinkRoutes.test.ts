@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appRouteForDeepLink, proposalQueueAssociationId } from './deepLinkRoutes';
+import { appRouteForDeepLink, mailAppLink, proposalQueueAssociationId } from './deepLinkRoutes';
 
 const route = (url: string) => appRouteForDeepLink(new URL(url));
 
@@ -27,6 +27,13 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://admin-alumni-duplicates')).toBe('/admin/alumni-duplicates');
     // The organiser alert: one form's responses, on the forms list.
     expect(route('fr.emse.canari://form-responses/f1')).toBe('/forms?responses=f1');
+  });
+
+  it('opens a new mail in the Mail tab, from the link the notice was built with (lot 4)', () => {
+    expect(mailAppLink('-11515')).toBe('fr.emse.canari://mail/-11515');
+    expect(route(mailAppLink('-11515'))).toBe('/mail/-11515');
+    expect(route(mailAppLink('a b/c'))).toBe('/mail/a%20b%2Fc');
+    expect(route(mailAppLink(null))).toBe('/mail');
   });
 
   it('keeps the comment a comment push names, and only that parameter', () => {

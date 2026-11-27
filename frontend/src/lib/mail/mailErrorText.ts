@@ -31,6 +31,7 @@ const ERROR_TEXT: Readonly<Record<MailErrorKind, () => string>> = {
   internal: m.mail_error_internal,
   not_sent: m.mail_error_not_sent,
   incompatible: m.mail_error_incompatible,
+  wait_lost: m.mail_error_wait_lost,
 };
 
 /** The sentence for a failure of `kind`. */
@@ -50,7 +51,8 @@ export function mailErrorRetryable(kind: MailErrorKind): boolean {
     kind === 'server' ||
     kind === 'maintenance' ||
     kind === 'internal' ||
-    kind === 'not_sent'
+    kind === 'not_sent' ||
+    kind === 'wait_lost'
   );
 }
 

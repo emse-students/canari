@@ -7,15 +7,20 @@ import { Log } from '$lib/utils/Log';
  *
  * An account the school closed erases, on the device, the mail data and NOTHING ELSE: this is an
  * ALLOWLIST of the keys the erasure may remove, never a prefix or a pattern, so the erasure cannot
- * reach a key the mail client did not write. Lot 2 keeps one thing at rest - the sealed password -
- * and the rest of the mail store lives in memory (`MailStore.reset`). A later lot that persists mail
- * (a cached list, a draft) adds its key HERE, and `mailLocalData.test.ts` asserts the list is exactly
- * what the module says.
+ * reach a key the mail client did not write. Lot 2 keeps the sealed password at rest; lot 4 adds the
+ * new-mail watcher's cursor (an address and an item id, never a subject or a sender) and the
+ * account's "Notifications de nouveaux mails" switch. The rest of the mail store lives in memory
+ * (`MailStore.reset`). A later lot that persists mail (a cached list, a draft) adds its key HERE, and
+ * `mailLocalData.test.ts` asserts the list is exactly what the module says.
  */
 
 /** Every `localStorage` key of `userId` that holds mail data. */
 export function mailLocalKeys(userId: string): string[] {
-  return [ACCOUNT_KEY.mailSealedPassword(userId)];
+  return [
+    ACCOUNT_KEY.mailSealedPassword(userId),
+    ACCOUNT_KEY.mailWatchCursor(userId),
+    ACCOUNT_KEY.mailNotifications(userId),
+  ];
 }
 
 /**
