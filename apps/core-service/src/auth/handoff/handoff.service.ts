@@ -112,7 +112,7 @@ export function handoffIssuer(frontendUrl: string | undefined): string | null {
 @Injectable()
 export class HandoffService {
   private readonly logger = new Logger('Handoff');
-  private readonly signer: { key: KeyObject; jwk: HandoffPublicJwk; issuer: string } | null;
+  private readonly signer: HandoffSigner | null;
   private readonly sites: readonly EcosystemSiteContract[];
 
   constructor(
@@ -120,36 +120,7 @@ export class HandoffService {
     @Inject(HANDOFF_ACCESS) private readonly access: HandoffAccess
   ) {
     this.sites = sites ?? ECOSYSTEM_SITES;
-    this.signer = this.readSigner();
-  }
-
-  private readSigner(): { key: KeyObject; jwk: HandoffPublicJwk; issuer: string } | null {
-    const raw = process.env.HANDOFF_SIGNING_KEY?.trim() ?? '';
-    if (!raw) {
-      // The configured state of an estate no site trusts yet (dev): said once, at boot.
-      this.logger.log(
-        '[HANDOFF] HANDOFF_SIGNING_KEY is unset - no sign-in handoff is minted on this estate, and every site opens plainly'
-      );
-      return null;
-    }
-    const issuer = handoffIssuer(process.env.FRONTEND_URL);
-    if (!issuer) {
-      this.logger.error(
-        '[HANDOFF] HANDOFF_SIGNING_KEY is set but FRONTEND_URL names no origin to issue as - the handoff stays CLOSED'
-      );
-      return null;
-    }
-    try {
-      const key = loadHandoffSigningKey(raw);
-      const jwk = publicJwk(key);
-      this.logger.log(`[HANDOFF] signing as iss=${issuer} kid=${jwk.kid}`);
-      return { key, jwk, issuer };
-    } catch (e) {
-      this.logger.error(
-        `[HANDOFF] HANDOFF_SIGNING_KEY is unreadable (${e instanceof Error ? e.message : String(e)}) - the handoff stays CLOSED`
-      );
-      return null;
-    }
+    this.signer = readHandoffSigner(this.logger);
   }
 
   /** Whether this estate mints at all. */
@@ -162,7 +133,7 @@ export class HandoffService {
     this.requireSigner();
   }
 
-  private requireSigner(): { key: KeyObject; jwk: HandoffPublicJwk; issuer: string } {
+  private requireSigner(): HandoffSigner {
     if (!this.signer) throw this.refuse(HandoffRefusal.notOffered, 'no handoff on this estate');
     return this.signer;
   }
@@ -271,5 +242,47 @@ export class HandoffService {
       default:
         return new BadRequestException(body);
     }
+  }
+}
+
+/** The handoff signing key, its public JWK and the issuer it signs as. */
+export interface HandoffSigner {
+  key: KeyObject;
+  jwk: HandoffPublicJwk;
+  issuer: string;
+}
+
+/**
+ * Reads this estate's handoff signer from `HANDOFF_SIGNING_KEY` and `FRONTEND_URL`, or null when it
+ * holds none (said at boot, at `log` when unset and at `error` when set but unusable). ONE reading,
+ * shared by the handoff mint and the Alumni merge's sibling-site calls (D54), which sign with the
+ * same key under their own `typ`.
+ */
+export function readHandoffSigner(logger: Logger): HandoffSigner | null {
+  const raw = process.env.HANDOFF_SIGNING_KEY?.trim() ?? '';
+  if (!raw) {
+    // The configured state of an estate no site trusts yet (dev): said once, at boot.
+    logger.log(
+      '[HANDOFF] HANDOFF_SIGNING_KEY is unset - no sign-in handoff is minted on this estate, and every site opens plainly'
+    );
+    return null;
+  }
+  const issuer = handoffIssuer(process.env.FRONTEND_URL);
+  if (!issuer) {
+    logger.error(
+      '[HANDOFF] HANDOFF_SIGNING_KEY is set but FRONTEND_URL names no origin to issue as - the handoff stays CLOSED'
+    );
+    return null;
+  }
+  try {
+    const key = loadHandoffSigningKey(raw);
+    const jwk = publicJwk(key);
+    logger.log(`[HANDOFF] signing as iss=${issuer} kid=${jwk.kid}`);
+    return { key, jwk, issuer };
+  } catch (e) {
+    logger.error(
+      `[HANDOFF] HANDOFF_SIGNING_KEY is unreadable (${e instanceof Error ? e.message : String(e)}) - the handoff stays CLOSED`
+    );
+    return null;
   }
 }

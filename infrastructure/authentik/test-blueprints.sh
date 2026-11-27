@@ -40,6 +40,7 @@ MIGALLERY_AVATAR_SIGNING_KEY=blueprint-test
 MICONNECT_CAS_CONSUMER_SECRET=blueprint-test
 MICONNECT_EDITOR_TOKEN=blueprint-test-editor-token-0123456789abcdef
 MICONNECT_READER_TOKEN=blueprint-test-reader-token-0123456789abcdef
+MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET=blueprint-test-alumni-merge-secret-0123456789abcdef
 AUTHENTIK_PUBLISH=127.0.0.1:0
 EOF
 

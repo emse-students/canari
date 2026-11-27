@@ -50,6 +50,11 @@ daily report (and 5 min after boot)
   one summary line; one ERROR line per job pending > 24 h, with its service, attempts, last failure
 ```
 
+**One runner, two queues (1.8.3).** The timers, the single-flight drain and the logged drain failure
+are `DurableQueueRunner` (`src/common/durable-queue.ts`), shared with the Alumni merge's sibling-site
+jobs ([profiles-and-access](profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183));
+each queue keeps its own claim, call and report, because its table and its answer differ.
+
 **Deactivated at once.** The transaction deletes the user row and every `auth_sessions` row, so no
 refresh can succeed. A sign-in is REFUSED while a job is pending (`ACCOUNT_ERASURE_PENDING`, a 403
 the client renders through Paraglide), because `users.id` IS the OIDC subject: signing in again would

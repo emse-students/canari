@@ -1,0 +1,13 @@
+{
+  "description": "The bounds of an Alumni merge's written reason (D55), in CODE POINTS after trimming - never UTF-16 units, so an emoji counts once on both sides. core-service enforces them (ALUMNI_MERGE_REASON_MIN / ALUMNI_MERGE_REASON_MAX in alumni-merge.errors.ts, checkMergeReason) and the admin page counts the same way before sending (alumniReasonState in frontend/src/lib/profile/alumniMerge.ts). Each side's test asserts its constants and its verdict on every case below, so the two cannot drift apart.",
+  "min": 20,
+  "max": 1000,
+  "cases": [
+    { "text": "", "length": 0, "problem": "too_short" },
+    { "text": "   short reason    ", "length": 12, "problem": "too_short" },
+    { "text": "exactly twenty chars", "length": 20, "problem": null },
+    { "text": "nineteen + 1 emoji😀", "length": 19, "problem": "too_short" },
+    { "text": "eighteen chars éè😀😀", "length": 19, "problem": "too_short" },
+    { "text": "twenty with an emoji 😀", "length": 22, "problem": null }
+  ]
+}
