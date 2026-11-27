@@ -220,6 +220,20 @@ describe('PlatformService', () => {
     expect(result.minClientVersion).toBe('0.14.1');
   });
 
+  it('updateConfig accepts a pre-release floor at or below a pre-release deployed version', async () => {
+    rowWithMin('0.0.0');
+    // Dev serves 1.8.3-alpha.5: its own floor of 1.8.3-alpha.1 is satisfiable, while the bare
+    // 1.8.3 orders ABOVE it and is refused - the lockout the pre-release floor exists to avoid.
+    mockDeployed.mockReturnValue('1.8.3-alpha.5');
+
+    const result = await service.updateConfig({ minClientVersion: '1.8.3-alpha.1' }, ADMIN);
+    expect(result.minClientVersion).toBe('1.8.3-alpha.1');
+
+    await expect(service.updateConfig({ minClientVersion: '1.8.3' }, ADMIN)).rejects.toThrow(
+      /above this server's own version 1\.8\.3-alpha\.5/
+    );
+  });
+
   it('updateConfig allows the raise when the deployed version is UNKNOWN', async () => {
     rowWithMin('0.14.0');
     // Not `'0.0.0'` - null is the failed read, and refusing every raise because a file could not be
