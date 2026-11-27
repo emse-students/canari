@@ -365,6 +365,15 @@ export function useConversations() {
   }
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
+    // EVERY DECLARATION IS SAID, because it is the only thing that can make a load unjoinable: one
+    // open that fetched the same page several times (S17, 2026-11-20) left no line naming who
+    // declared the salon stale in between, so the overlap could not be named from the log.
+    Log.d(
+      'CHANNEL',
+      `history of ${channelConversationId ? channelConversationId.slice(0, 16) : 'every salon'} declared stale (${
+        salonLoadsInFlight.size
+      } load(s) in flight)`
+    );
     if (channelConversationId) {
       staleBySalon.set(channelConversationId, (staleBySalon.get(channelConversationId) ?? 0) + 1);
       channelHistoryLoadedAt.delete(channelConversationId);
@@ -912,6 +921,18 @@ export function useConversations() {
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
+    // A LOAD THAT STARTS IS A DECISION, and the reason it did not join is the answer to "why did one
+    // open fetch the page twice": `force`, the press, and what the load in flight was (sent before
+    // the last stale declaration, or none at all).
+    ctx.log(
+      `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} starts (generation ${generation}, ${
+        force ? 'forced' : atTap ? 'at the tap' : 'not forced'
+      }, ${
+        running
+          ? `the one in flight is not joined: stale declaration ${staleDeclarationsOf(channelConversationId)} is newer than its request`
+          : 'none in flight'
+      })`
+    );
     let finishLoad: () => void = () => {};
     const inFlight = {
       sentAt: null as number | null,
