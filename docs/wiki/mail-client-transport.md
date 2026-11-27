@@ -707,6 +707,14 @@ it carries and passes them as data URLs; a `cid:` it does not carry stays empty.
 `allow-same-origin` the app cannot read the document's height, and granting it to measure is what
 D9 refuses. The frame stays light in the dark theme, as mail is written for a light page.
 
+**The frame is drawn once its document is final, and each document is a new frame.** Drawn at once
+and given the resolved `cid:` images a moment later, Chrome kept the FIRST document on screen - the
+inline logo of the preview stayed broken although the frame's `srcdoc` held its data URL, and
+setting the same `srcdoc` again showed it. So `MailHtmlFrame` waits until THIS message's inline parts
+are settled (loaded or failed: `inlineFor === inlineKey`, which also keeps a previous message's
+images from ever being used), and a new document ("Afficher les images") replaces the element
+(`{#key}`) rather than navigating it in place.
+
 ### The sign-out
 
 `auth.ts`'s `clearAuthUnderway` (every Canari sign-out: by choice, expiry, revocation) calls
@@ -731,7 +739,9 @@ message's own parts only, links, the policy), `mailGestures.test.ts`, `mailForma
 `mailErrorText.test.ts` (every kind said, which ones retry), `mailSignOut.test.ts`, the store's
 archive (created once at the root, reused) and whole-mailbox list, `CreateFolder`'s request and
 answer, the gated places (`bottomNavNames.test.ts`), and the components `MailSignIn` (no address
-field; the pending state and its button) and `MailStatePanel`.
+field; the pending state and its button), `MailStatePanel` and `MailHtmlFrame` (no frame before
+the inline parts settle, then ONE carrying them; a failed part still draws it; allowing images is a
+new frame).
 
 ### Still open after lot 3
 

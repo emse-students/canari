@@ -14,6 +14,12 @@
    * THE FRAME HAS A FIXED HEIGHT AND SCROLLS INSIDE: without `allow-same-origin` the app cannot read
    * the document's height, and granting it to measure is the one thing D9 refuses. The height is a
    * share of the viewport, so a long mail scrolls in its frame and a short one leaves white below it.
+   *
+   * THE FRAME IS DRAWN ONCE ITS DOCUMENT IS FINAL, AND EACH DOCUMENT IS A NEW FRAME: changing the
+   * `srcdoc` of a frame whose first document is still loading was seen to keep the FIRST one on
+   * screen (Chrome; the inline image stayed broken although the attribute held its data URL). So the
+   * frame waits until this message's inline parts are settled (`inlineFor === inlineKey`), and a new
+   * document (images allowed) replaces the element (`{#key}`) rather than navigating it in place.
    */
   import { untrack } from 'svelte';
   import { ImageOff } from '@lucide/svelte';
@@ -38,15 +44,25 @@
 
   let showRemote = $state(false);
   let inlineImages = $state<ReadonlyMap<string, string>>(new Map());
-
-  const remoteCount = $derived(remoteImageCount(html));
-  const frameDocument = $derived(
-    mailFrameDocument(html, { showRemoteImages: showRemote, inlineImages })
-  );
+  /** The `inlineKey` `inlineImages` was resolved for: another message's images are never used. */
+  let inlineFor = $state('');
 
   /** The inline parts this message names, keyed by the identity of the message. */
   const inlineParts = $derived(attachments.filter((a) => a.contentId !== null && a.inline));
   const inlineKey = $derived(inlineParts.map((a) => `${a.messageId}:${a.part}`).join(','));
+  /** True once this message's inline parts are settled (loaded or failed), so the document is final. */
+  const settled = $derived(inlineKey === '' || inlineFor === inlineKey);
+  const NO_IMAGES: ReadonlyMap<string, string> = new Map();
+
+  const remoteCount = $derived(remoteImageCount(html));
+  const frameDocument = $derived(
+    settled
+      ? mailFrameDocument(html, {
+          showRemoteImages: showRemote,
+          inlineImages: inlineKey === '' ? NO_IMAGES : inlineImages,
+        })
+      : null
+  );
 
   $effect(() => {
     const key = inlineKey;
@@ -64,7 +80,10 @@
           Log.w('MAIL-UI', `an inline image did not load (${classifyMailFailure(err).kind})`);
         }
       }
-      if (!cancelled) inlineImages = resolved;
+      if (cancelled) return;
+      inlineImages = resolved;
+      inlineFor = key;
+      Log.d('MAIL-UI', `inline images settled (${resolved.size}/${parts.length})`);
     })();
     return () => {
       cancelled = true;
@@ -88,11 +107,17 @@
       <Button variant="link" onclick={allowImages}>{m.mail_images_show()}</Button>
     </div>
   {/if}
-  <iframe
-    {title}
-    srcdoc={frameDocument}
-    sandbox="allow-popups allow-popups-to-escape-sandbox"
-    referrerpolicy="no-referrer"
-    class="h-[60vh] w-full rounded-lg border-0 bg-white"
-  ></iframe>
+  {#if frameDocument === null}
+    <div class="h-[60vh] w-full rounded-lg bg-white" aria-busy="true" data-mail-frame-pending></div>
+  {:else}
+    {#key frameDocument}
+      <iframe
+        {title}
+        srcdoc={frameDocument}
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        referrerpolicy="no-referrer"
+        class="h-[60vh] w-full rounded-lg border-0 bg-white"
+      ></iframe>
+    {/key}
+  {/if}
 </div>
