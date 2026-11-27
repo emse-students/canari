@@ -2152,7 +2152,6 @@
   "readaccess_add_button": "Ajouter",
   "readaccess_empty": "Personne n'est nommé pour le moment.",
   "readaccess_whole_campus": "Tout le campus",
-  "readaccess_istp_note": "L'ISTP compte dans la FSSS.",
   "readaccess_journal_empty": "Aucun accès accordé ou retiré pour le moment.",
   "readaccess_journal_grant": "{actor} a accordé {campus} / {scope} à {name}",
   "readaccess_journal_revoke": "{actor} a retiré {campus} / {scope} à {name}",

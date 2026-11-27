@@ -28,9 +28,9 @@ describe('audience rules as pairs', () => {
     expect(toRules(new Set(campusCells('saint-etienne')))).toEqual([
       { formation: null, campus: 'saint-etienne' },
     ]);
-    expect(toRules(new Set([cellOf('ICM', 'gardanne'), cellOf('FSSS', 'gardanne')]))).toEqual([
+    expect(toRules(new Set([cellOf('ICM', 'gardanne'), cellOf('FISA', 'gardanne')]))).toEqual([
       { formation: 'ICM', campus: 'gardanne' },
-      { formation: 'FSSS', campus: 'gardanne' },
+      { formation: 'FISA', campus: 'gardanne' },
     ]);
     expect(toRules(new Set())).toEqual([]);
   });
@@ -45,7 +45,7 @@ describe('audience rules as pairs', () => {
 
   it('turning one formation off inside a whole campus leaves the others', () => {
     const reached = reachedCells([{ formation: null, campus: 'saint-etienne' }]);
-    reached.delete(cellOf('FSSS', 'saint-etienne'));
+    reached.delete(cellOf('FISA', 'saint-etienne'));
     expect(toRules(reached)).toEqual([
       { formation: 'ICM', campus: 'saint-etienne' },
       { formation: 'ISMIN', campus: 'saint-etienne' },
