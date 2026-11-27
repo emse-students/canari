@@ -161,3 +161,19 @@ describe('a lesson screen', () => {
     expect(testId('tutorial-skip')?.getAttribute('href')).toMatch(/\/games\/tutorial$/);
   });
 });
+
+describe('the bottom bar and the tab bar', () => {
+  it('sticks above the shell measure of the tab bar, never a hard-coded offset (iPhone reading, 2026-11-27)', () => {
+    open('flag');
+    const cls = testId('tutorial-bottom-bar')!.className;
+    expect(cls).toContain('sticky');
+    expect(cls).toContain('bottom-(--bottom-nav-reserve)');
+    // No literal rem/px bottom offset competes with the measure.
+    expect(cls).not.toMatch(/(^|\s)bottom-(\d|\[)/);
+    // Its three controls are all inside the bar, so none can sit under the tab bar.
+    const bar = testId('tutorial-bottom-bar')!;
+    expect(bar.contains(testId('tutorial-lamp'))).toBe(true);
+    expect(bar.contains(testId('tutorial-skip'))).toBe(true);
+    expect(bar.textContent).toContain('Recommencer');
+  });
+});

@@ -207,6 +207,8 @@ for a basics lesson), one line restating the pattern (the last step of its hint,
 keep true), the family progress, **"Motif suivant · <name>"** and "Retour au parcours". The lessons, their proofs and
 `lessons.test.ts` are untouched.
 
+**The bottom bar stays clear of the tab bar** (iPhone reading, 2026-11-27: the old lesson buttons sat under the floating bar until the page was scrolled): it is `sticky` at `bottom-(--bottom-nav-reserve)`, the shell's one measure of what the bar covers (the native bar overwrites it), and `md:bottom-0` where there is none; pinned in `MinesweeperLessonRunner.svelte.test.ts`.
+
 **Progress is a per-device convenience**, stored like the other minesweeper settings (`tutorial/progress.ts`, key
 `canari.minesweeper.tutorial`: the solved ids and whether the lamp was ever used): read synchronously, validated on
 read; a value that is not what we wrote is **logged and ignored** (the path starts blank), an id that no longer exists is

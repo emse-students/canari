@@ -14,4 +14,4 @@ target: 1.8.3
 6. **Solved**: solving a lesson shows Le Pic with the flag, the family progress, "Motif suivant" and "Retour au parcours"; the done tile is green with a check on returning to the path; the progress survives closing the app.
 7. **The mode modal**: at the very first game on a device it opens by itself, centered, with its two cards and the levels under Entraînement; "Jouer" starts the game in that mode; afterwards the bottom pastille opens the same modal and it never opens by itself again; it clears the notch and the home bar and closes on the scrim, the cross and the Android Back gesture without leaving the game; "Libre" appears nowhere.
 
-**What closes it**: items 1, 2, 4, 5, 6 and 7 pass on both phones, and item 3 on at least one. A failure names the item.
+**What closes it**: items 1, 2, 4 (the bottom bar clears the tab bar and the home bar, never under it), 5, 6 and 7 pass on both phones, and item 3 on at least one. A failure names the item.

@@ -230,7 +230,13 @@
       </li>
     </ul>
 
-    <div class="bg-cn-surface flex items-center justify-around gap-2 rounded-2xl px-2 py-3">
+    <!-- THE BOTTOM BAR STAYS CLEAR OF THE TAB BAR (iPhone reading, 2026-11-27: the old buttons sat under the floating
+         bar until the page was scrolled): it sticks above `--bottom-nav-reserve`, the shell's one measure of what the bar
+         covers (the native bar overwrites it with its measured inset), and to the screen edge where there is no bar. -->
+    <div
+      class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 flex items-center justify-around gap-2 rounded-2xl px-2 py-3 md:bottom-0"
+      data-testid="tutorial-bottom-bar"
+    >
       <Button
         variant="bare"
         onclick={restart}
