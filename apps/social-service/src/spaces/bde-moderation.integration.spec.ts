@@ -593,6 +593,23 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     await client.query(
       `INSERT INTO profile_correction_requests ("userId", status) VALUES ('a', 'pending'), ('b', 'refused')`
     );
+    // core-service's Alumni duplicates (migrations 028, 029, 031): one waiting, one marked for a
+    // merge, one whose mark was cancelled (waits again), one resolved - two of the four count.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS alumni_merges ("duplicateUuid" varchar(36) NOT NULL,
+         "markedAt" timestamptz, "completedAt" timestamptz, "cancelledAt" timestamptz);
+       CREATE TABLE IF NOT EXISTS alumni_duplicate_flags ("duplicateUuid" uuid PRIMARY KEY,
+         "resolvedAt" timestamptz)`
+    );
+    await client.query(
+      `INSERT INTO alumni_duplicate_flags ("duplicateUuid", "resolvedAt") VALUES
+         ('00000000-0000-4000-8000-000000000a01', NULL), ('00000000-0000-4000-8000-000000000a02', NULL),
+         ('00000000-0000-4000-8000-000000000a03', NULL), ('00000000-0000-4000-8000-000000000a04', now())`
+    );
+    await client.query(
+      `INSERT INTO alumni_merges ("duplicateUuid", "markedAt", "cancelledAt") VALUES
+         ('00000000-0000-4000-8000-000000000a02', now(), NULL), ('00000000-0000-4000-8000-000000000a03', now(), now())`
+    );
     const ds = new DataSource({
       type: 'postgres',
       url: URL,
@@ -625,11 +642,13 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       expect(await queues.pendingCounts('seVal', false)).toEqual({ agenda: 1 });
       // A member with no tier is told nothing - not even that a queue is empty.
       expect(await queues.pendingCounts('seStudent', false)).toEqual({});
-      // The platform admin: every pending item of all three.
+      // The platform admin: every pending item of all four (the duplicates: the waiting one and the
+      // one whose mark was cancelled; the marked and the resolved ones are not pending).
       expect(await queues.pendingCounts('anyone', true)).toEqual({
         'profile-corrections': 1,
         moderation: 8,
         agenda: 3,
+        'alumni-duplicates': 2,
       });
     } finally {
       await ds.destroy();

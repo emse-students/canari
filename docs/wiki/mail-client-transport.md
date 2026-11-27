@@ -190,7 +190,7 @@ own, the CAS link is required, the binding is exactly Canari's three providers).
 **What Canari keeps: the CLASS, never the address** (charter principle 1, "your messages are yours":
 the server keeps what it needs to decide, and the address is not that). `parseProfileClaims` reads the
 claim into `mailClass` through `readSchoolMail` (`apps/core-service/src/users/mail-class.ts`), the
-upsert stores it on `users."mailClass"` (migration `031_users_mail_class.sql`, additive, nullable,
+upsert stores it on `users."mailClass"` (migration `032_users_mail_class.sql`, additive, nullable,
 `lock_timeout 5s` - not held), and a sign-in whose claim vanished sets it back to NULL. The address
 leaves in the callback's answer as `school_mail`, like `id_token`, and the logs name its class only.
 A restore (account-restore) carries no MiConnect claim: it removes the device's copy, and the class

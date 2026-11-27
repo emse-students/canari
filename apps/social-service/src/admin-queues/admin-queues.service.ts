@@ -12,10 +12,15 @@ import {
 import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import { holdsBdeAgendaRightOverSql } from '../spaces/bde';
 import { AdminQueueSignal, type AdminQueueChange } from './admin-queue-signal.service';
-import { ADMIN_MODERATION_TARGET, ADMIN_PROFILE_CORRECTIONS_TARGET } from '../push/push-target';
+import {
+  ADMIN_ALUMNI_DUPLICATES_TARGET,
+  ADMIN_MODERATION_TARGET,
+  ADMIN_PROFILE_CORRECTIONS_TARGET,
+} from '../push/push-target';
 import {
   LOCK_REPORT_SUBJECT_SQL,
   REPORT_ALREADY_ANNOUNCED_SQL,
+  alumniDuplicatePendingSql,
   calendarEventPendingSql,
   profileCorrectionPendingSql,
   reportPendingSql,
@@ -25,7 +30,12 @@ import {
  * The admin queues a pending count is kept for, named by the key of their entry in the client's
  * admin registry (`frontend/src/lib/admin/adminSections.ts`), so a count lands on its row by name.
  */
-export const ADMIN_QUEUE_KEYS = ['agenda', 'moderation', 'profile-corrections'] as const;
+export const ADMIN_QUEUE_KEYS = [
+  'agenda',
+  'moderation',
+  'profile-corrections',
+  'alumni-duplicates',
+] as const;
 
 /** One of {@link ADMIN_QUEUE_KEYS}. */
 export type AdminQueueKey = (typeof ADMIN_QUEUE_KEYS)[number];
@@ -37,12 +47,16 @@ export type AdminQueueKey = (typeof ADMIN_QUEUE_KEYS)[number];
  */
 export type AdminQueueCounts = Partial<Record<AdminQueueKey, number>>;
 
-/** The two queues whose new items are told to every global admin (owner, 2026-11-18). */
-type AnnouncedQueue = 'profile-corrections' | 'moderation';
+/** The queues whose new items are told to every global admin (owner, 2026-11-18; 2026-11-26). */
+type AnnouncedQueue = 'profile-corrections' | 'moderation' | 'alumni-duplicates';
 
 const ANNOUNCED: Readonly<
-  Record<AnnouncedQueue, { type: 'admin_profile_correction' | 'admin_report'; target: string }>
+  Record<
+    AnnouncedQueue,
+    { type: 'admin_profile_correction' | 'admin_report' | 'admin_alumni_duplicate'; target: string }
+  >
 > = {
+  'alumni-duplicates': { type: 'admin_alumni_duplicate', target: ADMIN_ALUMNI_DUPLICATES_TARGET },
   'profile-corrections': {
     type: 'admin_profile_correction',
     target: ADMIN_PROFILE_CORRECTIONS_TARGET,
@@ -58,7 +72,7 @@ const ANNOUNCED: Readonly<
  * a reload, on another device, and the moment another admin handles an item. The scope of a queue is
  * the scope its page and its actions already apply - `reportInBdeScopeSql` for a BDE or institution
  * moderator, `holdsBdeAgendaRightOverSql` for an event validator (each event's `canValidate`), the
- * platform administrator alone for the profile corrections - so a count never exceeds what the same
+ * platform administrator alone for the profile corrections and the Alumni duplicates - so a count never exceeds what the same
  * caller is shown and allowed to handle.
  *
  * THE NOTICE CLEARS BY ITSELF: its bell row is shown only while its reader is a global admin and the
@@ -88,7 +102,7 @@ export class AdminQueuesService {
 
   /**
    * The caller's pending counts, ONE statement over the queues their tiers open: a global admin all
-   * three; otherwise the reports if they moderate somewhere (`isContentModerator`, the queue's own
+   * four; otherwise the reports if they moderate somewhere (`isContentModerator`, the queue's own
    * door) and the agenda if they validate events somewhere (`isUserBdeAdmin`, the agenda queue's
    * door) - each counted within the reach their page applies.
    */
@@ -103,6 +117,8 @@ export class AdminQueuesService {
     if (isGlobalAdmin) {
       columns.push(`(SELECT count(*)::int FROM profile_correction_requests pcr
           WHERE ${profileCorrectionPendingSql('pcr')}) AS "profile-corrections"`);
+      columns.push(`(SELECT count(*)::int FROM alumni_duplicate_flags adf
+          WHERE ${alumniDuplicatePendingSql('adf')}) AS "alumni-duplicates"`);
     }
     if (moderates) {
       columns.push(`(SELECT count(*)::int FROM content_reports r WHERE ${reportPendingSql('r')}
@@ -145,6 +161,104 @@ export class AdminQueuesService {
   }
 
   /**
+   * Core-service found Alumni duplicates that wait for an attachment (`AlumniDuplicateQueue`, a
+   * sign-in's flush or a reading's backlog - ONCE per duplicate, never again): EVERY global admin is
+   * told - no one asked for it, so no one is excluded - by ONE push and ONE bell row for the batch,
+   * however many it holds (a backlog found at once is not a flood in every admin's bell). The row is
+   * keyed on the batch's first duplicate, lists the batch in its `meta` and stays while ANY of them
+   * still waits (`BELL_ROW_GATE`); the live count carries the rest.
+   *
+   * ONCE PER DUPLICATE, whatever the caller does, and NEVER LOST: the CLAIM and the BELL ROWS are ONE
+   * transaction (`alumni_duplicate_announcements`, one row per duplicate and per flag incarnation).
+   * The duplicates are claimed - one INSERT ... ON CONFLICT DO NOTHING/UPDATE RETURNING - and ONLY the
+   * newly claimed get rows; a failure while the rows are written rolls the claim back with them, so a
+   * crash or an error leaves nothing claimed and the retry tells. The PUSH follows the commit (a push
+   * sent from inside a transaction would announce rows that may still roll back); a push that fails
+   * leaves the rows and the claim - the bell has it - and is logged at error. A lost answer replayed,
+   * a set that grew and two flushes at once never tell a duplicate twice. The ledger is swept of the
+   * duplicates whose flag is gone, in the same transaction as the claim. Throws on a failed write:
+   * the internal caller keeps the notice owed. Answers how many admins have the bell row, and how
+   * many duplicates were claimed here or already told.
+   */
+  async announceAlumniDuplicates(
+    duplicateUuids: readonly string[]
+  ): Promise<{ told: number; claimed: number; skipped: number; noAdmin: boolean }> {
+    const { type, target } = ANNOUNCED['alumni-duplicates'];
+    const distinct = [...new Set(duplicateUuids)];
+    this.logger.log(`[ADMIN_QUEUES] ${distinct.length} Alumni duplicate(s) to announce`);
+    try {
+      const admins: { id: string }[] = await this.reports.manager.query(
+        `SELECT id FROM users WHERE admin = true`
+      );
+      if (admins.length === 0) {
+        this.logger.warn(`[ADMIN_QUEUES] ${type}: no global admin to tell`);
+        // The typed answer "nobody to tell": nothing was claimed, so the caller must NOT record the
+        // duplicates as told - an admin added later is told by the next flush.
+        return { told: 0, claimed: 0, skipped: distinct.length, noAdmin: true };
+      }
+      const { claimed, told } = await this.reports.manager.transaction(async (tx) => {
+        await tx.query(
+          `DELETE FROM alumni_duplicate_announcements a
+            WHERE NOT EXISTS (SELECT 1 FROM alumni_duplicate_flags f WHERE f."duplicateUuid" = a."duplicateUuid")`
+        );
+        // A uuid is claimed once per INCARNATION of its flag (its `flaggedAt`): the same flag never
+        // twice, a duplicate erased and flagged again is told anew. ORDER BY keeps two flushes that
+        // overlap from taking the rows in opposite orders.
+        const rows = (await tx.query(
+          `INSERT INTO alumni_duplicate_announcements ("duplicateUuid", "flaggedAt")
+           SELECT f."duplicateUuid", f."flaggedAt" FROM alumni_duplicate_flags f
+            WHERE f."duplicateUuid" = ANY($1::uuid[]) ORDER BY 1
+           ON CONFLICT ("duplicateUuid") DO UPDATE
+             SET "flaggedAt" = EXCLUDED."flaggedAt", "announcedAt" = clock_timestamp()
+             WHERE alumni_duplicate_announcements."flaggedAt" IS DISTINCT FROM EXCLUDED."flaggedAt"
+           RETURNING "duplicateUuid"::text AS uuid`,
+          [distinct]
+        )) as { uuid: string }[];
+        const uuids = rows.map((r) => r.uuid);
+        if (uuids.length === 0) return { claimed: uuids, told: 0 };
+        const written = await this.notifications.createNotificationRows({
+          manager: tx,
+          type,
+          postId: uuids[0],
+          actorId: SYSTEM_ACTOR_ID,
+          actorName: SYSTEM_ACTOR_NAME,
+          text: '',
+          rows: admins.map((a) => ({ recipientId: a.id, meta: { duplicateUuids: uuids } })),
+        });
+        return { claimed: uuids, told: written };
+      });
+      const skipped = distinct.length - claimed.length;
+      if (skipped > 0) {
+        this.logger.debug(
+          `[ADMIN_QUEUES] ${skipped} Alumni duplicate(s) were already told, or have no flag: not told again`
+        );
+      }
+      if (claimed.length > 0 && told > 0) {
+        try {
+          await this.notifications.pushNotice({
+            recipientIds: admins.map((a) => a.id),
+            type,
+            actorId: SYSTEM_ACTOR_ID,
+            actorName: SYSTEM_ACTOR_NAME,
+            text: '',
+            pushData: { target },
+          });
+        } catch (err) {
+          this.logger.error(
+            `[ADMIN_QUEUES] ${type}: bell rows written for ${told} admin(s), their PUSH failed: ${String(err)}`
+          );
+        }
+        this.logger.log(
+          `[ADMIN_QUEUES] ${type} ${claimed.length} duplicate(s) told to ${told} of ${admins.length} admin(s)`
+        );
+      }
+      return { told, claimed: claimed.length, skipped, noAdmin: false };
+    } finally {
+      await this.signal.changed({ queue: 'alumni-duplicates' });
+    }
+  }
+
+  /**
    * A report was filed: every global admin but its reporter is told - UNLESS a notice about its
    * subject is still on their bells (`REPORT_ALREADY_ANNOUNCED_SQL`), so five reports on one post are
    * one notice, while a subject that waited before the notices existed, or whose announcement
@@ -180,7 +294,7 @@ export class AdminQueuesService {
 
   /**
    * The notice of a new item in `queue`, to every global admin (`users.admin`) but `excludeId` - the
-   * person who filed it, never told of their own request. The PLATFORM is the actor and the row
+   * person who filed it, never told of their own request (null: nobody asked, all are told). The PLATFORM is the actor and the row
    * carries no text: who asked and what they wrote are the queue's to show (the content-free push,
    * `adminProfileCorrectionContent`). Answers how many admins have the bell row; none is said at
    * WARN, since an item nobody is told about waits unseen. Rows written and only the push failed is
@@ -189,11 +303,12 @@ export class AdminQueuesService {
   private async announce(
     queue: AnnouncedQueue,
     itemId: string,
-    excludeId: string
+    excludeId: string | null,
+    meta?: Record<string, unknown>
   ): Promise<number> {
     const { type, target } = ANNOUNCED[queue];
     const admins: { id: string }[] = await this.reports.manager.query(
-      `SELECT id FROM users WHERE admin = true AND id <> $1`,
+      `SELECT id FROM users WHERE admin = true AND id IS DISTINCT FROM $1`,
       [excludeId]
     );
     if (admins.length === 0) {
@@ -210,6 +325,7 @@ export class AdminQueuesService {
         actorName: SYSTEM_ACTOR_NAME,
         text: '',
         pushData: { target },
+        meta,
       });
     } catch (err) {
       if (!(err instanceof NotificationPushFailedError)) throw err;

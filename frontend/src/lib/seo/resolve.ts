@@ -156,7 +156,6 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/games': () => m.games_page_title(),
   '/games/play': () => m.minesweeper_title(),
   '/games/tutorial': () => m.minesweeper_tutorial_title(),
-  '/games/tutorial/patterns': () => m.minesweeper_patterns_title(),
   '/institutions': () => m.inst_heading(),
   '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),
@@ -224,6 +223,11 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
   // One game's replay: a page of its own, named for what it is, never for the score id it carries.
   if (path.startsWith('/games/replay/')) {
     return appPageSeo(path, m.minesweeper_replay_open());
+  }
+
+  // One lesson of the tutorial: named for the tutorial, never for the lesson id it carries.
+  if (path.startsWith('/games/tutorial/')) {
+    return appPageSeo(path, m.minesweeper_tutorial_title());
   }
 
   // A settings section is a page of its own, named for what it holds.

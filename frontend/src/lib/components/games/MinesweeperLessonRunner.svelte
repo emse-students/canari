@@ -1,164 +1,360 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import { Lightbulb, RotateCcw } from '@lucide/svelte';
+  import { ChevronRight, RotateCcw } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import Button from '$lib/components/ui/Button.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
-  import type { PickerOption } from '$lib/components/ui/picker';
+  import LePic, { type PicMood, type PicPose } from '$lib/components/games/LePic.svelte';
+  import MinerLamp from '$lib/components/games/MinerLamp.svelte';
   import MinesweeperMiniGrid from '$lib/components/games/MinesweeperMiniGrid.svelte';
-  import type { Lesson } from '$lib/minesweeper/tutorial/lessons';
+  import MinesweeperControlsChoice from '$lib/components/games/MinesweeperControlsChoice.svelte';
+  import { loadFlagPrimary, playedByTouch, saveFlagPrimary } from '$lib/minesweeper/controls';
+  import {
+    countDone,
+    shortName,
+    tutorialPathHref,
+    type LessonPlace,
+  } from '$lib/minesweeper/tutorial/path';
+  import {
+    markLampUsed,
+    markLessonDone,
+    loadTutorialProgress,
+  } from '$lib/minesweeper/tutorial/progress';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE LESSON READER shared by the tutorial and its annex, the pattern catalogue (owner, 2026-11-26): one
-   * lesson at a time on a playable mini-grid, an "Indice" button that walks the explanation, a restart, and
-   * the way to the neighbours. The closing screen is the caller's (`finish`). A list too long to walk with
-   * "next" - the catalogue - also offers a jump, grouped by the lessons' `section`.
-   * docs/wiki/frontend/modules/minesweeper.md
+   * ONE LESSON OF THE TUTORIAL, as a screen (owner, 2026-11-27): Le Pic beside a speech bubble that says the
+   * goal and then each step of the lamp, the playable mini-grid with its marks, the legend of the three
+   * colours, and a bottom bar - restart, the miner's lamp, skip. Solving the lesson (the mini-grid says so,
+   * once) records it as done on this device and shows the solved screen. The lessons and their proofs are
+   * `lessons.ts` / `patterns.ts`, untouched: this is only how one is read.
+   * docs/wiki/frontend/modules/minesweeper.md, "The tutorial path"
    */
   interface Props {
-    lessons: readonly Lesson[];
-    /** What follows the last lesson; `restart` goes back to the first. */
-    finish: Snippet<[{ restart: () => void }]>;
-    /** Offers a "jump to" list of every lesson, grouped by section. */
-    jump?: boolean;
+    place: LessonPlace;
   }
 
-  let { lessons, finish, jump = false }: Props = $props();
+  let { place }: Props = $props();
 
   type Outcome = 'playing' | 'solved' | 'lost';
 
-  /** The lesson on screen; one past the last is the closing screen. */
-  let index = $state(0);
-  /** Bumped by a restart and by a lesson change, so the mini-grid is a new component each time. */
+  const lesson = $derived(place.lesson);
+  /** Bumped by a restart, so the mini-grid is a new component each time. */
   let attempt = $state(0);
   /** The step of the lesson's hints being shown, or null. */
   let hintStep = $state<number | null>(null);
   let outcome = $state<Outcome>('playing');
+  let progress = $state(loadTutorialProgress());
 
-  const lesson = $derived(index < lessons.length ? lessons[index] : null);
-  /** The family a catalogue entry belongs to, then a separator: a string, so no whitespace is lost in markup. */
-  const sectionPrefix = $derived(lesson?.section ? `${lesson.section()} · ` : '');
+  const done = $derived(new Set(progress.done));
+  const familyTotal = $derived(place.family.lessons.length);
+  const familyDone = $derived(countDone(place.family.lessons, done));
+  const stepCount = $derived(lesson.hints.length);
+  /** One dot per step of the lamp. */
+  const stepDots = $derived(Array.from({ length: stepCount }, (_, i) => i));
+  const lastStep = $derived(hintStep !== null && hintStep + 1 >= stepCount);
+  /** The lamp pulses until it was pressed once on this device. */
+  const pulse = $derived(hintStep === null && !progress.lampUsed);
+  const isPattern = $derived(place.tab === 'patterns');
 
-  function reset() {
+  /**
+   * THE GESTURES (owner, 2026-11-27): asked once, before the first lesson, and stored where the game reads
+   * them; the grid says them in one quiet line, with a way to swap them.
+   */
+  const stored = loadFlagPrimary();
+  let chosen = $state(stored !== null);
+  let flagPrimary = $state(stored ?? false);
+  const touch = playedByTouch();
+
+  function chooseGestures(value: boolean) {
+    flagPrimary = value;
+    chosen = true;
+    saveFlagPrimary(value);
+  }
+
+  /** What Le Pic does: thinks at the start, points while he explains, is glad when the safe cell is shown. */
+  const mood = $derived<PicMood>(
+    outcome === 'lost' ? 'worried' : hintStep === null ? 'think' : lastStep ? 'happy' : 'neutral'
+  );
+  const pose = $derived<PicPose>(hintStep === null || outcome === 'lost' ? 'rest' : 'point');
+
+  function restart() {
+    console.debug('[minesweeper] lesson restarted', { id: lesson.id });
     attempt += 1;
     hintStep = null;
     outcome = 'playing';
   }
 
-  function go(to: number) {
-    index = Math.max(0, Math.min(lessons.length, to));
-    reset();
-  }
-
-  /** Shows the first hint, then the next one, then hides them. */
+  /** Lights the first step, then the next one, then hides them. */
   function nextHint() {
-    if (!lesson) return;
-    hintStep = hintStep === null ? 0 : hintStep + 1 < lesson.hints.length ? hintStep + 1 : null;
+    if (hintStep === null && !progress.lampUsed) progress = markLampUsed();
+    hintStep = hintStep === null ? 0 : hintStep + 1 < stepCount ? hintStep + 1 : null;
+    console.debug('[minesweeper] lamp pressed', { id: lesson.id, step: hintStep });
   }
 
-  /** The jump list: every lesson, under the heading of its section. */
-  const options = $derived<PickerOption[]>(
-    lessons.map((l, i) => ({ value: String(i), label: l.title(), group: l.section?.() }))
+  /** The mini-grid says the goal is met: recorded once, then the solved screen. */
+  function solved() {
+    progress = markLessonDone(lesson.id);
+    outcome = 'solved';
+  }
+
+  const hintLabel = $derived(
+    hintStep === null
+      ? m.minesweeper_tutorial_hint_button()
+      : hintStep + 1 < stepCount
+        ? m.minesweeper_tutorial_hint_next()
+        : m.minesweeper_tutorial_hint_hide()
+  );
+
+  const nextHref = $derived(
+    place.next
+      ? resolve('/games/tutorial/[id]', { id: place.next.id })
+      : tutorialPathHref(place.tab)
   );
 </script>
 
-{#if lesson}
-  <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-4">
-    {#if jump}
-      <Select
-        label={m.minesweeper_patterns_jump()}
-        value={String(index)}
-        {options}
-        onValueChange={(v) => go(Number(v))}
-      />
-    {/if}
-    <p class="text-text-muted text-sm font-semibold" data-testid="tutorial-progress">
-      {sectionPrefix}{jump
-        ? m.minesweeper_patterns_n({ n: String(index + 1), total: String(lessons.length) })
-        : m.minesweeper_tutorial_lesson_n({ n: String(index + 1), total: String(lessons.length) })}
+{#if outcome !== 'solved' && !chosen}
+  <MinesweeperControlsChoice {touch} onChoose={chooseGestures} />
+{/if}
+
+{#if outcome === 'solved'}
+  <section
+    class="bg-cn-surface flex flex-col items-center gap-4 rounded-2xl p-4 text-center"
+    data-testid="tutorial-solved"
+  >
+    <LePic size={160} mood="happy" pose="flag" />
+    <span
+      class="bg-accent text-on-accent font-display rounded-full px-3 py-1 text-base font-bold"
+      data-testid="tutorial-solved-name"
+    >
+      {shortName(lesson.title())}
+    </span>
+    <h2 class="font-display text-text-main text-2xl font-bold">
+      {isPattern ? m.minesweeper_done_title_pattern() : m.minesweeper_done_title_lesson()}
+    </h2>
+    <p class="text-text-muted text-sm" data-testid="tutorial-solved-line">
+      {lesson.hints.at(-1)?.text()}
     </p>
-    <h2 class="text-text-main text-lg font-bold">{lesson.title()}</h2>
-    <p class="text-text-main text-sm">{lesson.body()}</p>
+
+    <div class="bg-cn-bg w-full space-y-2 rounded-2xl p-3 text-left">
+      <div class="flex items-center justify-between text-sm font-bold">
+        <span class="text-text-main">{place.family.label()}</span>
+        <span class="text-text-main" data-testid="tutorial-solved-progress">
+          {familyDone} / {familyTotal}
+        </span>
+      </div>
+      <div
+        class="bg-cn-surface h-2.5 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={familyTotal}
+        aria-valuenow={familyDone}
+        aria-label={place.family.label()}
+      >
+        <div
+          class="bg-green-ok h-full rounded-full"
+          style:width="{(familyDone / familyTotal) * 100}%"
+        ></div>
+      </div>
+      <p class="text-text-muted text-xs">
+        {familyDone >= familyTotal
+          ? m.minesweeper_done_family_complete()
+          : m.minesweeper_done_remaining({ n: String(familyTotal - familyDone) })}
+      </p>
+    </div>
+
+    <div class="flex w-full flex-col gap-2">
+      {#if place.next}
+        <Button href={nextHref} class="w-full" data-testid="tutorial-solved-next">
+          {isPattern
+            ? m.minesweeper_done_next_pattern({ name: shortName(place.next.title()) })
+            : m.minesweeper_done_next_lesson({ name: shortName(place.next.title()) })}
+        </Button>
+      {:else}
+        <Button href={resolve('/games/play')} class="w-full">
+          {m.minesweeper_tutorial_play()}
+        </Button>
+      {/if}
+      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="w-full">
+        {m.minesweeper_lesson_back()}
+      </Button>
+    </div>
+  </section>
+{:else}
+  <section class="space-y-4">
+    <div class="flex items-center gap-3">
+      <p class="text-text-muted text-sm font-semibold" data-testid="tutorial-progress">
+        {place.family.label()} · {m.minesweeper_lesson_position({
+          n: String(place.indexInFamily + 1),
+          total: String(familyTotal),
+        })}
+      </p>
+      <div
+        class="grid flex-1 gap-1"
+        style:grid-template-columns="repeat({familyTotal}, minmax(0, 1fr))"
+      >
+        {#each place.family.lessons as other, i (other.id)}
+          <span
+            class="h-1.5 rounded-full {done.has(other.id)
+              ? 'bg-green-ok'
+              : i === place.indexInFamily
+                ? 'bg-accent'
+                : 'bg-cn-border'}"
+          ></span>
+        {/each}
+      </div>
+    </div>
+
+    <div class="flex items-end gap-2">
+      <LePic size={96} {mood} {pose} />
+      <div
+        class="bg-cn-surface text-text-main relative mb-4 min-h-18 flex-1 rounded-2xl px-3.5 py-3 text-sm"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          class="bg-cn-surface absolute bottom-4 -left-1.5 size-3 rotate-45 rounded-sm"
+          aria-hidden="true"
+        ></span>
+        {#if outcome === 'lost'}
+          <p class="text-red-err font-semibold" data-testid="tutorial-lost">
+            {m.minesweeper_tutorial_lost()}
+          </p>
+        {:else if hintStep !== null}
+          <p class="text-text-muted text-xs font-bold">
+            {m.minesweeper_lesson_hint_tag({ n: String(hintStep + 1), total: String(stepCount) })}
+          </p>
+          <p data-testid="tutorial-hint">{lesson.hints[hintStep].text()}</p>
+        {:else}
+          <p class="text-text-muted text-xs font-bold">
+            {m.minesweeper_lesson_goal()}
+          </p>
+          <p data-testid="tutorial-goal">{lesson.body()}</p>
+        {/if}
+      </div>
+    </div>
 
     {#key `${lesson.id}-${attempt}`}
       <MinesweeperMiniGrid
         {lesson}
         {hintStep}
-        onSolved={() => (outcome = 'solved')}
+        onSolved={solved}
         onLost={() => (outcome = 'lost')}
+        {flagPrimary}
+        {touch}
+        onInvert={() => chooseGestures(!flagPrimary)}
       />
     {/key}
 
-    <div class="min-h-12" role="status" aria-live="polite">
-      {#if outcome === 'solved'}
-        <p class="text-green-ok text-sm font-semibold" data-testid="tutorial-solved">
-          {m.minesweeper_tutorial_solved()}
-        </p>
-      {:else if outcome === 'lost'}
-        <p class="text-red-err text-sm font-semibold" data-testid="tutorial-lost">
-          {m.minesweeper_tutorial_lost()}
-        </p>
-      {:else if hintStep !== null}
-        <p
-          class="bg-accent/10 text-text-main rounded-lg px-3 py-2 text-sm"
-          data-testid="tutorial-hint"
-        >
-          {lesson.hints[hintStep].text()}
-        </p>
-        <!-- What the three outlines mean: the colour is the whole message, so it is said once. -->
-        <ul
-          class="text-text-muted mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
-          data-testid="tutorial-legend"
-        >
-          <li class="flex items-center gap-1.5">
-            <span class="border-red-err bg-red-err/15 size-3 rounded border-2"></span>
-            {m.minesweeper_tutorial_legend_mine()}
-          </li>
-          <li class="flex items-center gap-1.5">
-            <span class="border-accent bg-accent/20 size-3 rounded border-2"></span>
-            {m.minesweeper_tutorial_legend_group()}
-          </li>
-          <li class="flex items-center gap-1.5">
-            <span class="border-green-ok bg-green-ok/15 size-3 rounded border-2"></span>
-            {m.minesweeper_tutorial_legend_safe()}
-          </li>
-        </ul>
-      {/if}
-    </div>
+    <!-- What the three outlines mean: the colour is the whole message, so it is said once, under the grid. -->
+    <ul
+      class="text-text-muted flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs font-semibold"
+      data-testid="tutorial-legend"
+    >
+      <li class="flex items-center gap-1.5">
+        <span class="border-red-err bg-red-err/15 size-3 rounded border-2"></span>
+        {m.minesweeper_tutorial_legend_mine()}
+      </li>
+      <li class="flex items-center gap-1.5">
+        <span class="border-accent bg-accent/20 size-3 rounded border-2"></span>
+        {m.minesweeper_tutorial_legend_group()}
+      </li>
+      <li class="flex items-center gap-1.5">
+        <span class="border-green-ok bg-green-ok/15 size-3 rounded border-2"></span>
+        {m.minesweeper_tutorial_legend_safe()}
+      </li>
+    </ul>
 
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-2">
-        {#if outcome === 'playing'}
-          <Button variant="secondary" size="compact" onclick={nextHint}>
-            <Lightbulb size={16} strokeWidth={2.25} />
-            {hintStep === null
-              ? m.minesweeper_tutorial_hint_button()
-              : hintStep + 1 < lesson.hints.length
-                ? m.minesweeper_tutorial_hint_next()
-                : m.minesweeper_tutorial_hint_hide()}
-          </Button>
-        {/if}
-        <Button variant="ghost" size="compact" onclick={reset}>
-          <RotateCcw size={16} strokeWidth={2.25} />
-          {m.minesweeper_tutorial_restart()}
-        </Button>
-      </div>
-      <div class="flex items-center gap-2">
-        {#if index > 0}
-          <Button variant="ghost" size="compact" onclick={() => go(index - 1)}>
-            {m.minesweeper_tutorial_prev()}
-          </Button>
-        {/if}
-        <Button
-          variant={outcome === 'solved' ? 'primary' : 'secondary'}
-          size="compact"
-          onclick={() => go(index + 1)}
-        >
-          {m.minesweeper_tutorial_next()}
-        </Button>
-      </div>
+    <!-- THE BOTTOM BAR STAYS CLEAR OF THE TAB BAR (iPhone reading, 2026-11-27: the old buttons sat under the floating
+         bar until the page was scrolled): it sticks above `--bottom-nav-reserve`, the shell's one measure of what the bar
+         covers (the native bar overwrites it with its measured inset), and to the screen edge where there is no bar. -->
+    <div
+      class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 flex items-center justify-around gap-2 rounded-2xl px-2 py-3 md:bottom-0"
+      data-testid="tutorial-bottom-bar"
+    >
+      <Button
+        variant="bare"
+        onclick={restart}
+        class="text-text-muted flex w-20 flex-col items-center gap-1.5 text-xs font-bold"
+      >
+        <RotateCcw size={24} strokeWidth={2.4} />
+        {m.minesweeper_tutorial_restart()}
+      </Button>
+
+      <Button
+        variant="bare"
+        onclick={nextHint}
+        aria-label={hintLabel}
+        data-testid="tutorial-lamp"
+        class="flex flex-col items-center gap-1.5"
+      >
+        <span class="lamp-button" class:lamp-lit={hintStep !== null} class:lamp-pulse={pulse}>
+          <MinerLamp lit={hintStep !== null} size={58} />
+        </span>
+        <span class="text-accent-text text-sm font-bold">{hintLabel}</span>
+        <span class="flex gap-1.5" aria-hidden="true">
+          {#each stepDots as i (i)}
+            <span
+              class="size-2 rounded-full {hintStep !== null && i <= hintStep
+                ? 'bg-accent'
+                : 'bg-cn-border'}"
+            ></span>
+          {/each}
+        </span>
+      </Button>
+
+      <Button
+        href={nextHref}
+        variant="bare"
+        class="text-text-muted flex w-20 flex-col items-center gap-1.5 text-xs font-bold"
+        data-testid="tutorial-skip"
+      >
+        <ChevronRight size={24} strokeWidth={2.4} />
+        {m.minesweeper_lesson_skip()}
+      </Button>
     </div>
   </section>
-{:else}
-  {@render finish({ restart: () => go(0) })}
 {/if}
+
+<style>
+  /* THE LAMP BUTTON: a big round yellow disc under the lamp. It pulses a halo until the lamp was used once
+     on this device, and glows while a hint is shown. Colours are the app's tokens. */
+  .lamp-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 5.25rem;
+    height: 5.25rem;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black);
+  }
+  .lamp-lit {
+    box-shadow:
+      0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
+      0 0 1.75rem 0.375rem color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  .lamp-pulse {
+    animation: lamp-halo 1.8s ease-out infinite;
+  }
+  @keyframes lamp-halo {
+    0% {
+      box-shadow:
+        0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
+        0 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent);
+    }
+    70% {
+      box-shadow:
+        0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
+        0 0 0 1.125rem color-mix(in srgb, var(--accent) 0%, transparent);
+    }
+    100% {
+      box-shadow:
+        0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
+        0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lamp-pulse {
+      animation: none;
+    }
+  }
+</style>

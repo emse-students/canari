@@ -56,6 +56,8 @@ ok('pausedBody reads postData', pausedBody({ postData: 'abc' }) === 'abc');
 ok('pausedBody decodes postDataEntries', pausedBody({ postDataEntries: [{ bytes: Buffer.from('ab').toString('base64') }, { bytes: Buffer.from('c').toString('base64') }] }) === 'abc');
 ok('pausedBody is null with no body', pausedBody({}) === null);
 ok('compileRules keeps bodyIncludes', compileRules([{ match: '/x', bodyIncludes: 'g1', fault: 'hold once' }])[0].bodyIncludes === 'g1');
+ok('compileRules keeps keepBody only when it is true', compileRules([{ match: '/x', fault: 'status-unsent 503', keepBody: true }])[0].keepBody === true && compileRules([{ match: '/x', fault: 'hold' }])[0].keepBody === false);
+ok('claimRule hands the paused request to the gate', (() => { const c = compileRules([{ match: '/c', fault: 'status-unsent 503', when: (req) => req.body !== 'pass' }]); return claimRule(c, { url: '/c', method: 'POST', stage: 'Request', body: 'pass' }) === null && claimRule(c, { url: '/c', method: 'POST', stage: 'Request', body: 'other' }) !== null; })());
 
 // ── accounting: a once is taken once, even by two requests paused together ──────────────────────
 {

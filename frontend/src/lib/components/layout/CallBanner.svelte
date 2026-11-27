@@ -116,6 +116,7 @@
       ? 'bg-neutral-700'
       : 'bg-emerald-700'}"
     data-testid="call-banner"
+    data-app-banner
     role="region"
     aria-label={m.call_banner_region_label()}
   >

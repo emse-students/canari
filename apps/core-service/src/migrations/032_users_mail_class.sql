@@ -1,4 +1,4 @@
--- Migration 031: the class of a user's school address, for the mail client's relay.
+-- Migration 032: the class of a user's school address, for the mail client's relay.
 --
 -- docs/wiki/mail-client-transport.md#eligibility (owner, 2026-11-27). MiConnect hands Canari's
 -- providers the school address of a CAS-created account (claim `school_mail`); core-service keeps

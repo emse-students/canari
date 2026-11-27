@@ -49,7 +49,7 @@ export class User {
 
   /**
    * The class of the school address MiConnect sent at the last sign-in (claim `school_mail`,
-   * migration 031): `student`, `staff`, or `null` - the mail client is not offered. Never the address
+   * migration 032): `student`, `staff`, or `null` - the mail client is not offered. Never the address
    * (charter principle 1). Read by the mail relay's admission (`InternalMailController`).
    */
   @Column({ type: 'varchar', length: 16, nullable: true })

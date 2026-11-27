@@ -912,7 +912,7 @@
          the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
          divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
          shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-    <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
+    <div class="app-content-row flex min-h-0 w-full flex-1" inert={bootBlocked}>
       <svelte:boundary
         onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}
       >

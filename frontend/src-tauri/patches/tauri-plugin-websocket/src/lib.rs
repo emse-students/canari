@@ -38,7 +38,7 @@ use tokio_tungstenite::{
     },
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -106,6 +106,30 @@ impl Serialize for Error {
 
 #[derive(Default)]
 struct ConnectionManager(Mutex<HashMap<Id, WebSocketWriter>>);
+
+/// CANARI PATCH: the connections whose page asked to LEAVE (a close with [`GOING_AWAY`]). Their
+/// reader keeps running until the server answers the close, and every frame it forwards goes into
+/// the channel of a document that no longer exists: `[TAURI] Couldn't find callback id N` after a
+/// reload. A connection in this set forwards nothing more.
+#[derive(Default)]
+struct LeavingConnections(Mutex<HashSet<Id>>);
+
+/// CANARI PATCH: RFC 6455 close code 1001, "going away" - what a page sends when it is the one
+/// going, as opposed to 1000 (an ordinary close the page still listens to).
+const GOING_AWAY: u16 = 1001;
+
+/// CANARI PATCH: records `id` as leaving when `message` is the leaving page's close.
+async fn mark_leaving(leaving: &LeavingConnections, id: Id, message: &WebSocketMessage) {
+    if is_going_away(message) {
+        leaving.0.lock().await.insert(id);
+    }
+}
+
+/// CANARI PATCH: true when `message` is the close a LEAVING page sends, after which nothing it
+/// registered can receive a frame.
+fn is_going_away(message: &WebSocketMessage) -> bool {
+    matches!(message, WebSocketMessage::Close(Some(frame)) if frame.code == GOING_AWAY)
+}
 
 #[cfg(any(
     feature = "rustls-tls",
@@ -220,9 +244,7 @@ async fn connect<R: Runtime>(
     // `client_async_with_config` on a plain stream otherwise).
     let tcp_connect = window.state::<TcpConnector>().0.clone();
     let (host, port) = request_host_port(&request)?;
-    let stream = tcp_connect(host, port)
-        .await
-        .map_err(Error::Connect)?;
+    let stream = tcp_connect(host, port).await.map_err(Error::Connect)?;
     #[cfg(any(
         feature = "rustls-tls",
         feature = "rustls-tls-native-roots",
@@ -258,6 +280,7 @@ async fn connect<R: Runtime>(
         .await
         .insert(id, write);
 
+    let window_end = window.clone();
     tauri::async_runtime::spawn(async move {
         read.for_each(move |message| {
             let window_ = window.clone();
@@ -292,10 +315,28 @@ async fn connect<R: Runtime>(
                     Err(e) => serde_json::to_value(Error::from(e)).unwrap(),
                 };
 
+                // CANARI PATCH: a page that said it is going receives nothing more (see
+                // `LeavingConnections`); the writer's removal above already ran for a Close.
+                if window_
+                    .state::<LeavingConnections>()
+                    .0
+                    .lock()
+                    .await
+                    .contains(&id)
+                {
+                    return;
+                }
                 let _ = on_message_.send(response);
             }
         })
         .await;
+        // The reader ended: nothing is left to mute.
+        window_end
+            .state::<LeavingConnections>()
+            .0
+            .lock()
+            .await
+            .remove(&id);
     });
 
     Ok(id)
@@ -311,7 +352,9 @@ fn request_host_port(
     let uri = request.uri();
     let host = uri
         .host()
-        .ok_or(tokio_tungstenite::tungstenite::Error::Url(UrlError::NoHostName))?;
+        .ok_or(tokio_tungstenite::tungstenite::Error::Url(
+            UrlError::NoHostName,
+        ))?;
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
@@ -333,10 +376,16 @@ fn request_host_port(
 #[tauri::command]
 async fn send(
     manager: State<'_, ConnectionManager>,
+    leaving: State<'_, LeavingConnections>,
     id: Id,
     message: WebSocketMessage,
 ) -> Result<()> {
-    if let Some(write) = manager.0.lock().await.get_mut(&id) {
+    let mut writers = manager.0.lock().await;
+    if let Some(write) = writers.get_mut(&id) {
+        // CANARI PATCH: marked BEFORE the close is written, so the server's answer cannot beat it,
+        // and only for a connection that still HAS a writer: a close on one the server already
+        // ended would leave an id nothing ever removes.
+        mark_leaving(&leaving, id, &message).await;
         write
             .send(match message {
                 WebSocketMessage::Text(t) => Message::Text(t.into()),
@@ -402,6 +451,8 @@ impl Builder {
 
                 app.manage(ConnectionManager::default());
                 // CANARI PATCH
+                app.manage(LeavingConnections::default());
+                // CANARI PATCH
                 app.manage(TcpConnector(self.tcp_connector));
                 #[cfg(any(
                     feature = "rustls-tls",
@@ -430,6 +481,61 @@ mod tests {
         let value = serde_json::to_value(&err).unwrap();
         assert_eq!(value["kind"], "connect");
         assert_eq!(value["message"], "no address to connect to");
+    }
+
+    /// CANARI PATCH: only a close carrying 1001 mutes a connection; the ordinary `disconnect()` close
+    /// (1000), a frame and a bare close do not.
+    #[test]
+    fn only_a_going_away_close_is_a_leaving_page() {
+        let close = |code| {
+            WebSocketMessage::Close(Some(CloseFrame {
+                code,
+                reason: String::new(),
+            }))
+        };
+        assert!(is_going_away(&close(1001)));
+        assert!(!is_going_away(&close(1000)));
+        assert!(!is_going_away(&WebSocketMessage::Close(None)));
+        assert!(!is_going_away(&WebSocketMessage::Text("x".into())));
+    }
+
+    /// CANARI PATCH: marking is what `send` does for a connection it holds, and never for another kind
+    /// of frame; `send` itself calls it only under a found writer, so an unknown id is never recorded.
+    #[test]
+    fn marking_records_only_a_going_away_close() {
+        let leaving = LeavingConnections::default();
+        let close = |code| {
+            WebSocketMessage::Close(Some(CloseFrame {
+                code,
+                reason: String::new(),
+            }))
+        };
+        tauri::async_runtime::block_on(async {
+            mark_leaving(&leaving, 1, &close(1000)).await;
+            mark_leaving(&leaving, 2, &WebSocketMessage::Text("x".into())).await;
+            assert!(leaving.0.lock().await.is_empty());
+            mark_leaving(&leaving, 3, &close(1001)).await;
+            assert!(leaving.0.lock().await.contains(&3));
+        });
+    }
+
+    /// CANARI PATCH: a going-away close on a connection that is not held is refused and records nothing.
+    #[test]
+    fn a_close_on_an_unknown_connection_leaks_no_id() {
+        let manager = ConnectionManager::default();
+        let leaving = LeavingConnections::default();
+        let message = WebSocketMessage::Close(Some(CloseFrame {
+            code: 1001,
+            reason: String::new(),
+        }));
+        tauri::async_runtime::block_on(async {
+            let mut writers = manager.0.lock().await;
+            // The same shape `send` has: nothing is marked unless a writer is found.
+            if writers.get_mut(&9).is_some() {
+                mark_leaving(&leaving, 9, &message).await;
+            }
+            assert!(leaving.0.lock().await.is_empty());
+        });
     }
 
     #[test]

@@ -196,6 +196,7 @@ maybe('a user write against PostgreSQL', () => {
       unused,
       erasure as never,
       sessions,
+      unused,
       unused
     );
     process.env.JWT_SECRET = JWT_SECRET;

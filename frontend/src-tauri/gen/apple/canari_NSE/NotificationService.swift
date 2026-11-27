@@ -400,7 +400,8 @@ class NotificationService: UNNotificationServiceExtension {
     // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
     // shape: fixed sentences, nothing variable (the content-free rule).
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
-      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report",
+      "social_admin_alumni_duplicate":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),
@@ -1645,33 +1646,74 @@ class NotificationService: UNNotificationServiceExtension {
     return SeenPostsBook(owner: ((root["userId"] as? String) ?? "").lowercased(), posts: posts)
   }
 
-  /// WHETHER A PUSH IS WITHHELD ON THIS DEVICE - the rule of
+  /// EVERY END OF THE SEEN-TREND DECISION, NAMED (1.8.3-alpha.1: a trend reached the Mi 9T with no
+  /// `postId`, the rule answered a bare `false`, and nothing said why). `rawValue` is the word the log
+  /// carries and the contract's `reason`. Twins: Android `SeenTrends.Verdict`, ObjC `CanariSeenTrendVerdict`.
+  enum SeenTrendVerdict: String {
+    case withheld
+    case notDisplayed = "not-displayed"
+    /// A trend that names no post: the SERVER's defect (its push lost `postId`), so it accuses.
+    case noPostId = "no-post-id"
+    case otherAccount = "other-account"
+    case signedOut = "signed-out"
+    /// No `seen_posts.json`, or an unreadable one (said where it is read).
+    case noRecord = "no-record"
+    case notATrend = "not-a-trend"
+  }
+
+  /// WHICH END OF THE RULE A PUSH REACHES - the rule of
   /// `libs/contracts/notification-seen-trend.cases.json` (`SeenTrendContractTests`). Another account's
-  /// record never withholds. Twins: Android `SeenTrends.withholds`, ObjC `CanariSeenTrendWithheld`.
+  /// record never withholds. Twins: Android `SeenTrends.decide`, ObjC `CanariSeenTrendVerdict`.
+  static func seenTrendVerdict(
+    book: SeenPostsBook?, me: String?, contentKey: String?, postId: String?
+  ) -> SeenTrendVerdict {
+    guard let key = contentKey, trendContentKeys.contains(key) else { return .notATrend }
+    guard let id = postId?.trimmingCharacters(in: .whitespaces).lowercased(), !id.isEmpty else {
+      return .noPostId
+    }
+    guard let book = book else { return .noRecord }
+    guard let me = me?.trimmingCharacters(in: .whitespaces).lowercased(), !me.isEmpty else {
+      return .signedOut
+    }
+    guard book.owner == me else { return .otherAccount }
+    return book.posts.contains(id) ? .withheld : .notDisplayed
+  }
+
+  /// Whether a push is withheld on this device (`seenTrendVerdict` reached `.withheld`).
   static func seenTrendWithheld(
     book: SeenPostsBook?, me: String?, contentKey: String?, postId: String?
   ) -> Bool {
-    guard let book = book, let me = me?.trimmingCharacters(in: .whitespaces).lowercased(),
-      !me.isEmpty, book.owner == me, let key = contentKey, trendContentKeys.contains(key),
-      let id = postId?.trimmingCharacters(in: .whitespaces).lowercased(), !id.isEmpty
-    else { return false }
-    return book.posts.contains(id)
+    seenTrendVerdict(book: book, me: me, contentKey: contentKey, postId: postId) == .withheld
   }
 
   /// Whether this push is a campus trend for a post the app already displayed. The file is read only
-  /// for a trend, so every other push pays nothing; a withheld trend is logged WITHOUT the post id.
+  /// for a trend that names a post, so every other push pays nothing and says nothing. EVERY END OF A
+  /// TREND'S DECISION IS LOGGED ONCE, with no post id: the withheld one, each shown one by its reason
+  /// (`no-record` by `readSeenPosts`, which says why), and a trend naming no post at `.error` - the
+  /// NSE's level for a line that accuses the server (`[PUSH_WAKE] ERROR ... (server defect)`).
   static func withholdsSeenTrend(userInfo: [AnyHashable: Any]) -> Bool {
     guard let key = nonEmpty(string(userInfo["contentKey"])), trendContentKeys.contains(key) else {
       return false
     }
-    let withheld = seenTrendWithheld(
-      book: readSeenPosts(label: "[SEEN_TREND]"), me: signedInUserId(), contentKey: key,
-      postId: string(userInfo["postId"]))
-    if withheld {
+    let postId = string(userInfo["postId"])
+    let named = !(postId ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+    let verdict = seenTrendVerdict(
+      book: named ? readSeenPosts(label: "[SEEN_TREND]") : nil, me: signedInUserId(),
+      contentKey: key, postId: postId)
+    switch verdict {
+    case .withheld:
       NseLog.log.notice(
         "[CanariNSE] [SEEN_TREND] a campus trend withheld - its post was already displayed on this device")
+    case .noPostId:
+      NseLog.log.error(
+        "[CanariNSE] [SEEN_TREND] ERROR a campus trend names no postId - shown, the device cannot tell a displayed post (server defect)")
+    case .noRecord:
+      break  // `readSeenPosts` already said why (absent, unreadable, no App Group): one line, not two.
+    default:
+      NseLog.log.notice(
+        "[CanariNSE] [SEEN_TREND] a campus trend shown: \(verdict.rawValue, privacy: .public)")  // log-safe: an enum's fixed reason word, never a post id or text
     }
-    return withheld
+    return verdict == .withheld
   }
 
   /// The blank, passive content a withheld trend is delivered as: no text, no face, no sound. An

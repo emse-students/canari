@@ -4,7 +4,7 @@ target: 1.8.3
 
 **Built, covered by unit tests, never read across two devices** ([history-reconciliation](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25); owner decision of 2026-11-25, item 5, [decisions](../decisions/owner-decisions-of-2026-11-25.md); charter principle 1). The cross-client rig drives only a DEPLOYED build, so it reads this once a pre-release carrying it serves dev.
 
-**Precondition:** the button shows only while the served `minClientVersion` is at or above `1.8.3` (`HISTORY_GRANT_NOTICE_FIRST_VERSION`, principle 1 - [the floor](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)), so read it on dev once dev's floor is `1.8.3`; below it, step 2 reads "no button".
+**Precondition:** the button shows only while the served `minClientVersion` is at or above `1.8.3-alpha.1` (`HISTORY_GRANT_NOTICE_FIRST_VERSION`, principle 1 - [the floor](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)), so read it on dev once dev's floor is `1.8.3-alpha.1` (a pre-release orders below its stable: a dev floor of `1.8.3` would lock out the 1.8.3 alphas and never draw the button for them, so the floor accepts `x.y.z-alpha.N`; production keeps `1.8.3`); below it, step 2 reads "no button".
 
 **What to read** (dev, two browser contexts, W1 `owner` and W2 `peer`; then once on a phone as the newcomer):
 

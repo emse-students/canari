@@ -34,6 +34,8 @@ class SeenTrendsTest {
             val me = if (c.isNull("me")) null else c.getString("me")
             val key = if (c.isNull("contentKey")) null else c.getString("contentKey")
             assertEquals(c.getString("name"), c.getBoolean("expected"), SeenTrends.withholds(book, me, key, c.getString("postId")))
+            // Every end is NAMED, and the name is the contract's: the log says which one was reached.
+            assertEquals(c.getString("name"), c.getString("reason"), SeenTrends.decide(book, me, key, c.getString("postId")).reason)
         }
         assertTrue("the contract lost its cases", cases.length() > 10)
     }
@@ -46,7 +48,22 @@ class SeenTrendsTest {
     }
 
     @Test
-    fun `no book withholds nothing`() {
+    fun `no book withholds nothing, and says so`() {
         assertFalse(SeenTrends.withholds(null, "a", "social_campus_trend", "p"))
+        assertEquals(SeenTrends.Verdict.NO_RECORD, SeenTrends.decide(null, "a", "social_campus_trend", "p"))
+    }
+
+    @Test
+    fun `a trend that names no post is named as such, whatever the record`() {
+        // 1.8.3-alpha.1 on the Mi 9T: the server's trend push carried no postId and the rule answered a
+        // bare false. The verdict that accuses the payload must win over a missing record.
+        for (postId in listOf(null, "", "  ")) {
+            assertEquals(SeenTrends.Verdict.NO_POST_ID, SeenTrends.decide(null, "a", "social_campus_trend", postId))
+        }
+    }
+
+    @Test
+    fun `only a withheld verdict withholds`() {
+        assertEquals(listOf(SeenTrends.Verdict.WITHHELD), SeenTrends.Verdict.entries.filter { it.withheld })
     }
 }

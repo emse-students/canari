@@ -16,10 +16,12 @@ const threw = (fn) => {
 };
 
 eq('parses a plain version', parseVersion('1.2.7'), [1, 2, 7]);
-eq('a pre-release suffix is ignored, like the server', parseVersion('1.2.9-alpha.7'), [1, 2, 9]);
+eq('the triple of a pre-release is its core', parseVersion('1.2.9-alpha.7'), [1, 2, 9]);
 eq('garbage, null and two-part do not parse', [parseVersion('x'), parseVersion(null), parseVersion('1.2')], [null, null, null]);
 eq('numeric, not lexical', compareVersions('1.10.0', '1.9.9'), 1);
-eq('equal ignores suffix', compareVersions('1.2.7-alpha.1', '1.2.7'), 0);
+eq('a pre-release ranks below its stable', compareVersions('1.2.7-alpha.1', '1.2.7'), -1);
+eq('alpha.2 ranks above alpha.1', compareVersions('1.2.7-alpha.2', '1.2.7-alpha.1'), 1);
+eq('equal alphas are equal', compareVersions('1.2.7-alpha.1', '1.2.7-alpha.1'), 0);
 
 const rows = parseRows(
   ['u1|d1|android|1.2.6|2026-10-01', 'u2|d2|ios|1.2.7|2026-10-02', 'u3|d3|android||2026-09-01', 'u4|d4|ios|0.18.9|2026-08-01', 'u5|d5|android|1.2.6|2026-10-03', ''].join('\n')
@@ -40,7 +42,8 @@ eq('laggards grouped by os and version, oldest first', groupLaggards(r.below), [
   { label: 'ios 0.18.9', devices: 1 },
   { label: 'android 1.2.6', devices: 2 },
 ]);
-eq('a pre-release of the floor is not below it', classify(parseRows('u|d|ios|1.2.7-alpha.2|x'), '1.2.7').below.length, 0);
+eq('a pre-release of a stable floor is below it', classify(parseRows('u|d|ios|1.2.7-alpha.2|x'), '1.2.7').below.length, 1);
+eq('a pre-release floor admits its own alpha', classify(parseRows('u|d|ios|1.2.7-alpha.2|x'), '1.2.7-alpha.1').below.length, 0);
 eq('unreadable floor throws', threw(() => classify([], 'abc')), 'threw');
 eq('render lists devices only on request', [render(r).includes('u1 d1'), render(r, true).includes('u1 d1')], [false, true]);
 

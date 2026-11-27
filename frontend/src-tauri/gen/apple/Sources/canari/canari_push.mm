@@ -839,6 +839,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A new item in a global admin's queue (owner, 2026-11-18): the content-free rule.
     @"social_admin_profile_correction" : @"admin_profile_correction",
     @"social_admin_report" : @"admin_report",
+    @"social_admin_alumni_duplicate" : @"admin_alumni_duplicate",
   };
   NSString *fixedStem = fixedSocial[key];
   if (fixedStem) {
@@ -3468,52 +3469,70 @@ static BOOL CanariIsTrendKey(NSString *_Nullable key) {
          [key isEqualToString:@"social_campus_trend_video"];
 }
 
-static BOOL CanariSeenTrendWithheld(NSDictionary *_Nullable root, NSString *_Nullable me,
-                                    NSString *_Nullable contentKey, NSString *_Nullable postId) {
-  NSString *who = [[me stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
-      lowercaseString];
+// WHICH END OF THE RULE A PUSH REACHES, as the contract's `reason` (1.8.3-alpha.1: a trend reached the
+// Mi 9T with no `postId` and a bare NO said nothing). Twins: Android `SeenTrends.decide`, Swift
+// `NotificationService.seenTrendVerdict`. `root` nil is no record (absent or unreadable).
+static NSString *CanariSeenTrendVerdict(NSDictionary *_Nullable root, NSString *_Nullable me,
+                                        NSString *_Nullable contentKey, NSString *_Nullable postId) {
+  if (!CanariIsTrendKey(contentKey)) return @"not-a-trend";
   NSString *wanted = [[postId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
       lowercaseString];
-  if (![root isKindOfClass:[NSDictionary class]] || who.length == 0 || wanted.length == 0 ||
-      !CanariIsTrendKey(contentKey)) {
-    return NO;
-  }
+  if (wanted.length == 0) return @"no-post-id";
+  if (![root isKindOfClass:[NSDictionary class]]) return @"no-record";
+  NSString *who = [[me stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+      lowercaseString];
+  if (who.length == 0) return @"signed-out";
   id owner = root[@"userId"];
   if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:who]) {
-    return NO;
+    return @"other-account";
   }
   id posts = root[@"posts"];
-  if (![posts isKindOfClass:[NSDictionary class]]) return NO;
-  for (NSString *known in (NSDictionary *)posts) {
-    if ([[known lowercaseString] isEqualToString:wanted]) return YES;
+  if ([posts isKindOfClass:[NSDictionary class]]) {
+    for (NSString *known in (NSDictionary *)posts) {
+      if ([[known lowercaseString] isEqualToString:wanted]) return @"withheld";
+    }
   }
-  return NO;
+  return @"not-displayed";
 }
 
-// Whether this push is withheld on this device; a withheld trend is logged WITHOUT the post id.
+// Whether this push is withheld on this device. The file is read only for a trend that names a post.
+// EVERY END OF A TREND'S DECISION IS LOGGED ONCE, with no post id: the withheld one, each shown one by
+// its reason (no record by the read below, which says why), and a trend naming no post as an ERROR
+// that accuses the server, as this file's other server-defect lines do.
 static BOOL CanariWithholdsSeenTrend(NSDictionary *data) {
   NSString *key = [data[@"contentKey"] isKindOfClass:[NSString class]] ? data[@"contentKey"] : nil;
   if (!CanariIsTrendKey(key)) return NO;
   NSString *postId = [data[@"postId"] isKindOfClass:[NSString class]] ? data[@"postId"] : nil;
-  NSString *dir = CanariTauriDataDir();
-  NSData *file = dir == nil ? nil
-                            : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
-                                                                      @"seen_posts.json"]];
-  if (file == nil) {
-    NSLog(@"[CanariPush] [SEEN_TREND] no seen_posts.json - no trend is withheld");
-    return NO;
-  }
-  id root = [NSJSONSerialization JSONObjectWithData:file options:0 error:nil];
-  if (![root isKindOfClass:[NSDictionary class]]) {
-    NSLog(@"[CanariPush] [SEEN_TREND] WARN seen_posts.json unreadable");
-    return NO;
+  BOOL named = [postId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+                   .length > 0;
+  id root = nil;
+  if (named) {
+    NSString *dir = CanariTauriDataDir();
+    NSData *file = dir == nil ? nil
+                              : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
+                                                                        @"seen_posts.json"]];
+    if (file == nil) {
+      NSLog(@"[CanariPush] [SEEN_TREND] no seen_posts.json - no trend is withheld");
+    } else {
+      root = [NSJSONSerialization JSONObjectWithData:file options:0 error:nil];
+      if (![root isKindOfClass:[NSDictionary class]]) {
+        NSLog(@"[CanariPush] [SEEN_TREND] WARN seen_posts.json unreadable");
+        root = nil;
+      }
+    }
   }
   CanariPushContext *ctx = CanariLoadPushContext();
-  BOOL withheld = CanariSeenTrendWithheld(root, ctx.userId, key, postId);
-  if (withheld) {
+  NSString *verdict = CanariSeenTrendVerdict(root, ctx.userId, key, postId);
+  if ([verdict isEqualToString:@"withheld"]) {
     NSLog(@"[CanariPush] [SEEN_TREND] a campus trend withheld - its post was already displayed on this device");
+    return YES;
   }
-  return withheld;
+  if ([verdict isEqualToString:@"no-post-id"]) {
+    NSLog(@"[CanariPush] [SEEN_TREND] ERROR a campus trend names no postId - shown, the device cannot tell a displayed post (server defect)");
+  } else if (![verdict isEqualToString:@"no-record"]) {  // no record: said once, by the read above
+    NSLog(@"[CanariPush] [SEEN_TREND] a campus trend shown: %@", verdict);
+  }
+  return NO;
 }
 
 // The notification extension cannot DROP an alert push (that needs the filtering entitlement,

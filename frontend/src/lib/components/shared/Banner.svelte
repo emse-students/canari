@@ -83,6 +83,7 @@
     : 'min-h-(--banner-height)'} {center
     ? 'justify-center text-center'
     : 'justify-between'} {SURFACE[variant]} {extra}"
+  data-app-banner
   role={tone}
   aria-live={tone === 'alert' ? 'assertive' : 'polite'}
   aria-busy={busy ? 'true' : undefined}

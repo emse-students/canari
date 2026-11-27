@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { revealCell, toggleFlag } from '../game';
-import { boardFromLayout } from './layout';
+import { boardFromLayout, pictureOf } from './layout';
 
 describe('boardFromLayout', () => {
   it('builds the engine board a picture describes: size, mines, revealed numbers, flags', () => {
@@ -48,5 +48,40 @@ describe('boardFromLayout', () => {
     expect(() => boardFromLayout([])).toThrow(/empty/);
     expect(() => boardFromLayout(['00', '0'])).toThrow(/differ in length/);
     expect(() => boardFromLayout(['0x'])).toThrow(/unknown character/);
+  });
+
+  it('reads fog and hidden numbers: ? is open and safe, ~ and X are hidden, X a mine', () => {
+    const board = boardFromLayout(['?2~', '?#X']);
+    expect(board.cells[0]).toMatchObject({ state: 'revealed', mine: false });
+    expect(board.cells[2]).toMatchObject({ state: 'hidden', mine: false });
+    expect(board.cells[5]).toMatchObject({ state: 'hidden', mine: true });
+    // A shown number counts the fog's mines too: the picture is a real board.
+    expect(board.cells[1].adjacent).toBe(2);
+    expect(() => boardFromLayout(['?1~', '?#X'])).toThrow(/says 1 but 2 mines/);
+  });
+});
+
+describe('pictureOf', () => {
+  it('marks the ? cells, the drawn fog, and in an open picture the hidden cells no shown number touches', () => {
+    const rows = ['~...', '?1.?', '????'];
+    const open = pictureOf(rows, true);
+    expect(open.unknown).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    // (3,0) touches only a ? and fog: nothing shown speaks about it.
+    expect(open.fog.slice(0, 4)).toEqual([true, false, false, true]);
+    // A closed picture keeps every hidden cell playable, but drawn fog is still fog.
+    expect(pictureOf(rows, false).fog.slice(0, 4)).toEqual([true, false, false, false]);
   });
 });

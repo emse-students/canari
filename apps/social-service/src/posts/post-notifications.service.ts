@@ -28,6 +28,7 @@ import {
   eventPendingContent,
   eventPendingCoorganiserContent,
   eventCoorganiserAcceptedContent,
+  adminAlumniDuplicateContent,
   adminProfileCorrectionContent,
   adminReportContent,
   associationPostContent,
@@ -460,7 +461,41 @@ export type NotificationRowsInput = {
   associationId?: string;
   associationLogoUrl?: string | null;
   rows: { recipientId: string; meta: Record<string, unknown> | null }[];
+  /**
+   * The caller's transaction: the category gate is read and the rows written ON it, so they commit or
+   * roll back with the caller's own writes (the Alumni duplicates' claim, `AdminQueuesService`).
+   */
+  manager?: EntityManager;
 };
+
+/**
+ * What {@link PostNotificationsService.pushNotice} reads - and ONLY that: it writes no row, so a field
+ * a row takes (`postId`, `associationLogoUrl`) has no meaning here. Data the DEVICE reads, the post a
+ * push names included, goes in `pushData`.
+ */
+export type PushNoticeInput = {
+  recipientIds: string[];
+  type: NotificationType | PushOnlyNotificationType;
+  actorId: string;
+  actorName: string;
+  text: string;
+  associationId?: string;
+  associationLogoMediaId?: string | null;
+  pushData?: Record<string, string>;
+  /** What the push's sentence reads, as `pushContent` reads a row's `meta` (a trend's media and name). */
+  meta?: Record<string, unknown>;
+};
+
+/**
+ * THE FIELDS A NOTICE'S ROW CALL AND ITS PUSH CALL MAY SHARE - those both inputs read. A caller that
+ * builds one object for both declares it `satisfies SharedNoticeFields<RowInput>`, so a field only
+ * the row reads is a COMPILE error there rather than a field the push drops without a word: the
+ * campus trend's `postId` was dropped that way until 1.8.3-alpha.1, and no phone could recognise the
+ * post it named (docs/wiki/engagement.md, "A campus trend for a post this device already displayed").
+ */
+export type SharedNoticeFields<RowInput> = Partial<
+  Pick<PushNoticeInput, keyof PushNoticeInput & keyof RowInput>
+>;
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
@@ -603,6 +638,8 @@ export class PostNotificationsService {
         return adminProfileCorrectionContent();
       case 'admin_report':
         return adminReportContent();
+      case 'admin_alumni_duplicate':
+        return adminAlumniDuplicateContent();
       default:
         return null;
     }
@@ -1061,7 +1098,7 @@ export class PostNotificationsService {
     const addressed = data.rows.filter((r) => r.recipientId !== data.actorId);
     const on = new Set(
       await recipientsWithCategoryOn(
-        this.notifRepo.manager,
+        data.manager ?? this.notifRepo.manager,
         data.type,
         addressed.map((r) => r.recipientId)
       )
@@ -1076,9 +1113,10 @@ export class PostNotificationsService {
   private async saveNotificationRows(data: NotificationRowsInput): Promise<number> {
     const rows = data.rows.filter((r) => r.recipientId !== data.actorId);
     if (rows.length === 0) return 0;
-    await this.notifRepo.save(
+    const repo = data.manager ? data.manager.getRepository(PostNotification) : this.notifRepo;
+    await repo.save(
       rows.map(({ recipientId, meta }) =>
-        this.notifRepo.create({
+        repo.create({
           recipientId,
           type: data.type,
           postId: data.postId,
@@ -1106,18 +1144,7 @@ export class PostNotificationsService {
    * (`BirthdayNotifier`), and pushes once that has committed. Returns how many recipients were
    * addressed, before the bell (which only the push consults, exactly as for a post).
    */
-  async pushNotice(data: {
-    recipientIds: string[];
-    type: NotificationType | PushOnlyNotificationType;
-    actorId: string;
-    actorName: string;
-    text: string;
-    associationId?: string;
-    associationLogoMediaId?: string | null;
-    pushData?: Record<string, string>;
-    /** What the push's sentence reads, as `pushContent` reads a row's `meta` (a trend's media and name). */
-    meta?: Record<string, unknown>;
-  }): Promise<number> {
+  async pushNotice(data: PushNoticeInput): Promise<number> {
     const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
     if (recipients.length === 0) return 0;
     await this.fanOutPush(data, recipients);

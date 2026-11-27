@@ -122,6 +122,44 @@
   --color-call-accept: #16a34a;
   --color-call-decline: #dc2626;
 
+  /* LE PIC AND THE MINER'S LAMP (owner, 2026-11-27): the minesweeper tutorial's character and the hint lamp.
+     Fixed in BOTH themes, like the call colours: a drawing keeps its own palette, so these are NOT built from
+     `cn-surface`. Read by `LePic.svelte` and `MinerLamp.svelte` as `var(--color-pic-<part>)`, never as a hex. */
+  --color-pic-sleeve: #0f1320;
+  --color-pic-tunic: #151a2b;
+  --color-pic-tunic-lit: #1c2236;
+  --color-pic-gold: #f6c232;
+  --color-pic-gold-shade: #d9a520;
+  --color-pic-gold-dark: #b8891a;
+  --color-pic-skin: #f1c7a1;
+  --color-pic-skin-shade: #e9b992;
+  --color-pic-skin-neck: #e3b38b;
+  --color-pic-skin-ear: #d9a882;
+  --color-pic-lapel: #f4f6f8;
+  --color-pic-lapel-shade: #dbe1e8;
+  --color-pic-ink: #0b0e18;
+  --color-pic-metal-dark: #2b2f3a;
+  --color-pic-belt: #0b0d12;
+  --color-pic-pole: #5a4636;
+  --color-pic-flag: #e5484d;
+  --color-pic-flag-shade: #c93a3f;
+  --color-pic-hair: #2a1d17;
+  --color-pic-hair-shade: #21170f;
+  --color-pic-blush: #f08a7e;
+  --color-pic-iron: #3a3f4c;
+  --color-pic-lens: #ffffff;
+  --color-pic-pupil: #1b1f2e;
+  --color-pic-mouth: #b5524a;
+  --color-pic-mouth-open: #8a2f2a;
+  --color-pic-cap-top: #dfe3ea;
+  --color-pic-cap-top-shade: #c9ced8;
+  --color-pic-metal: #4a5060;
+  --color-pic-metal-lit: #6b7284;
+  --color-pic-glass: #9aa6bd;
+  --color-pic-glass-lit: #fff3c4;
+  --color-pic-flame: #ff8a1f;
+  --color-pic-flame-core: #ffe27a;
+
   /* ================================= THE BUBBLES =================================
      The outgoing bubble is the most identity-carrying surface in a chat application, and the
      decision (user, 2026-09-08) is that it is YELLOW. The reference fills it with the product's
@@ -879,6 +917,24 @@ img[src^='/emoji/'] {
 .motion-bubble-in[data-glide-entrance] {
   animation: bubbleInAfterGlide calc(var(--motion-thread-glide) + var(--motion-fast))
     var(--motion-ease-in-out);
+}
+
+/* THE JUMP OUTLINE COMPOSES WITH THE ARRIVAL (reading 2026-11-27: a captioned photo that arrived live
+   showed no outline). Both rules set `animation` on the bubble, and the later shorthand replaces the
+   earlier, so the pair is stated as ONE list here: the arrival keeps its name - an animation already
+   running or ended under a name is not restarted - and the outline runs beside it. Same arrival
+   timing as the two rules above; no timer. */
+.motion-bubble-in.chat-message-jump-highlight {
+  animation:
+    bubbleIn var(--motion-fast) var(--motion-ease-in-out),
+    messageJumpHighlight 1.8s ease;
+}
+
+.motion-bubble-in[data-glide-entrance].chat-message-jump-highlight {
+  animation:
+    bubbleInAfterGlide calc(var(--motion-thread-glide) + var(--motion-fast))
+      var(--motion-ease-in-out),
+    messageJumpHighlight 1.8s ease;
 }
 
 @keyframes motionSheetIn {
@@ -2262,6 +2318,22 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 
 :root.fullscreen-place-open[data-call-bar] .app-shell {
   padding-top: var(--app-status-top);
+  --safe-area-inset-top: 0px;
+}
+
+/* THE BANNERS ON A FULL-SCREEN PLACE (Mi 9T, 2026-11-27: an info banner drew over the clock on
+   `/games/play`). The shell gave its status-bar padding back above, and the banner column sits in the
+   shell, so a banner was painted from y = 0. WHEN THE COLUMN HOLDS A VISIBLE BANNER (`data-app-banner`,
+   set by `Banner` and `CallBanner`; the sr-only `ConnectionAnnouncer` is always in the column and is
+   deliberately NOT marked, so `:empty` would never be true) it takes the inset, and the content row
+   below it zeroes the variable for its subtree - the page's own inset then resolves to 0, nothing is
+   applied twice (the call-bar rule below is the same pattern). With no banner nothing changes, the
+   camera place included (its preview must reach y = 0). Pinned by `fullBleedBanner.test.ts`. */
+.fullscreen-place-open .app-banner-column:has([data-app-banner]) {
+  padding-top: var(--safe-area-inset-top, 0px);
+}
+
+.fullscreen-place-open .app-banner-column:has([data-app-banner]) + .app-content-row {
   --safe-area-inset-top: 0px;
 }
 

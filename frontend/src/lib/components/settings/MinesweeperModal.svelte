@@ -34,6 +34,7 @@
   import {
     LEVEL_SPECS,
     loadMinesweeperLevel,
+    isFirstMinesweeperGame,
     loadMinesweeperUnranked,
     playModeOf,
     saveMinesweeperLevel,
@@ -43,7 +44,8 @@
     type PlayMode,
   } from '$lib/minesweeper/levels';
   import { playModeIcon, playModeLabel, playModeShortLabel } from '$lib/minesweeper/modeLabels';
-  import MinesweeperModeSheet from '../games/MinesweeperModeSheet.svelte';
+  import MinesweeperModeModal from '../games/MinesweeperModeModal.svelte';
+  import MinerLamp from '../games/MinerLamp.svelte';
   import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
@@ -71,7 +73,6 @@
     Bomb,
     ChevronUp,
     Flag,
-    Lightbulb,
     Pickaxe,
     RotateCcw,
     Settings,
@@ -81,6 +82,7 @@
   } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import { loadFlagPrimary, saveFlagPrimary } from '$lib/minesweeper/controls';
   import { m } from '$lib/paraglide/messages';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 
@@ -130,28 +132,21 @@
   /** Where the long-press progress ring is drawn (viewport coordinates), null when none is pending. */
   let pressRing = $state<{ x: number; y: number } | null>(null);
 
-  const FLAG_PRIMARY_STORAGE_KEY = 'canari.minesweeper.flagPrimary';
-
-  function loadFlag(key: string): boolean {
-    if (typeof localStorage === 'undefined') return false;
-    return localStorage.getItem(key) === '1';
-  }
-
-  function saveFlag(key: string, value: boolean) {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value ? '1' : '0');
-  }
-
   /** Control-inversion setting: when true, short press/left click flags (dig on revealed cells) and long press/right click digs. */
-  let flagPrimary = $state(loadFlag(FLAG_PRIMARY_STORAGE_KEY));
+  let flagPrimary = $state(loadFlagPrimary() ?? false);
   /**
    * Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is
    * submitted. A newcomer plays unranked (owner, 2026-11-26): the ranked board is the barrier to entry.
    */
+  /**
+   * A FIRST GAME ON THIS DEVICE, read before the level loader below stores the level it resolves (which is history).
+   */
+  const firstGame = isFirstMinesweeperGame();
   let unranked = $state(loadMinesweeperUnranked());
 
   function toggleFlagPrimary() {
     flagPrimary = !flagPrimary;
-    saveFlag(FLAG_PRIMARY_STORAGE_KEY, flagPrimary);
+    saveFlagPrimary(flagPrimary);
   }
 
   /**
@@ -167,12 +162,24 @@
   /** The glyph of the pastille: the trophy for ranked, a plant that grows with the level. */
   const ModeGlyph = $derived(playModeIcon(mode));
 
-  /** The mode sheet, opened from the pastille: only before the first dig. */
-  let showModeSheet = $state(false);
+  /**
+   * THE MODE MODAL (owner, 2026-11-27): opens by ITSELF only at the first game on this device - no mode stored
+   * yet - and afterwards from the pastille, before the first dig. One chooser, replacing the bottom sheet.
+   */
+  let showModeModal = $state(firstGame);
 
-  /** A pick in the mode sheet: the ranked game, or an unranked one at a level. The grid is the same. */
+  /**
+   * Closing the modal without a pick (Escape, the scrim, the cross, Back, the tutorial link) STORES NOTHING and keeps the
+   * default the game started with (owner decision, 2026-11-27). It never nags: the first open already stored the
+   * level, which makes every later open a later one (`isFirstMinesweeperGame`).
+   */
+  function dismissModeModal() {
+    showModeModal = false;
+  }
+
+  /** "Jouer" in the mode modal: the ranked game, or an unranked one at a level. The grid is the same. */
   function chooseMode(picked: PlayMode) {
-    showModeSheet = false;
+    showModeModal = false;
     if (modeLocked) return;
     unranked = picked !== 'ranked';
     saveMinesweeperUnranked(unranked);
@@ -1234,17 +1241,17 @@
           {m.minesweeper_mode_dig()}
         {/if}
       </button>
-      <!-- ONE pastille for the mode (owner, 2026-11-26): the current mode, a tap opens the sheet of the four.
+      <!-- ONE pastille for the mode (owner, 2026-11-26): the current mode, a tap opens the mode modal.
            After the first dig it only reminds (the board was generated for it), so it loses its chevron. -->
       <button
         type="button"
-        onclick={() => (showModeSheet = true)}
+        onclick={() => (showModeModal = true)}
         disabled={modeLocked}
         aria-haspopup="dialog"
         aria-label={modeLocked
           ? m.minesweeper_mode_pill_locked({ mode: playModeLabel(mode) })
           : m.minesweeper_mode_pill({ mode: playModeLabel(mode) })}
-        title={m.minesweeper_mode_sheet_title()}
+        title={m.minesweeper_modal_title()}
         class="ms-chip text-text-main pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50"
       >
         <ModeGlyph size={18} strokeWidth={2.5} />
@@ -1252,7 +1259,7 @@
         {#if !modeLocked}<ChevronUp size={16} strokeWidth={2.5} />{/if}
       </button>
       {#if hintOffered}
-        <!-- The bulb (unranked only): lights what justifies the next certain move, never the move.
+        <!-- The miner's lamp (unranked only; owner, 2026-11-27, was a bulb): lights what justifies the next certain move, never the move.
              The chip is the wrapper because `.ms-chip` is scoped here and cannot reach into `Button`. -->
         <div
           class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {hintReady
@@ -1267,7 +1274,7 @@
             title={m.minesweeper_hint()}
             class="text-text-main flex h-12 w-12 items-center justify-center rounded-full"
           >
-            <Lightbulb size={18} strokeWidth={2.5} />
+            <MinerLamp lit={hint !== null} size={26} />
           </Button>
         </div>
       {/if}
@@ -1388,11 +1395,12 @@
       </div>
     {/if}
 
-    {#if showModeSheet}
-      <MinesweeperModeSheet
+    {#if showModeModal && !modeLocked}
+      <MinesweeperModeModal
         current={mode}
-        onChoose={chooseMode}
-        onClose={() => (showModeSheet = false)}
+        {level}
+        onPlay={chooseMode}
+        onClose={dismissModeModal}
         durationMs={animationMs(180, settings.animations)}
       />
     {/if}
