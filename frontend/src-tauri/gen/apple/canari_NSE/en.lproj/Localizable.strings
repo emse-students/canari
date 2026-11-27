@@ -80,6 +80,8 @@
 "notif.social.admin_profile_correction.body" = "Someone asks for a correction of their profile.";
 "notif.social.admin_report.title" = "New report";
 "notif.social.admin_report.body" = "Some content or a person was reported.";
+"notif.social.admin_alumni_duplicate.title" = "Alumni duplicate to merge";
+"notif.social.admin_alumni_duplicate.body" = "An account created through Alumni looks like an existing one.";
 "notif.social.booking_cancelled.title" = "%@ cancelled a booking";
 "notif.social.booking_cancelled.body" = "It will not take place";
 "notif.social.booking_withdrawn.title" = "%@ left your booking";

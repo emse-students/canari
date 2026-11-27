@@ -57,7 +57,8 @@ describe('GET /users/:id/avatar logging', () => {
       {
         isLiveSession: jest.fn(async () => asker === 'internal' || asker.live !== false),
       } as never,
-      {} as AlumniMergeService
+      {} as AlumniMergeService,
+      {} as never // AlumniDuplicateQueue: the duplicates route is not under test
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);
@@ -145,7 +146,8 @@ describe('GET /users/:id/avatar logging', () => {
             throw new Error('connection terminated');
           }),
         } as never,
-        {} as AlumniMergeService
+        {} as AlumniMergeService,
+        {} as never // AlumniDuplicateQueue: the duplicates route is not under test
       );
       const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
       res.status.mockReturnValue(res);

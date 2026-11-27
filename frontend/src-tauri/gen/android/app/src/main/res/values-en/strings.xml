@@ -123,6 +123,8 @@
     <string name="notif_social_admin_profile_correction_body">Someone asks for a correction of their profile.</string>
     <string name="notif_social_admin_report_title">New report</string>
     <string name="notif_social_admin_report_body">Some content or a person was reported.</string>
+    <string name="notif_social_admin_alumni_duplicate_title">Alumni duplicate to merge</string>
+    <string name="notif_social_admin_alumni_duplicate_body">An account created through Alumni looks like an existing one.</string>
     <string name="notif_social_booking_cancelled_title">%1$s cancelled a booking</string>
     <string name="notif_social_booking_cancelled_body">It will not take place</string>
     <string name="notif_social_booking_withdrawn_title">%1$s left your booking</string>

@@ -12,7 +12,7 @@ import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
  * The admin queues a pending count is served for, by the key of their row in the admin registry
  * (`adminSections.ts`) - the server's `ADMIN_QUEUE_KEYS` (`AdminQueuesService`).
  */
-type AdminQueueKey = 'agenda' | 'moderation' | 'profile-corrections';
+type AdminQueueKey = 'agenda' | 'moderation' | 'profile-corrections' | 'alumni-duplicates';
 
 /**
  * The pending items of each queue the reader may ACT on, as `GET /api/moderation/admin-queues`
@@ -20,7 +20,12 @@ type AdminQueueKey = 'agenda' | 'moderation' | 'profile-corrections';
  */
 export type AdminQueueCounts = Partial<Record<AdminQueueKey, number>>;
 
-const KEYS: readonly AdminQueueKey[] = ['agenda', 'moderation', 'profile-corrections'];
+const KEYS: readonly AdminQueueKey[] = [
+  'agenda',
+  'moderation',
+  'profile-corrections',
+  'alumni-duplicates',
+];
 
 /**
  * The socket frame the server sends the accounts that may act on a queue when an item enters or

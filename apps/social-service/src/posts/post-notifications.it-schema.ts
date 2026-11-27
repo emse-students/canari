@@ -108,6 +108,14 @@ export async function createBellTargetTables(q: (sql: string) => Promise<unknown
       'utf8'
     )
   );
+  // The Alumni duplicates' queue (admin-queue-sql.ts): the merge trace (028, 029) and the flags (031).
+  for (const file of [
+    '028_alumni_link_and_merges.sql',
+    '029_alumni_merge_marks.sql',
+    '031_alumni_duplicate_flags.sql',
+  ]) {
+    await q(readFileSync(join(__dirname, '../../../core-service/src/migrations', file), 'utf8'));
+  }
   await q(
     readFileSync(join(__dirname, '..', 'migrations', '165_institution_event_reach.sql'), 'utf8')
   );
