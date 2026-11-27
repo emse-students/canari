@@ -4,11 +4,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/admin/PresenceLineChart.svelte": {
-    "button": 2,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/admin/access/ReadGrantCard.svelte": {
     "button": 1,
     "select": 0,

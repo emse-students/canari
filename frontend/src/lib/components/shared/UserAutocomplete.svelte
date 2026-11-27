@@ -8,10 +8,14 @@
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
+  import { distinguishHomonyms } from '$lib/utils/users/distinguishHomonyms';
 
+  /** A row of `GET /users/search`: the earliest promo and formation tell homonyms apart (D56). */
   interface User {
     id: string;
     displayName: string | null;
+    promo?: number | null;
+    formation?: string | null;
   }
 
   interface Props {
@@ -72,6 +76,9 @@
    * `filterUserSuggestions` because it is worth a test of its own.
    */
   const suggestions = $derived(filterUserSuggestions(results, { excludeIds, filterUserIds }));
+
+  /** The promo or formation beside a row whose name another shown row shares (D56). */
+  const homonymDetails = $derived(distinguishHomonyms(suggestions));
 
   /** Registered while the dropdown shows: opened later than any dialog it sits in, so it clears it. */
   const layer = useOverlayLayer(() => showDropdown && suggestions.length > 0, 'UserAutocomplete');
@@ -301,6 +308,11 @@
           onmousedown={() => selectUser(user)}
         >
           <span class="text-text-main font-medium">{user.displayName || user.id}</span>
+          {#if homonymDetails.get(user.id)}
+            <span class="text-text-muted ml-2 text-xs" data-homonym-detail
+              >{homonymDetails.get(user.id)}</span
+            >
+          {/if}
         </li>
       {/each}
     </ul>

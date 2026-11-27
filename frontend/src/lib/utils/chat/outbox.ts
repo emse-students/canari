@@ -268,6 +268,8 @@ export function terminalFailureCause(entry: OutboxEntry): string {
       return 'the server refused it for good when the background service sent it (a final 4xx)';
     case 'not_encryptable':
       return 'the background service could not encrypt it for good (group not held here, device removed, or a malformed frame)';
+    case 'conversation_deleted':
+      return 'it was typed in a notification for a conversation this device deleted (never sent)';
     case 'unrecorded':
       return 'the background service marked it unsendable (its build recorded no cause)';
     case undefined:

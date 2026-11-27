@@ -37,7 +37,7 @@ function entity(over: Partial<DependencyEntity> & { id: string }): DependencyEnt
 }
 
 const BDE = entity({ id: 'bde', governs: true });
-const FSSS = entity({ id: 'fsss', governs: true });
+const FISA = entity({ id: 'fisa', governs: true });
 const BDS = entity({ id: 'bds' });
 const CLUB = entity({ id: 'club', parentAssociationId: 'bde' });
 const LIST = entity({
@@ -84,10 +84,10 @@ describe('dependency refusals are classified by code, never by message', () => {
 });
 
 describe('groupDependencies - every entity in exactly one place', () => {
-  const tree = groupDependencies([LONE, SCHOOL, LIST, CLUB, ORPHAN, BDS, FSSS, BDE]);
+  const tree = groupDependencies([LONE, SCHOOL, LIST, CLUB, ORPHAN, BDS, FISA, BDE]);
 
   it('heads a family per parentless BDE, its children by name', () => {
-    expect(tree.families.map((f) => f.bde.id)).toEqual(['bde', 'fsss']);
+    expect(tree.families.map((f) => f.bde.id)).toEqual(['bde', 'fisa']);
     expect(tree.families[0].children.map((c) => c.id)).toEqual(['club', 'list']);
     expect(tree.families[1].children).toEqual([]);
   });
@@ -110,15 +110,15 @@ describe('groupDependencies - every entity in exactly one place', () => {
   });
 
   it('offers the BDEs as parents and the non-governing associations as labels (G3)', () => {
-    const all = [LONE, SCHOOL, LIST, CLUB, BDS, FSSS, BDE];
-    expect(parentCandidates(all).map((e) => e.id)).toEqual(['bde', 'fsss']);
+    const all = [LONE, SCHOOL, LIST, CLUB, BDS, FISA, BDE];
+    expect(parentCandidates(all).map((e) => e.id)).toEqual(['bde', 'fisa']);
     expect(labelCandidates(all).map((e) => e.id)).toEqual(['bds', 'club']);
   });
 });
 
 describe('the parent field of the create form (reform 2.5, B1)', () => {
   const bde = { id: 'bde', name: 'BDE' };
-  const fsss = { id: 'fsss', name: 'BDE FSSS' };
+  const fisa = { id: 'fisa', name: 'BDE FISA' };
   const bds = { id: 'bds', name: 'BDS' };
 
   it('asks nothing of a creator managing one BDE, and says which', () => {
@@ -133,15 +133,15 @@ describe('the parent field of the create form (reform 2.5, B1)', () => {
   });
 
   it('requires a pick among several BDEs, and offers no label then', () => {
-    const field = createParentField('list', false, [bde, fsss], [bds]);
+    const field = createParentField('list', false, [bde, fisa], [bds]);
     expect(field.required).toBe(true);
-    expect(field.options.map((o) => o.value)).toEqual(['', 'bde', 'fsss']);
+    expect(field.options.map((o) => o.value)).toEqual(['', 'bde', 'fisa']);
   });
 
   it('lets a platform admin pick a BDE, a label or nothing', () => {
-    const field = createParentField('list', true, [bde, fsss], [bds]);
+    const field = createParentField('list', true, [bde, fisa], [bds]);
     expect(field).toMatchObject({ fixed: null, required: false, initial: '' });
-    expect(field.options.map((o) => o.value)).toEqual(['', 'bde', 'fsss', 'bds']);
+    expect(field.options.map((o) => o.value)).toEqual(['', 'bde', 'fisa', 'bds']);
   });
 
   it("keeps only the creator's own parentless BDEs where it holds MANAGE_ASSO", () => {
@@ -173,7 +173,7 @@ describe('what a BDE edit page shows (F9)', () => {
       { id: '1', name: 'Zeta', archived: false, parentAssociationId: 'bde' },
       { id: '2', name: 'Alpha', archived: true, parentAssociationId: 'bde' },
       { id: '3', name: 'Beta', archived: false, parentAssociationId: 'bde' },
-      { id: '4', name: 'Other', archived: false, parentAssociationId: 'fsss' },
+      { id: '4', name: 'Other', archived: false, parentAssociationId: 'fisa' },
     ];
     expect(dependentsOf(dir, 'bde').map((a) => a.id)).toEqual(['3', '1', '2']);
   });

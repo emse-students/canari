@@ -25,7 +25,9 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import {
   activityByMonth,
   calendarDays,
+  headline,
   hourMapMax,
+  peopleSeries,
   versionsOf,
   type UsageView,
 } from '$lib/admin/usageDashboard';
@@ -68,7 +70,10 @@ function seed() {
         activity: activity(7),
       },
     ],
-    weeks: [{ start: '2026-11-23', people: { all: 5, categories: {}, versions: {} } }],
+    weeks: [
+      { start: '2026-11-16', people: { all: 20, categories: {}, versions: {} } },
+      { start: '2026-11-23', people: { all: 5, categories: {}, versions: {} } },
+    ],
     months: [
       { start: '2026-10-01', people: { all: 40, categories: {}, versions: {} } },
       {
@@ -146,8 +151,8 @@ it('keeps a day with no figure as a gap in the chart, never squeezing it out', a
   await vi.waitFor(() =>
     expect(target.querySelectorAll('[data-testid="usage-day-bar"]')).toHaveLength(2)
   );
-  // 31 calendar days end today: two have figures, the other 29 are gaps, not missing columns.
-  expect(target.querySelectorAll('[data-testid="usage-day-gap"]')).toHaveLength(29);
+  // 30 calendar days end today: two have figures, the other 28 are gaps, not missing columns.
+  expect(target.querySelectorAll('[data-testid="usage-day-gap"]')).toHaveLength(28);
   const days = calendarDays((answer.body as UsageView).days, '2026-11-23', 3);
   expect(days.map((d) => [d.start, d.period?.people.all])).toEqual([
     ['2026-11-21', undefined],
@@ -223,4 +228,58 @@ it('sums a month of activity from its days, most people first for versions, the 
       [1, 0],
     ])
   ).toBe(2.5);
+});
+
+it('gives the order of magnitude of the day, the week and the month with the last complete period', async () => {
+  seed();
+  const target = await render();
+  await vi.waitFor(() =>
+    expect(target.querySelector('[data-testid="usage-previous-today"]')).not.toBeNull()
+  );
+  const text = (id: string) =>
+    target.querySelector(`[data-testid="${id}"]`)?.textContent?.replace(/s+/g, ' ').trim();
+  expect(text('usage-previous-today')).toContain('3');
+  expect(text('usage-previous-week')).toContain('20');
+  expect(text('usage-previous-month')).toContain('40');
+  // The mean of the days that HAVE a row among the last 7: only 2026-11-22 (3 people).
+  expect(text('usage-mean')).toContain('3');
+  expect(headline(answer.body as UsageView)).toEqual({
+    now: { day: 5, week: 5, month: 42 },
+    previous: { day: 3, week: 20, month: 40 },
+    mean: { 7: 3, 30: 3 },
+  });
+});
+
+it('draws the earlier line charts on people per day, a line per device type and per version', async () => {
+  seed();
+  const target = await render();
+  await vi.waitFor(() => expect(target.querySelectorAll('[role="slider"]')).toHaveLength(2));
+  const paths = (axis: number, series: string) =>
+    target
+      .querySelectorAll('[role="slider"]')
+      [axis].querySelectorAll(`path[data-series="${series}"]`);
+  // Categories: web_desktop (day 22), app_android and web_ios (day 23), plus the dashed total.
+  expect(paths(0, 'app_android').length).toBeGreaterThan(0);
+  expect(paths(0, 'web_ios').length).toBeGreaterThan(0);
+  expect(paths(0, 'total').length).toBeGreaterThan(0);
+  expect(paths(0, 'app_desktop')).toHaveLength(0);
+  expect(paths(1, '1.8.0').length).toBeGreaterThan(0);
+});
+
+it('keeps a gap as null in every line and widens the window with the range buttons', async () => {
+  seed();
+  const view = answer.body as UsageView;
+  const days = calendarDays(view.days, view.today, 3);
+  const byCategory = peopleSeries(days, 'category');
+  expect(byCategory.total).toEqual([null, 3, 5]);
+  expect(byCategory.series.find((s) => s.key === 'app_android')?.values).toEqual([null, 0, 4]);
+  expect(byCategory.series.map((s) => s.key)).toEqual(['app_android', 'web_ios', 'web_desktop']);
+  const target = await render();
+  await vi.waitFor(() =>
+    expect(target.querySelectorAll('[data-testid="usage-day-gap"]')).toHaveLength(28)
+  );
+  target.querySelector<HTMLElement>('[data-testid="usage-range-90"]')!.click();
+  await vi.waitFor(() =>
+    expect(target.querySelectorAll('[data-testid="usage-day-gap"]')).toHaveLength(88)
+  );
 });

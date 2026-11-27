@@ -302,13 +302,14 @@ impl InstallGuard {
     /// the drop's level ([`StateLoadRefusal::is_keystore_key_unavailable`],
     /// [`StateLoadRefusal::is_sealed_under_another_key`]), never its message.
     fn refused(&mut self, refusal: &StateLoadRefusal) {
-        self.outcome = if refusal.is_keystore_key_unavailable() {
-            InstallOutcome::NoKeystoreKey
-        } else if refusal.is_sealed_under_another_key() {
-            InstallOutcome::SealedUnderAnotherKey
-        } else {
-            InstallOutcome::Refused
-        };
+        self.outcome =
+            if refusal.is_keystore_key_unavailable() || refusal.is_keystore_prompt_dismissed() {
+                InstallOutcome::NoKeystoreKey
+            } else if refusal.is_sealed_under_another_key() {
+                InstallOutcome::SealedUnderAnotherKey
+            } else {
+                InstallOutcome::Refused
+            };
     }
 
     /// The session this attempt's selection claimed - every step after the selection needs it.

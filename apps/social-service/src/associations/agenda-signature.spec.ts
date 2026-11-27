@@ -64,7 +64,7 @@ describe('agenda signature', () => {
       expect(selectionWithinSpaces({ campus: 'saint-etienne', formation: null }, spaces)).toBe(
         false
       );
-      expect(selectionWithinSpaces({ campus: null, formation: 'FSSS' }, spaces)).toBe(false);
+      expect(selectionWithinSpaces({ campus: null, formation: 'FISA' }, spaces)).toBe(false);
       expect(selectionWithinSpaces({ campus: 'saint-etienne', formation: 'ICM' }, spaces)).toBe(
         false
       );

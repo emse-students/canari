@@ -131,7 +131,6 @@
         </div>
       </fieldset>
     {/each}
-    <p class="text-text-muted text-xs">{m.readaccess_istp_note()}</p>
     <div class="border-cn-border border-t pt-4" data-testid="read-grant-comments">
       <!-- One switch per PERSON, not per cell: it says what they see wherever their cells reach.
            The line under it says what they will and will not see in its current state. -->

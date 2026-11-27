@@ -7,7 +7,7 @@ import {
 } from './reader-spaces';
 
 /** Every pair the migration seeds (D4 x D6). */
-const SPACES: SpacePair[] = (['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const).flatMap(
+const SPACES: SpacePair[] = (['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'] as const).flatMap(
   (formation) => (['saint-etienne', 'gardanne'] as const).map((campus) => ({ formation, campus }))
 );
 
