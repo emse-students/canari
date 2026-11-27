@@ -991,11 +991,11 @@ reads is the very condition the exception rests on - **charter principle 1, *you
 yours*** ([principes](../../principes.md)): a hand-over of the other members' messages that some of
 them cannot see is a silent one. So the button is offered only while the server's `minClientVersion`
 (the `/api/version` answer the client already reads, `getAppVersionCheck`) is at or above
-`HISTORY_GRANT_NOTICE_FIRST_VERSION` (`1.8.3`, the first build that draws `historyGranted`):
+`HISTORY_GRANT_NOTICE_FIRST_VERSION` (`1.8.3-alpha.1`, the first build that draws `historyGranted`):
 `floorDrawsGrantNotice`, inside `canOfferHistoryTo`, so the press path is gated by the same predicate;
 an unknown floor offers nothing, and the decision is logged at debug once per value. The receiving
 and answering paths are not gated - a grant can only exist once the floor allows it. Until the floor
-is raised to `1.8.3` (once both stores serve it) the button does not show. **What a grant ask does
+is raised the button does not show: production to `1.8.3`, dev to `1.8.3-alpha.1` (a pre-release orders below its stable, so dev's floor names the alpha, and the admin floor accepts `x.y.z-alpha.N`). **What a grant ask does
 not survive:** a reload of the
 newcomer's page between its ask and the answer (the ask and its secret live in memory; the answer
 is then refused `no-open-ask`) - the member presses again.

@@ -9,6 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { FLOOR_VERSION_PATTERN } from '../semver';
 import { RETENTION_SETTINGS, type RetentionKey } from '../retention';
 import {
   CALLS_MODES,
@@ -47,8 +48,8 @@ export class UpdatePlatformConfigDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^\d+\.\d+\.\d+$/, {
-    message: 'minClientVersion must be a semver major.minor.patch string',
+  @Matches(FLOOR_VERSION_PATTERN, {
+    message: 'minClientVersion must be major.minor.patch, optionally followed by -alpha.N',
   })
   minClientVersion?: string;
 
