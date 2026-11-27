@@ -13,10 +13,12 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
 | Player settings (per device) | `frontend/src/lib/minesweeper/settings.ts` |
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
-| The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
+| The hint of an unranked game, drawn as a miner's lamp (client only) | `frontend/src/lib/minesweeper/hint.ts`, `frontend/src/lib/components/games/MinerLamp.svelte` |
 | The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
-| The tutorial (page, lessons, mini-grid, shared reader) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/lessons.ts`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte`, `frontend/src/lib/components/games/MinesweeperLessonRunner.svelte` |
-| The pattern catalogue, the tutorial's annex | `frontend/src/routes/games/tutorial/patterns/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/patterns.ts` |
+| The tutorial: the PATH (page, tabs, families, progress) and one lesson (route, screen, mini-grid) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/routes/games/tutorial/[id]/+page.svelte`, `frontend/src/lib/components/games/TutorialPath.svelte`, `frontend/src/lib/minesweeper/tutorial/path.ts`, `frontend/src/lib/minesweeper/tutorial/progress.ts`, `frontend/src/lib/components/games/MinesweeperLessonRunner.svelte`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte` |
+| The lessons (the basics) and the pattern catalogue (the Motifs tab) | `frontend/src/lib/minesweeper/tutorial/lessons.ts`, `frontend/src/lib/minesweeper/tutorial/patterns.ts` |
+| Le Pic, the tutorial's guide, and the miner's lamp | `frontend/src/lib/components/games/LePic.svelte`, `frontend/src/lib/components/games/MinerLamp.svelte`, the `--color-pic-*` tokens of `app.css` |
+| The game mode modal | `frontend/src/lib/components/games/MinesweeperModeModal.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -35,9 +37,9 @@ rename of a file that carries raw controls cannot pass it. Everything else float
 | --- | --- | --- |
 | Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
-| Game mode (ranked, or unranked at a level) | bottom, the pastille after dig / flag; a tap opens [the mode sheet](#the-mode-sheet-owner-2026-11-26) | **ONE choice of four** (owner, 2026-11-26): Classe, or Libre at Debutant / Intermediaire / Expert. **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked` and `canari.minesweeper.level`; **locked once the first cell is dug** (the pastille then only reminds, without its chevron), since a game's ranking is decided when its board is generated |
+| Game mode (ranked, or unranked at a level) | bottom, the pastille after dig / flag; a tap opens [the mode modal](#the-game-mode-modal-owner-2026-11-27) | **ONE choice of four** (owner, 2026-11-26): Classe, or Entrainement (was "Libre") at Debutant / Intermediaire / Expert. **"Entrainement" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked` and `canari.minesweeper.level`; **locked once the first cell is dug** (the pastille then only reminds, without its chevron), since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
-| Hint (bulb) | bottom, after the pastille; dimmed until the first dig, which gives it a board to read | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
+| Hint (the miner's lamp, was a bulb) | bottom, after the pastille; dimmed until the first dig, which gives it a board to read | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
 double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
@@ -99,7 +101,7 @@ is never submitted, so its target is the client's alone. A higher target costs m
 thread (bounded by the existing swap and node budgets; the worker stays the
 [backlog entry](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
 
-**The levels are three of the four modes of [the mode sheet](#the-mode-sheet-owner-2026-11-26)** (`levels.ts`:
+**The levels are three of the four modes of [the mode modal](#the-game-mode-modal-owner-2026-11-27)** (`levels.ts`:
 `PLAY_MODES`, `LEVEL_SPECS`). **The grid is the same at every level, so choosing one redraws nothing.** A ranked
 start that fails and falls back to a casual game plays Expert's target.
 
@@ -123,6 +125,8 @@ reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and t
 a phone, unchanged from ranked.
 
 ## The mode sheet (owner, 2026-11-26)
+
+> **Superseded 2026-11-27 by [the game mode modal](#the-game-mode-modal-owner-2026-11-27)**: the bottom sheet is deleted, "Libre" is now "Entrainement". The reasoning below (one choice of four, the newcomer plays unranked, locked after the first dig) still holds.
 
 *"change le bouton de mode libre/classe ... propose moi des designs"* - four designs were proposed (a pastille
 opening a sheet, a start screen on the grid, a four-segment bar, two stages) and the owner picked **the pastille
@@ -153,7 +157,98 @@ its challenge), `MinesweeperModal.levels.svelte.test.ts`, `MinesweeperModal.hint
 locked while the challenge is awaited). **Owed:** the phone reading
 ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 7 and 13).
 
+## The game mode modal (owner, 2026-11-27)
+
+*Validated on a canvas, 2026-11-27.* **The bottom sheet of [the mode sheet](#the-mode-sheet-owner-2026-11-26) is
+DELETED** (`MinesweeperModeSheet.svelte` and its test): one chooser, a CENTERED modal, "Nouvelle partie"
+(`MinesweeperModeModal.svelte`). Two big cards - **"Classé"** (*Chrono et classement. Pas d'indice.*) and
+**"Entraînement"** (*Indices permis, rien n'est compté.*) - and, under Entraînement only, the three levels; a
+**"Jouer"** button; the line *"Tu pourras changer ensuite depuis la pastille en bas."*; and the way to the tutorial
+("Pas encore à l'aise ? Le tutoriel"). Escape, the scrim and a cross leave without choosing.
+
+**"Libre" is renamed "Entraînement" in every user-visible string** (the pastille reads "Entraînement · Débutant", the
+stats note says "mode Entraînement"; English: "Training"). The stored keys did not change.
+
+**It opens by itself ONLY at the first game on a device** (owner review, 2026-11-27): no mode stored AND no minesweeper
+history on the device (`isFirstMinesweeperGame()`: any `canari.minesweeper.*` key besides the mode and the tutorial's
+progress - a level, the settings, the stats - counts as history, so a player from before this modal is never nagged),
+AND never while `modeLocked` or `board.minesPlaced` (the first-game flag is read once, before the level loader writes
+its own key). Afterwards the bottom pastille opens the same modal, before the first dig. **Dismissing it without a pick
+(Escape, scrim, cross, Back, the tutorial link) STORES NOTHING**: the default (Entraînement on Débutant) just plays, and
+the level key written on mount makes the next open a later one, so it introduces the choice once and never nags
+(charter, principle 3). Focus moves into the dialog on open and back on close (`focusTrap`), and both radiogroups are
+roving (one tab stop, arrows move and pick). "Jouer" writes exactly what the sheet's pick wrote (`canari.minesweeper.unranked`, and
+`canari.minesweeper.level` for a level); the draft inside the modal writes nothing until then. Ranked offers no hint, as
+before (`hintOffered`).
+
+**The Android Back key closes the modal and the game stays** (reading on the Mi 9T, 2026-11-27, [reading](../../backlog.d/reading-owed-the-minesweeper-hint.md) item 13: Back on the old sheet left `/games/play`). The modal takes a history entry through `historyOverlayStack` exactly as `shared/Modal` does, released when it goes; pinned in `MinesweeperModeModal.svelte.test.ts` and `MinesweeperModal.chrome.svelte.test.ts`.
+
+**Pinned:** `MinesweeperModeModal.svelte.test.ts` (the cards and their lines, the levels under Entraînement only, "Jouer"
+commits and nothing before, the ways out, the tutorial link), `MinesweeperModal.chrome.svelte.test.ts` (opens by itself
+at the first game and only then, the pastille reopens it, a dismissal stores nothing, the history gate, roving arrows and focus, ranked asks for its challenge,
+a level pick is stored), `MinesweeperModal.levels.svelte.test.ts`, `levels.test.ts` (`hasStoredMinesweeperMode`, `isFirstMinesweeperGame`).
+
+## The tutorial path (owner, 2026-11-27)
+
+*Validated on a canvas (Le Pic's sheet, the path, a lesson, a solved lesson, the mode modal), 2026-11-27.* The
+tutorial is no longer a list of lessons with "next": `/games/tutorial` is a PATH, `/games/tutorial/<id>` one lesson.
+
+**The path** (`TutorialPath.svelte`, `tutorial/path.ts`): two tabs, **"Les bases"** (the five lessons of `lessons.ts`)
+and **"Motifs"** (the 29 of `patterns.ts`, grouped under their sections: the families). Each is a zigzag of diamond
+tiles - **done is green with a check, the current one is yellow with Le Pic standing on it, the rest are white**. A
+tile wears the short name of its lesson ("B1", "1-2-1"); one too long for it wears its position and the name beside.
+Under the tabs: Le Pic's line, the progress of the family the player is in (a bar and "2 / 8") and a **"Continuer ·
+<next>"** button to the first lesson not done; when a tab is complete it offers a game. **THE ORDER IS ADVISED AND
+EVERYTHING STAYS OPEN**: every tile is a plain link whatever is done; "current" is only the first not done.
+The catalogue's old route `/games/tutorial/patterns` is gone: it is the Motifs tab, and its jump list is the path. **The active tab lives in the URL (`?tab=patterns`, `parseTab`/`tabUrl`)**, and a lesson's "Retour au parcours" and solved-screen links carry the tab of its family (`tutorialPathHref`), so returning from a pattern lands on Motifs.
+
+**One lesson** (`MinesweeperLessonRunner.svelte`): Le Pic beside a speech bubble that says the goal, then each step of
+the lamp (his mood: thinking at the start, pointing while he explains, glad on the last step, worried after a mine),
+the existing playable mini-grid and its marks (unchanged), the legend of the three colours (always shown), and a bottom
+bar - **Recommencer, the lamp, Passer** ("Passer" goes to the next lesson without recording). Solving it (the mini-grid
+says so once) records it and shows **the solved screen**: Le Pic with the flag, "Motif maîtrisé !" ("Leçon réussie !"
+for a basics lesson), one line restating the pattern (the last step of its hint, in its own words: no second text to
+keep true), the family progress, **"Motif suivant · <name>"** and "Retour au parcours". The lessons, their proofs and
+`lessons.test.ts` are untouched.
+
+**The bottom bar stays clear of the tab bar** (iPhone reading, 2026-11-27: the old lesson buttons sat under the floating bar until the page was scrolled): it is `sticky` at `bottom-(--bottom-nav-reserve)`, the shell's one measure of what the bar covers (the native bar overwrites it), and `md:bottom-0` where there is none; pinned in `MinesweeperLessonRunner.svelte.test.ts`.
+
+**Progress is a per-device convenience**, stored like the other minesweeper settings (`tutorial/progress.ts`, key
+`canari.minesweeper.tutorial`: the solved ids and whether the lamp was ever used): read synchronously, validated on
+read; a value that is not what we wrote is **logged and ignored** (the path starts blank), an id that no longer exists is
+dropped with a log. It never reaches the server.
+
+**NO STREAK, NO FLAME, NO MEDALS, NO POINTS** (owner, 2026-11-27: *"pas de flamme, ça rentre en contradiction avec les
+principes non ? C'est juste un tutoriel et des niveaux"*). **Charter, principle 3 - your attention is not for sale**
+("ni séries à entretenir"): a streak or a medal is a mechanism that calls the player back, which the charter refuses, so
+the design's medal tile was dropped and a test holds the page free of them. What remains is a record of what was done.
+
+**Le Pic** (`LePic.svelte`, the owner's name for the guide): a student of the Mines in grand uniform, drawn in SVG - a
+black tunic with two gold button rows, a white lapel open on ONE side, an embroidered collar, single-loop cord
+epaulettes, a belt with two round gold plates and a chain, a kepi with a light top and NO insignia, a short fringe, thick
+glasses and a thin moustache. Props `mood` (neutral, happy, think, worried, surprised), `pose` (rest, point with the arm
+raised in one piece, flag holding the red minesweeper flag) and `size`; an `aria-label`. The geometry is the validated
+canvas's, copied as it is; its colours are the **fixed `--color-pic-*` tokens** of `app.css` (a drawing keeps its own
+palette in both themes, like the call colours), never a hex in a component.
+
+**The miner's lamp** (`MinerLamp.svelte`, owner, 2026-11-27: the hint is a lamp, *"pas une ampoule"*): a safety lamp, a
+glass cage between two brass rings, a flame burning while `lit`. It is the tutorial's "Indice" button - a big round
+yellow button with its label ("Indice", "Indice suivant", "Masquer l'indice") and one dot per step, **pulsing until it was
+used once on this device, and never under `prefers-reduced-motion`** - AND the hint button of the unranked game, which
+lost its bulb (owner: *"je veux une app homogène"*; it is lit while a hint is shown). The hint's logic (`hint.ts`) is
+untouched.
+
+**Pinned:** `path.test.ts` (the families, all open, "current" is the first not done), `progress.test.ts` (per device,
+invalid values logged and ignored, unknown ids dropped, a refusing storage survived), `routes/games/tutorial/page.svelte.test.ts`
+(tabs, tiles, done and current from the storage, every tile a link, Continue, no streak or medal),
+`MinesweeperLessonRunner.svelte.test.ts` (the bubble and the mood, the lamp and its pulse, a mine, solved once and
+recorded, the solved screen, Passer), `routes/games/tutorial/[id]/page.svelte.test.ts`, `LePic.svelte.test.ts` (poses,
+moods, no raw colour, the lamp's flame). **Owed:** the phone reading
+([reading](../../backlog.d/reading-owed-the-minesweeper-tutorial-path.md)).
+
 ## The tutorial (owner, 2026-11-25)
+
+> **2026-11-27: the page and the reader below were redesigned as [the tutorial path](#the-tutorial-path-owner-2026-11-27)** (tabs, a zigzag of tiles, Le Pic, one screen per lesson). What stays true here: the lessons, their pictures, the proof, the highlights and the mini-grid.
 
 *"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
 mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
@@ -226,8 +321,10 @@ screen that leads to a game, the hint cycle with its legend, restart, Back to `/
 
 ## The pattern catalogue, the tutorial's annex (owner, 2026-11-26)
 
+> **2026-11-27: the catalogue is the "Motifs" tab of [the path](#the-tutorial-path-owner-2026-11-27)**; the route `/games/tutorial/patterns` and its jump list are gone. The boards, the proofs and the credit below are unchanged.
+
 *"reprend leurs explications pour tous les patterns dans un tutoriel annexe"* (owner), after asking for an
-introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. `/games/tutorial/patterns` lists
+introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. the Motifs tab lists
 **every named pattern of that reference catalogue**, one playable board each, by family, reached from the
 tutorial's header and closing screen. It shares the tutorial's reader (`MinesweeperLessonRunner.svelte`, which
 the tutorial page also uses), with a jump list grouped by family.
@@ -312,10 +409,12 @@ subject. This replaced a search for boards on which the counter never decides.
 
 **Pinned:** `lessons.test.ts` (the whole catalogue, with the tutorial: goals, highlights, the counter's role,
 the reduction labels, the list of reference names, the families kept together), `MinesweeperMiniGrid.svelte.test.ts`
-(an open grid, a reduction label), `routes/games/tutorial/patterns/page.svelte.test.ts`. **Owed:** the phone
-reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), item 14).
+(an open grid, a reduction label), `routes/games/tutorial/page.svelte.test.ts` (the tabs, the tiles). **Owed:** the phone
+reading ([reading](../../backlog.d/reading-owed-the-minesweeper-tutorial-path.md)).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
+
+> **2026-11-27: the bulb is now a miner's lamp** ([the path](#the-tutorial-path-owner-2026-11-27)): same button, same logic, a new drawing (`MinerLamp.svelte`, lit while a hint is shown).
 
 *"En mode non classe (libre), j'aimerais bien qu'on puisse avoir un peu de didacticiel pour s'entrainer ...
 indiquer une des cases chiffrees qui donne le prochain coup ? Sans donner la reponse, cela oriente le regard."*
