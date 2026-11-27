@@ -30,16 +30,18 @@ export function profileCorrectionPendingSql(r: string): string {
 
 /**
  * Alumni duplicate flag `f` (core's `alumni_duplicate_flags`) still waits for an admin: no later
- * reading found it gone or no longer matching (`resolvedAt`), and no merge of it stands - an open one
- * (requested or marked: the admin has answered, MiConnect carries it out at the next sign-in) or a
- * completed one. A CANCELLED merge does not count, so a duplicate whose mark was withdrawn waits
+ * reading found it gone or no longer matching (`resolvedAt`), and no merge of it stands - one MARKED
+ * (the admin has answered, MiConnect carries it out at the next sign-in) or COMPLETED. A merely
+ * REQUESTED row (a "Rattacher" interrupted before its mark was written) answers nothing yet, so the
+ * item stays; a CANCELLED merge does not count either, so a duplicate whose mark was withdrawn waits
  * again, exactly as the page lists it again. ONE definition: the count, the bell gate and the
  * announcement read it, and `AlumniDuplicateQueue.reconcile` converges the table on what the page
  * lists, so the two cannot disagree for longer than one reading.
  */
 export function alumniDuplicatePendingSql(f: string): string {
   return `(${f}."resolvedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM alumni_merges aq_m
-      WHERE aq_m."duplicateUuid" = ${f}."duplicateUuid"::text AND aq_m."cancelledAt" IS NULL))`;
+      WHERE aq_m."duplicateUuid" = ${f}."duplicateUuid"::text AND aq_m."cancelledAt" IS NULL
+        AND (aq_m."markedAt" IS NOT NULL OR aq_m."completedAt" IS NOT NULL)))`;
 }
 
 /** Report row `r` still waits for a moderator: neither reviewed nor dismissed. */

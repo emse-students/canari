@@ -14,6 +14,17 @@ import {
 } from './erasure-policy';
 
 describe('erasure policy', () => {
+  it("erases an Alumni duplicate's queue flag with either account, before the merge rows it reads are deleted or blanked", () => {
+    const labels = CORE_ERASURE_STATEMENTS.map((s) => s.label);
+    const flags = labels.indexOf('alumni_duplicate_flags');
+    expect(flags).toBeGreaterThanOrEqual(0);
+    expect(flags).toBeLessThan(labels.indexOf('alumni_merges'));
+    const sql = CORE_ERASURE_STATEMENTS[flags].sql;
+    // As the duplicate (its own uuid) and as the target of a merge that names the duplicate.
+    expect(sql).toContain('"miconnectUuid" FROM users WHERE id = $1');
+    expect(sql).toContain('"targetUserId" = $1');
+  });
+
   it("erases core's own part in-process and reaches the three services by their internal DELETE", () => {
     expect(ERASURE_TARGETS.map((t) => t.service)).toEqual([
       'core',

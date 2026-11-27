@@ -651,12 +651,27 @@ export class UsersController {
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Get('admin/alumni-duplicates')
   async listAlumniDuplicates() {
+    const readStartedAt = new Date();
     const duplicates = await this.alumniMerge.listDuplicates();
-    // The admins' queue converges on what this page lists: a duplicate matching an account is flagged
-    // (and told, once), one no longer listed is resolved (`AlumniDuplicateQueue`). Never throws.
-    await this.alumniQueue.reconcile(
-      duplicates.filter((d) => d.targets.length > 0).map((d) => d.duplicate.uuid)
-    );
+    // The admins' queue converges on what this page lists - but only what the mark ACCEPTS
+    // (`autoMergeRefusal`: one match, links exactly [alumni]): a homonym has no action yet, so it is
+    // never flagged. A duplicate accepted is flagged (and told, once), one no longer listed is
+    // resolved if the reading began after it was flagged (`AlumniDuplicateQueue`). Never throws.
+    const accepted: string[] = [];
+    try {
+      for (const d of duplicates.filter((x) => x.targets.length > 0)) {
+        if (await this.alumniMerge.isAutoMergeable(d.duplicate.uuid))
+          accepted.push(d.duplicate.uuid);
+      }
+    } catch (err) {
+      // An unread duplicate is not "no longer listed": reconciling on a partial answer would resolve
+      // its flag. The page is answered, the queue waits for the next reading.
+      this.logger.error(
+        `[ALUMNI_QUEUE] the duplicates were NOT checked, the queue is not reconciled: ${String(err)}`
+      );
+      return duplicates;
+    }
+    await this.alumniQueue.reconcile(accepted, readStartedAt);
     return duplicates;
   }
 

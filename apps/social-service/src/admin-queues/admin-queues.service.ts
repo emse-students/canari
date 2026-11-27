@@ -166,8 +166,22 @@ export class AdminQueuesService {
    * Throws on a failed write: the internal caller logs it.
    */
   async announceAlumniDuplicate(duplicateUuid: string): Promise<number> {
+    return this.announceAlumniDuplicates([duplicateUuid]);
+  }
+
+  /**
+   * A reading flagged several duplicates at once: each has its bell row, but the admins get ONE push
+   * for all of them (carried by the first row, none by the others) - never a burst. Answers how many
+   * admins have the bell rows.
+   */
+  async announceAlumniDuplicates(duplicateUuids: readonly string[]): Promise<number> {
+    let told = 0;
     try {
-      return await this.announce('alumni-duplicates', duplicateUuid, null);
+      for (const [index, uuid] of duplicateUuids.entries()) {
+        const n = await this.announce('alumni-duplicates', uuid, null, index > 0);
+        told = Math.max(told, n);
+      }
+      return told;
     } finally {
       await this.signal.changed({ queue: 'alumni-duplicates' });
     }
@@ -218,7 +232,8 @@ export class AdminQueuesService {
   private async announce(
     queue: AnnouncedQueue,
     itemId: string,
-    excludeId: string | null
+    excludeId: string | null,
+    skipPush = false
   ): Promise<number> {
     const { type, target } = ANNOUNCED[queue];
     const admins: { id: string }[] = await this.reports.manager.query(
@@ -239,6 +254,7 @@ export class AdminQueuesService {
         actorName: SYSTEM_ACTOR_NAME,
         text: '',
         pushData: { target },
+        ...(skipPush ? { skipPush } : {}),
       });
     } catch (err) {
       if (!(err instanceof NotificationPushFailedError)) throw err;

@@ -33,8 +33,9 @@ export const BOOKINGS_TARGET = 'bookings';
 /**
  * The `target`s naming the three global-admin queues a notice announces an item in (owner, 2026-11-18),
  * and the deep-link hosts for them: the profile corrections (`/admin/profile-corrections`), the
- * moderation reports (`/admin/moderation`) and the Alumni duplicates (`/admin/alumni-duplicates`). Floored at the build that owns the hosts
- * (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`), so no device is sent a host it cannot open.
+ * moderation reports (`/admin/moderation`) and the Alumni duplicates (`/admin/alumni-duplicates`). Floored at the build that owns the hosts, so no
+ * device is sent a host it cannot open: `ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION` (1.7.1) for the first
+ * two, `ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION` (1.8.3) for the Alumni duplicates.
  */
 export const ADMIN_PROFILE_CORRECTIONS_TARGET = 'admin-profile-corrections';
 /** See {@link ADMIN_PROFILE_CORRECTIONS_TARGET}. */

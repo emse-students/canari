@@ -623,13 +623,13 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
           `SELECT count(*)::int AS n FROM alumni_duplicate_flags adf WHERE ${alumniDuplicatePendingSql('adf')}`
         )) as { n: number }[]
       )[0].n;
-    const merge = (completed: boolean, cancelled: boolean) =>
+    const merge = (completed: boolean, cancelled: boolean, marked = true) =>
       q(
         `INSERT INTO alumni_merges ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held,
            "markedAt", "completedAt", "cancelledAt")
-         VALUES ('adm', $1, 'alumni-0001', $2, '{}'::jsonb, now(),
+         VALUES ('adm', $1, 'alumni-0001', $2, '{}'::jsonb, CASE WHEN $5::boolean THEN now() END,
            CASE WHEN $3::boolean THEN now() END, CASE WHEN $4::boolean THEN now() END)`,
-        [dup, target, completed, cancelled]
+        [dup, target, completed, cancelled, marked]
       );
     await q(`INSERT INTO users (id, admin) VALUES ('adm2', true) ON CONFLICT (id) DO NOTHING`);
     await q(`UPDATE users SET admin = true WHERE id = 'adm2'`);
@@ -645,7 +645,13 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     expect(await servedTo171('adm')).toEqual([]);
     expect(await served('adm')).toEqual([]);
 
-    // One admin marks it for a merge (an OPEN merge row): gone from every bell and every count.
+    // A merge only REQUESTED (written, the editor not yet written to, so not marked) removes nothing:
+    // an interrupted mark leaves the item waiting.
+    await merge(false, false, false);
+    expect(await pending()).toBe(1);
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+
+    // One admin marks it for a merge (an OPEN, MARKED merge row): gone from every bell and every count.
     await q(`DELETE FROM alumni_merges`);
     await merge(false, false);
     expect(await pending()).toBe(0);

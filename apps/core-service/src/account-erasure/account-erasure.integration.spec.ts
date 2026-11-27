@@ -68,7 +68,11 @@ maybe('account erasure queue against PostgreSQL', () => {
       readFileSync(join(__dirname, '..', 'migrations', '012_account_erasure_jobs.sql'), 'utf8')
     );
     // `alumni_merges` is not in CORE_TABLES' copy: its two migrations build it here.
-    for (const file of ['028_alumni_link_and_merges.sql', '029_alumni_merge_marks.sql']) {
+    for (const file of [
+      '028_alumni_link_and_merges.sql',
+      '029_alumni_merge_marks.sql',
+      '031_alumni_duplicate_flags.sql',
+    ]) {
       await ds.query(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
     }
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -117,6 +121,19 @@ maybe('account erasure queue against PostgreSQL', () => {
         [`key-${id}`, id]
       );
     }
+    // The queue flags of the duplicates the two accounts are the TARGET of (migration 031).
+    const FLAG_OF = (id: string) =>
+      `00000000-0000-4000-8000-0000000000${id === SUBJECT ? '01' : '02'}`;
+    for (const id of [SUBJECT, OTHER]) {
+      await ds.query(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [
+        FLAG_OF(id),
+      ]);
+      await ds.query(
+        `INSERT INTO alumni_merges ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held, "markedAt")
+         VALUES ('admin', $1, 'alumni-3', $2, '{}'::jsonb, now())`,
+        [FLAG_OF(id), `mc-${id.slice(0, 8)}`]
+      );
+    }
     // The first-time helps both accounts have seen (migration 019).
     for (const id of [SUBJECT, OTHER]) {
       await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'welcome-tour')`, [id]);
@@ -152,6 +169,17 @@ maybe('account erasure queue against PostgreSQL', () => {
     expect(await count(`user_blocks`)).toBe(0);
     expect(await count(`help_seen WHERE user_id = $1`, [SUBJECT])).toBe(0);
     expect(await count(`help_seen WHERE user_id = $1`, [OTHER])).toBe(1);
+    // The erased target's duplicate flag is gone with it; the other account's stays.
+    expect(
+      await count(`alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [
+        `00000000-0000-4000-8000-000000000001`,
+      ])
+    ).toBe(0);
+    expect(
+      await count(`alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [
+        `00000000-0000-4000-8000-000000000002`,
+      ])
+    ).toBe(1);
     // The closed merge is gone; the open one stays with the target blanked, so the duplicate's own
     // erasure still runs once MiConnect merges.
     const merges = (dup: string) => count(`alumni_merges WHERE "duplicateUuid" = $1`, [dup]);

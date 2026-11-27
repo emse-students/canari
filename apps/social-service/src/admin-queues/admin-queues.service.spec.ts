@@ -150,6 +150,22 @@ describe('AdminQueuesService', () => {
       expect(signal.changed).toHaveBeenCalledWith({ queue: 'alumni-duplicates' });
     });
 
+    it('a batch is one push: only the first row carries it, and the badges recount once', async () => {
+      const { service, notifications, signal } = make({ admins: ['a1'] });
+      const ids = [
+        '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10',
+        '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11',
+        '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12',
+      ];
+      await service.announceAlumniDuplicates(ids);
+      const calls = notifications.createNotifications.mock.calls.map(
+        (c) => c[0] as unknown as { postId: string; skipPush?: boolean }
+      );
+      expect(calls.map((c) => c.postId)).toEqual(ids);
+      expect(calls.map((c) => c.skipPush ?? false)).toEqual([false, true, true]);
+      expect(signal.changed).toHaveBeenCalledTimes(1);
+    });
+
     it('never tells the person who asked, even an admin', async () => {
       const { service, notifications, query } = make({ admins: ['a1', 'a2'] });
       await service.announceProfileCorrection('req-1', 'a2');

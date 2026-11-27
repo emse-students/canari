@@ -182,6 +182,50 @@ export const COMPLETE_MERGE_SQL = `WITH closed AS (
   UPDATE alumni_duplicate_flags SET "resolvedAt" = now()
    WHERE "resolvedAt" IS NULL AND "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM closed)`;
 
+/** Why a duplicate may not be marked for an AUTOMATIC merge: a typed kind and the reason. */
+export interface AutoMergeRefusal {
+  kind: 'not_duplicate' | 'no_match';
+  reason: string;
+}
+
+/**
+ * THE ONE RULE of what the mark accepts (D47, D48), pure: the duplicate's links are exactly
+ * [alumni], exactly ONE account matches it by name and promo (and, when the caller names one, it is
+ * that account), and that account holds no Alumni link. `merge` refuses by it, and the admins' queue
+ * flags and lists only what it accepts (`flagNewAccount`, `isAutoMergeable`) - a homonym or any
+ * other case it refuses has no action yet, so it is never put in front of the admins as one. Null
+ * when the mark is accepted.
+ */
+export function autoMergeRefusal(input: {
+  dupSlugs: readonly string[];
+  matchUuids: readonly string[];
+  /** The account the caller wants to attach to; absent when only asking whether one is accepted. */
+  targetUuid?: string;
+  /** The links of the single match; ignored when there is not exactly one. */
+  targetSlugs: readonly string[];
+}): AutoMergeRefusal | null {
+  const { dupSlugs, matchUuids, targetUuid, targetSlugs } = input;
+  if (dupSlugs.length !== 1 || dupSlugs[0] !== ALUMNI_SOURCE_SLUG) {
+    return {
+      kind: 'not_duplicate',
+      reason: `its links are [${dupSlugs.join(', ')}], not [alumni]`,
+    };
+  }
+  if (matchUuids.length !== 1 || (targetUuid !== undefined && matchUuids[0] !== targetUuid)) {
+    return {
+      kind: 'no_match',
+      reason:
+        matchUuids.length > 1
+          ? `${matchUuids.length} accounts match by name and promo`
+          : 'name and promo differ',
+    };
+  }
+  if (targetSlugs.includes(ALUMNI_SOURCE_SLUG)) {
+    return { kind: 'no_match', reason: 'the target already holds an Alumni link' };
+  }
+  return null;
+}
+
 /** The write that removes the merge mark: each of its keys set to null, which MiConnect deletes. */
 const MARK_REMOVED: Record<string, null> = Object.fromEntries(
   Object.values(MERGE_MARK).map((key) => [key, null])
@@ -253,9 +297,11 @@ export class AlumniMergeService {
     try {
       const account = await this.editor.userByUuid(miconnectUuid);
       if (!account || !isAlumniCreated(account) || !isPersonAccount(account)) return;
-      const targets = await this.targetsOf(account);
-      if (targets.length === 0) {
-        this.logger.log(`[ALUMNI_MERGE] new Alumni account ${tag} matches no existing account`);
+      const verdict = await this.autoMergeVerdict(account);
+      if ('refusal' in verdict) {
+        this.logger.log(
+          `[ALUMNI_MERGE] new Alumni account ${tag} is not flagged: ${verdict.refusal.reason}`
+        );
         return;
       }
       await this.queue?.flag(account.uuid);
@@ -374,6 +420,23 @@ export class AlumniMergeService {
   }
 
   /**
+   * "Rattacher" (D48): see {@link markMerge}. Whatever it does - marked, refused, or failed half-way
+   * - the admins' badges recount (`finally`): a requested row an interrupted call leaves keeps the
+   * duplicate pending, and a mark that landed takes it out; the queue never waits on a later reading.
+   */
+  async merge(
+    duplicateUuid: string,
+    targetUuid: string,
+    actorId: string
+  ): Promise<{ held: AlumniHoldings; status: 'marked' }> {
+    try {
+      return await this.markMerge(duplicateUuid, targetUuid, actorId);
+    } finally {
+      await this.queue?.changed();
+    }
+  }
+
+  /**
    * "Rattacher" (D48): MARKS the duplicate at MiConnect for a merge into `targetUuid`, on behalf of
    * `actorId`, traced in `alumni_merges`. MiConnect merges at the duplicate's next Alumni sign-in, and
    * its Canari account is erased once that is seen ({@link complete}), never at the mark.
@@ -384,7 +447,7 @@ export class AlumniMergeService {
    * idempotent, and the row turns MARKED only after it: a call that died in between is resumed by
    * calling again.
    */
-  async merge(
+  private async markMerge(
     duplicateUuid: string,
     targetUuid: string,
     actorId: string
@@ -459,8 +522,6 @@ export class AlumniMergeService {
       [open.id]
     );
     this.logger.log(`[ALUMNI_MERGE] marked ${tag} held=${JSON.stringify(open.held)}`);
-    // The duplicate left the admins' queue (a merge of it stands): every admin's badge recounts.
-    await this.queue?.changed();
     return { held: open.held, status: 'marked' };
   }
 
@@ -531,29 +592,54 @@ export class AlumniMergeService {
     if (!isAlumniCreated(dup) || !isPersonAccount(dup)) {
       refuse(new AlumniMergeNotDuplicateError('not created by an Alumni sign-in'));
     }
-    const slugs = await this.editor.sourceSlugsOf(dup.pk);
-    if (slugs.length !== 1 || slugs[0] !== ALUMNI_SOURCE_SLUG) {
-      refuse(new AlumniMergeNotDuplicateError(`its links are [${slugs.join(', ')}], not [alumni]`));
-    }
     if (targetUuid === dup.uuid) refuse(new AlumniMergeNoMatchError('the same account'));
     const target = await this.editor.userByUuid(targetUuid);
     if (!target) return refuse(new AlumniMergeNoMatchError('no such target account'));
     if (isAlumniCreated(target) || !isPersonAccount(target) || target.is_active === false) {
       refuse(new AlumniMergeNoMatchError('the target is not an active CAS person account'));
     }
-    const matches = await this.targetsOf(dup);
-    if (matches.length !== 1 || matches[0].uuid !== targetUuid) {
+    const verdict = await this.autoMergeVerdict(dup, targetUuid);
+    if ('refusal' in verdict) {
       refuse(
-        new AlumniMergeNoMatchError(
-          matches.length > 1
-            ? `${matches.length} accounts match by name and promo`
-            : 'name and promo differ'
-        )
+        verdict.refusal.kind === 'not_duplicate'
+          ? new AlumniMergeNotDuplicateError(verdict.refusal.reason)
+          : new AlumniMergeNoMatchError(verdict.refusal.reason)
       );
     }
-    if ((await this.editor.sourceSlugsOf(target.pk)).includes(ALUMNI_SOURCE_SLUG)) {
-      refuse(new AlumniMergeNoMatchError('the target already holds an Alumni link'));
-    }
+  }
+
+  /**
+   * Reads MiConnect and applies {@link autoMergeRefusal} to `dup`: the one target the mark would
+   * accept, or why it would not.
+   */
+  private async autoMergeVerdict(
+    dup: MiconnectUserListing,
+    targetUuid?: string
+  ): Promise<{ target: MiconnectUserListing } | { refusal: AutoMergeRefusal }> {
+    const dupSlugs = await this.editor.sourceSlugsOf(dup.pk);
+    const matches = await this.targetsOf(dup);
+    const only = matches.length === 1 ? matches[0] : undefined;
+    const targetSlugs = only ? await this.editor.sourceSlugsOf(only.pk) : [];
+    const refusal = autoMergeRefusal({
+      dupSlugs,
+      matchUuids: matches.map((m) => m.uuid),
+      targetUuid,
+      targetSlugs,
+    });
+    return refusal || !only
+      ? { refusal: refusal ?? { kind: 'no_match', reason: 'no match' } }
+      : { target: only };
+  }
+
+  /**
+   * Whether the Alumni-created account `duplicateUuid` is one the mark accepts NOW - the filter of
+   * the admins' queue (`UsersController.listAlumniDuplicates`). False for an account MiConnect no
+   * longer has.
+   */
+  async isAutoMergeable(duplicateUuid: string): Promise<boolean> {
+    const account = await this.editor.userByUuid(duplicateUuid);
+    if (!account || !isAlumniCreated(account) || !isPersonAccount(account)) return false;
+    return !('refusal' in (await this.autoMergeVerdict(account)));
   }
 
   /** The open row of a duplicate, or undefined. */

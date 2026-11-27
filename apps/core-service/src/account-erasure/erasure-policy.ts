@@ -95,6 +95,18 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   // deleting it would leave that account behind. Where the erased account was the admin who merged,
   // the row keeps the merge without the admin's id. The table has an entity (`AlumniMerge`), so a
   // stack built by `synchronize` has it too.
+  // The Alumni duplicates' queue flags (migration 031), BEFORE the merge rows below are deleted or
+  // blanked: the flag of the erased account as a DUPLICATE (found by its MiConnect uuid, read from the
+  // `users` row), and the flag of any duplicate that a merge names this account the TARGET of. A
+  // flag holds only a MiConnect uuid, and goes with either account (register M1).
+  {
+    label: 'alumni_duplicate_flags',
+    sql: `DELETE FROM alumni_duplicate_flags
+            WHERE "duplicateUuid"::text = (SELECT "miconnectUuid" FROM users WHERE id = $1)
+               OR "duplicateUuid"::text IN (SELECT "duplicateUuid" FROM alumni_merges
+                    WHERE "targetUserId" = $1
+                       OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
   {
     label: 'alumni_merges',
     sql: `DELETE FROM alumni_merges WHERE "completedAt" IS NOT NULL

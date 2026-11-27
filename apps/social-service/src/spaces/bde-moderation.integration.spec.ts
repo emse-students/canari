@@ -597,7 +597,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     // merge, one whose mark was cancelled (waits again), one resolved - two of the four count.
     await client.query(
       `CREATE TABLE IF NOT EXISTS alumni_merges ("duplicateUuid" varchar(36) NOT NULL,
-         "cancelledAt" timestamptz);
+         "markedAt" timestamptz, "completedAt" timestamptz, "cancelledAt" timestamptz);
        CREATE TABLE IF NOT EXISTS alumni_duplicate_flags ("duplicateUuid" uuid PRIMARY KEY,
          "resolvedAt" timestamptz)`
     );
@@ -607,8 +607,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
          ('00000000-0000-4000-8000-000000000a03', NULL), ('00000000-0000-4000-8000-000000000a04', now())`
     );
     await client.query(
-      `INSERT INTO alumni_merges ("duplicateUuid", "cancelledAt") VALUES
-         ('00000000-0000-4000-8000-000000000a02', NULL), ('00000000-0000-4000-8000-000000000a03', now())`
+      `INSERT INTO alumni_merges ("duplicateUuid", "markedAt", "cancelledAt") VALUES
+         ('00000000-0000-4000-8000-000000000a02', now(), NULL), ('00000000-0000-4000-8000-000000000a03', now(), now())`
     );
     const ds = new DataSource({
       type: 'postgres',

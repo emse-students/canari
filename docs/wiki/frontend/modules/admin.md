@@ -99,7 +99,7 @@ database, legacy cotisations - configure or inspect, nothing waits there):
 | `profile-corrections` | `profile_correction_requests.status = 'pending'` (an `applying` claim is in an admin's hands) | a global admin only | - |
 | `moderation` | `content_reports.status = 'pending'` (not reviewed, not dismissed) | a global admin (all) or a content moderator (`isContentModerator`) | `reportInBdeScopeSql` - what the queue page lists for that moderator |
 | `agenda` | `association_calendar_events.status = 'pending'` | a global admin (all) or an event validator (`isUserBdeAdmin`) | `holdsBdeAgendaRightOverSql` - each event's own `canValidate` |
-| `alumni-duplicates` | core's `alumni_duplicate_flags` row not `resolvedAt`, with NO `alumni_merges` row that is not cancelled (`alumniDuplicatePendingSql`: marked for a merge, or merged, takes it out; a cancelled mark brings it back) | a global admin only | - |
+| `alumni-duplicates` | core's `alumni_duplicate_flags` row not `resolvedAt`, with NO live `alumni_merges` row that is MARKED or completed (`alumniDuplicatePendingSql`: a merge only requested - the editor write interrupted - removes nothing; a cancelled mark brings it back) | a global admin only | - |
 
 The predicates are one fragment each (`apps/social-service/src/admin-queues/admin-queue-sql.ts`),
 read by the counts, the bell gates and the announcement alike.
@@ -129,8 +129,9 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   une notif, comme toutes les autres fonctionnalités de la console admin"): when an Alumni sign-in
   created an account that matches an existing one. EVERY global admin is told (nobody asked for it, so
   nobody is excluded), ONCE per duplicate: core-service's `AlumniDuplicateQueue.flag` writes the
-  `alumni_duplicate_flags` row and posts `POST /internal/notifications/alumni-duplicate-flagged` only
-  when that INSERT is new - a row that exists is never announced again, however often the page is read
+  `alumni_duplicate_flags` row and posts `POST /internal/notifications/alumni-duplicate-flagged` (a
+  page reading that flags several posts `alumni-duplicates-found` once: a bell row each, ONE push for
+  all, never a burst) only when that INSERT is new - a row that exists is never announced again, however often the page is read
   or a mark is cancelled (charter principle 3, "your attention is not for sale"). The push is
   content-free as the other two (`social_admin_alumni_duplicate`, "Doublon Alumni à rattacher", no
   name) and opens `/admin/alumni-duplicates`; floor `1.8.3` (`ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION`).
@@ -140,8 +141,8 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   longer listed is resolved, one that matches again waits again with NO new notice). A duplicate
   created at MiConnect that signs in nowhere in Canari and that no admin reads waits for the next
   reading; a push at MiConnect's creation of it is a MiConnect-side event, not built. **It clears for
-  every admin when one marks it for a merge** (the open `alumni_merges` row is the state; no write
-  to the flag), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
+  every admin when one marks it for a merge** (the marked `alumni_merges` row is the state; no write
+  to the flag, and ONLY what the mark accepts is ever flagged - `autoMergeRefusal`, one shared predicate - so a homonym is never announced; `reconcile` resolves only flags older than its reading's start), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
   (mark, cancel, resolution) with NO push. When MiConnect completes the merge nothing is announced: the
   item has been gone since the mark, and the completion resolves the flag in the SAME statement
   (`COMPLETE_MERGE_SQL`), so an erasure deleting the merge row cannot bring it back. There is no "dismiss". The unpaired duplicates of the manual
