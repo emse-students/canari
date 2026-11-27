@@ -213,6 +213,7 @@ and no agent changes them. Where they disagree with the code and the privacy pol
 | 6 | Apple age rating | 13+ | The policy says not for people under 15; Play shows parental guidance |
 | 7 | Apple privacy-policy URL | the old name | Must be `https://canari.emse.fr/legal/privacy` |
 | 8 | Play `USE_FULL_SCREEN_INTENT` declaration | status unknown | In the manifest since the native ring |
+| 9 | Play foreground service `specialUse` (`FOREGROUND_SERVICE_SPECIAL_USE`, `MailWatchService`) | **not declared - OWED before the first store build carrying it** | The new-mail watch of mail lot 4: a persistent connection to the school's mail server while the user's switch is on, no other type fits ([mail-client-transport](mail-client-transport.md#as-built---lot-4)) |
 
 ### 8.2 Screenshot shot list - to be taken on a BENCH PHONE, real chrome, never browser emulation
 

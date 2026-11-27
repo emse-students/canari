@@ -10,7 +10,20 @@ vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => runtime.tauri 
 vi.mock('$lib/composables/useNotifications.svelte', () => ({
   NOTIFICATION_ICON: 'ic_notification',
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+const nav = vi.hoisted(() => ({ goto: vi.fn() }));
+vi.mock('$app/navigation', () => nav);
+vi.mock('$app/paths', () => ({ resolve: (p: string) => p }));
+type Raised = { notifId: number; tag: string; title: string; body: string; open: () => void };
+const builder = vi.hoisted(() => ({ raised: [] as unknown[], allowed: true }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+  globalNotifs: {
+    sendMailNotification: async (n: unknown) => {
+      if (!builder.allowed) return false;
+      builder.raised.push(n);
+      return true;
+    },
+  },
+}));
 vi.mock('@tauri-apps/plugin-notification', () => ({
   isPermissionGranted: vi.fn(async () => true),
   requestPermission: vi.fn(async () => 'granted'),
@@ -37,6 +50,8 @@ const mail = (over: Partial<NewMail> = {}): NewMail => ({
 beforeEach(() => {
   runtime.android = false;
   runtime.tauri = false;
+  builder.raised = [];
+  builder.allowed = true;
 });
 afterEach(() => {
   delete (window as unknown as { canariMail?: unknown }).canariMail;
@@ -101,33 +116,23 @@ describe('postMailNotices', () => {
     expect(plugin.sendNotification).not.toHaveBeenCalled();
   });
 
-  it('on the web, one browser notification per mail, tagged by the message', async () => {
-    const shown: { title: string; options: NotificationOptions }[] = [];
-    class FakeNotification {
-      static permission = 'granted';
-      onclick: (() => void) | null = null;
-      constructor(title: string, options: NotificationOptions) {
-        shown.push({ title, options });
-      }
-      close() {}
-    }
-    vi.stubGlobal('Notification', FakeNotification);
+  it('elsewhere, the ONE banner builder raises it, keyed by the message, and a tap opens its thread', async () => {
+    const { stableNotifId } = await import('$lib/utils/stableNotifId');
     await postMailNotices([mail()]);
-    expect(shown).toEqual([
-      { title: 'La Prof', options: { body: 'Examen de jeudi', tag: 'canari-mail-11515' } },
-    ]);
+    const [raised] = builder.raised as Raised[];
+    expect(raised).toMatchObject({
+      notifId: stableNotifId('mail:11515'),
+      tag: 'canari-mail-11515',
+      title: 'La Prof',
+      body: 'Examen de jeudi',
+    });
+    raised.open();
+    expect(nav.goto).toHaveBeenCalledWith(expect.stringMatching(/mail\/-11515$/));
   });
 
-  it('on the web, nothing without the permission', async () => {
-    const constructed = vi.fn();
-    class Denied {
-      static permission = 'default';
-      constructor() {
-        constructed();
-      }
-    }
-    vi.stubGlobal('Notification', Denied);
-    await postMailNotices([mail()]);
-    expect(constructed).not.toHaveBeenCalled();
+  it('nothing raised without the permission, and the next mail is still tried', async () => {
+    builder.allowed = false;
+    await postMailNotices([mail(), mail({ id: '11516' })]);
+    expect(builder.raised).toEqual([]);
   });
 });

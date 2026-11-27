@@ -49,16 +49,25 @@ export type PageNotificationTapOutcome = 'landed' | 'no-identity' | 'not-ours';
  *
  * @param targets the conversation (group id) each notification this session posted was raised for.
  * @param publish publishes the landing (`notifNav.navigate`); the landing effect routes and selects.
+ * @param opens what a tap on a notification that is NOT a conversation's opens (a new mail opens its
+ *   thread in the Mail tab, mail lot 4), by the same notification id: ONE listener routes every page
+ *   notification, so a second one never answers "not ours" for the other's taps.
  */
 export function routePageNotificationTap(
   action: { notification?: { id?: number } | null } | null | undefined,
   targets: ReadonlyMap<number, string>,
-  publish: (target: string) => void
+  publish: (target: string) => void,
+  opens: ReadonlyMap<number, () => void> = new Map()
 ): PageNotificationTapOutcome {
   const id = action?.notification?.id;
   if (typeof id !== 'number') {
     noteOpenRoutedNowhere('a page notification tap with no identity');
     return 'no-identity';
+  }
+  const open = opens.get(id);
+  if (open) {
+    open();
+    return 'landed';
   }
   const target = targets.get(id);
   if (!target) {

@@ -1,11 +1,6 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from '@tauri-apps/plugin-notification';
-import { NOTIFICATION_ICON } from '$lib/composables/useNotifications.svelte';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { postAndroidMailNotice } from '$lib/mobile/androidMailWatch';
 import { mailAppLink } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -109,35 +104,21 @@ async function postOne(notice: MailNotice): Promise<void> {
     });
     return;
   }
-  if (isTauriRuntime()) {
-    if (!(await isPermissionGranted())) {
-      Log.i('MAIL-WATCH', `item ${notice.itemId} not notified - notifications are not allowed`);
-      return;
-    }
-    await sendNotification({
-      id: stableNotifId(`mail:${notice.itemId}`),
-      title: notice.title,
-      body: notice.body,
-      icon: NOTIFICATION_ICON,
-    });
-    return;
-  }
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
-    Log.i('MAIL-WATCH', `item ${notice.itemId} not notified - the browser does not allow it`);
-    return;
-  }
-  const shown = new Notification(notice.title, {
-    body: notice.body,
+  // The web, a desktop and an iPhone: the app's ONE banner builder raises it (`useNotifications`).
+  const { globalNotifs } = await import('$lib/stores/globalChatSingleton.svelte');
+  const raised = await globalNotifs.sendMailNotification({
+    notifId: stableNotifId(`mail:${notice.itemId}`),
     tag: `canari-mail-${notice.itemId}`,
+    title: notice.title,
+    body: notice.body,
+    open: () => openMailRoute(notice),
   });
-  shown.onclick = () => {
-    Log.d('MAIL-WATCH', `item ${notice.itemId} tapped - opening its conversation`);
-    try {
-      window.focus();
-    } catch (err) {
-      Log.d('MAIL-WATCH', `the window could not take the focus (${String(err)})`);
-    }
-    void goto(resolve(internalPath(notice.route)));
-    shown.close();
-  };
+  if (!raised)
+    Log.i('MAIL-WATCH', `item ${notice.itemId} not notified - notifications are not allowed`);
+}
+
+/** Opens the thread a tapped new-mail notification names, in the Mail tab (every platform's tap). */
+function openMailRoute(notice: MailNotice): void {
+  Log.d('MAIL-WATCH', `item ${notice.itemId} tapped - opening its conversation`);
+  void goto(resolve(internalPath(notice.route)));
 }

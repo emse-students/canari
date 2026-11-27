@@ -906,6 +906,10 @@ allowlist in `mailLocalData.ts`).
 - **A tap opens the conversation in the Mail tab**:
   - Android: the deep link `fr.emse.canari://mail/<conversation id>`, which `deepLinkRoutes.ts`
     maps to `/mail/<id>`. The native side accepts only that shape (`mailNoticeOf`, an allowlist).
+  - iOS and desktop: the notification plugin posts it under `stableNotifId('mail:' + id)`, and the
+    page's ONE notification-tap listener (`useNotifications.svelte.ts`, `routePageNotificationTap`)
+    opens the thread by that id - the same listener that routes a chat notification the page raised,
+    so neither answers "not ours" for the other's taps.
   - Web: the notification's click handler.
 
 ### Per platform
@@ -981,8 +985,12 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
   `MAIL-N`).
 - **Boot restart on Android**: not built, on purpose. Building it would need a NATIVE watcher, and so
   the token or the sealed password handed to Kotlin. That is a change to D6 for the owner to decide.
-- **Play Console**: the `specialUse` foreground service must be declared with its justification
-  before a store build carrying it goes to review.
-- **iOS taps and desktop taps** open the app but not the conversation. Only Android and the web
-  route to it.
+- **Play Console - OWED before the first store build carrying `MailWatchService`**: the `specialUse`
+  foreground service (`FOREGROUND_SERVICE_SPECIAL_USE`) must be declared in App content with its
+  justification (a persistent connection to the school's mail server while the user's switch is on).
+  Tracked as row 9 of [store-listings](store-listings.md#81b-the-declarations-only-the-owner-can-change-found-2026-11-09-read-from-the-public-pages).
+- **A tap on iOS after the posting process ended** (a notice posted by a background refresh, the
+  app killed since) is not the page's any more: Canari's native path takes it and the payload names
+  no link, so it opens the app on the Mail tab's last screen. The desktop's tap payload is unmeasured
+  (the same caveat as chat's, `useNotifications.svelte.ts`).
 - **The battery numbers** above.
