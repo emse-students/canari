@@ -2089,17 +2089,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Whether this push is a campus trend for a post the device already displayed, and so shows
          * nothing (owner, 2026-11-24, "Verif sur l'appareil"). The file is read only for a trend, so
-         * every other push pays nothing. A withheld trend is a RECORDED info line (kept by the exported
-         * log) with no post id; a trend that is shown is logged by nobody - it is the ordinary case.
+         * every other push pays nothing and says nothing (it is not a trend: no decision is taken).
+         *
+         * EVERY END OF A TREND'S DECISION IS A RECORDED LINE ([SeenTrends.Verdict]), with no post id:
+         * a trend shown because its post was never displayed is the ordinary case, but the reading of
+         * 1.8.3-alpha.1 showed a bare `false` hides a server push that named no post - so the shown
+         * cases say which they are, and that one ACCUSES at WARN.
          */
         internal fun isSeenTrend(context: Context, data: Map<String, String>): Boolean {
             val key = data["contentKey"]
             if (key == null || key !in SeenTrends.TREND_KEYS) return false
+            val postId = data["postId"]
+            // No post named: nothing to look up, so the file is not read (the verdict is the same).
+            val book = if (postId.isNullOrBlank()) null else readSeenPosts(context, "[SEEN_TREND]")
             val me = MlsContextLoader.loadPushContext(context)?.userId
-            val withheld = SeenTrends.withholds(readSeenPosts(context, "[SEEN_TREND]"), me, key, data["postId"])
-            // A RECORDED outcome like every other end of a push ([PushShowOutcome]): no post id, no text.
-            if (withheld) context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
-            return withheld
+            val verdict = SeenTrends.decide(book, me, key, postId)
+            when (verdict) {
+                // THE withheld line is the RECORDED outcome, like every other end of a push
+                // ([PushShowOutcome], `outcome=suppressed-seen-trend`): no post id, no text.
+                SeenTrends.Verdict.WITHHELD ->
+                    context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
+                SeenTrends.Verdict.NO_POST_ID ->
+                    Log.w(TAG, "[SEEN_TREND] a campus trend names no postId - shown, the device cannot tell a displayed post (server payload)")
+                else -> Log.iRecorded(TAG, "[SEEN_TREND] a campus trend shown: ${verdict.reason}")
+            }
+            return verdict.withheld
         }
 
         /**

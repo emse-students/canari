@@ -1238,10 +1238,23 @@ server.** The accepted limit: a post seen on another device is not recognised th
     entitlement** (`com.apple.developer.usernotifications.filtering`, which lets the extension return no
     content); applying for it is an owner action, and with it the stamp and the cleanup go.
     `canari_push.mm` (the app-side twin that re-posts a background push) returns before it posts.
-- **Never silent**: a withheld trend is logged where the exported log keeps it and without the post id -
-  `[SEEN_TREND] bell: a campus trend row withheld` once per row (`console.log`), Android a RECORDED info
-  line (`Log.iRecorded`, the INFO stream the app log carries), iOS an `[CanariNSE] [SEEN_TREND]` notice and the
-  `seen-trend` outcome of `[NSE_OUTCOME]`, ObjC an `NSLog`.
+- **The push names its post in its DATA** (`pushData: { postId }` in `announceCampusTrend`): `pushNotice`
+  writes no row and reads no `postId` of its own, so until 1.8.3-alpha.1 the `postId` spread in beside the
+  others was dropped without a word - read on the Mi 9T (2026-11-27): a displayed post's trend still
+  raised a banner, no `[SEEN_TREND]` line, and the banner opened `fr.emse.canari://posts`, not the post.
+  The rows were right (they take `postId` themselves), which is why the bell half passed.
+  `campus-trend.integration.spec.ts` now asserts the push data.
+- **Never silent, and EVERY END IS NAMED** (2026-11-27): a bare `false` is what hid the missing `postId`.
+  Each native reader returns a VERDICT - `withheld`, `not-displayed`, `no-post-id`, `other-account`,
+  `signed-out`, `no-record`, `not-a-trend` (Android `SeenTrends.Verdict`, Swift `SeenTrendVerdict`, ObjC
+  `CanariSeenTrendVerdict`), the contract's `reason` per case - and logs every one reached by a trend,
+  without the post id: Android the withheld one as the RECORDED `[PUSH_SHOW] outcome=suppressed-seen-trend`,
+  each shown one as a recorded `[SEEN_TREND] a campus trend shown: <reason>`, and `no-post-id` as a WARN
+  that accuses the server's payload; iOS the same words as `[CanariNSE] [SEEN_TREND]` notices (and the
+  `seen-trend` outcome of `[NSE_OUTCOME]`), ObjC as `NSLog`. A push that is not a trend says nothing: no
+  decision is taken. The bell logs `[SEEN_TREND] bell: a campus trend row withheld` once per row
+  (`console.log`). `seenTrendBlankRow.test.ts` pins every reason to both iOS spellings (nothing compiles
+  them on Windows, and the Swift contract test is not wired to a target).
 - **Proof**: `seenPosts.test.ts` (noting, pruning by age and by cap, the sealed body, and the shared
   contract cases), `seenPosts.svelte.test.ts` (the store: one account's, flush to the sealed copy and
   Rust, erase at sign-out), `postNotifStore.seenTrend.svelte.test.ts` (the bell filter and badge, the

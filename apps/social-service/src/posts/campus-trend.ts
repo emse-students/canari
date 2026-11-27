@@ -304,7 +304,6 @@ export async function announceCampusTrend(
   const text = previewOf(result.markdown ?? '');
   const common = {
     type: CAMPUS_TREND_NOTIFICATION,
-    postId,
     actorId: SYSTEM_ACTOR_ID,
     actorName: '',
     text,
@@ -312,6 +311,7 @@ export async function announceCampusTrend(
   // EVERY ROW FIRST, in one insert: a push failing below can never cost a reader their bell row.
   const written = await deps.notifications.createNotificationRows({
     ...common,
+    postId,
     rows: [...groups.values()].flatMap(({ friendId, likedBy, recipients }) => {
       const meta = {
         ...(media ? { media } : {}),
@@ -330,6 +330,12 @@ export async function announceCampusTrend(
     try {
       await deps.notifications.pushNotice({
         ...common,
+        // THE POST IS NAMED IN THE PUSH'S DATA, where the devices read it: `pushNotice` writes no
+        // row and takes no `postId` of its own, so a `postId` spread in beside the others was dropped
+        // without a word (1.8.3-alpha.1, Mi 9T): the device could not tell a displayed post's trend
+        // from any other (`SeenTrends`, `seenTrendWithheld`) and the banner opened the feed, not the
+        // post. The rule is `libs/contracts/notification-seen-trend.cases.json`.
+        pushData: { postId },
         recipientIds: recipients,
         ...(Object.keys(meta).length ? { meta } : {}),
       });
