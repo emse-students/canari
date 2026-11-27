@@ -6,6 +6,7 @@ import {
   formatAddress,
   forwardMessage,
   htmlToText,
+  mailtoMessage,
   quoteLines,
   replyMessage,
 } from './mailCompose';
@@ -194,5 +195,48 @@ describe('helpers', () => {
     expect(quoteLines('a\r\n>b')).toBe('> a\n>>b');
     expect(htmlToText('a<br>b&#233;&#x41;&unknown;')).toBe('a\nbéA&unknown;');
     expect(emptyMessage()).toMatchObject({ to: [], html: null, origin: null, draftId: null });
+  });
+});
+
+describe('mailtoMessage (second review, M-6)', () => {
+  const to = (address: string) => ({ address, name: null });
+
+  it('prefills a new message from the addresses, to, cc, bcc, subject and body', () => {
+    const message = mailtoMessage(
+      'mailto:bde@example.test,%20info@example.test?CC=tresor@example.test&bcc=x@example.test' +
+        '&Subject=Gala%20d%27hiver&body=Bonjour%2C%0D%0A2+places%20svp'
+    );
+    expect(message).toMatchObject({
+      to: [to('bde@example.test'), to('info@example.test')],
+      cc: [to('tresor@example.test')],
+      bcc: [to('x@example.test')],
+      subject: "Gala d'hiver",
+      // RFC 6068: `+` is a plus, not a space; CRLF becomes a line break.
+      text: 'Bonjour,\n2+places svp',
+      html: null,
+      origin: null,
+    });
+  });
+
+  it('ignores every other header, and keeps only plain addresses', () => {
+    const message = mailtoMessage(
+      'mailto:a@b.test?from=boss@example.test&reply-to=evil@example.test&attach=/etc/passwd' +
+        '&to=%22Evil%22%20%3Cx%40y%3E,ok@example.test,not-an-address'
+    );
+    expect(message?.to).toEqual([to('a@b.test'), to('ok@example.test')]);
+    expect(message).not.toHaveProperty('from');
+    expect(message?.attachments).toEqual([]);
+  });
+
+  it('drops malformed percent-encoding, folds the subject onto one line, strips control characters', () => {
+    const message = mailtoMessage('mailto:a@b.test?subject=a%0Ab%07c&body=%E0%A4%A&to=%ZZ');
+    expect(message?.subject).toBe('a bc');
+    expect(message?.text).toBe('');
+    expect(message?.to).toEqual([to('a@b.test')]);
+  });
+
+  it('answers null for anything that is not a mailto link', () => {
+    expect(mailtoMessage('https://example.test')).toBeNull();
+    expect(mailtoMessage('MAILTO:a@b.test')?.to).toEqual([to('a@b.test')]);
   });
 });

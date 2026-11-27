@@ -35,6 +35,7 @@ import {
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
+import { endMailOnSignOut } from '$lib/mail/mailSignOut';
 import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
@@ -1620,6 +1621,10 @@ async function clearAuthUnderway(options: {
   // And the forms' edits this device kept for a save that has not landed: the next account must
   // neither see nor send them (owner, 2026-11-08).
   void eraseFormDraftCopies(leavingUserId, 'signed out');
+  // And the school mailbox's session: its token dropped, the server told, and the leaving account's
+  // remembered password forgotten whether or not a mail client was built (`mail/mailSignOut.ts`).
+  // Not awaited - it never rejects and logs its own failures.
+  void endMailOnSignOut('signed out', leavingUserId);
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;

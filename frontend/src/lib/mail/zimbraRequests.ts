@@ -40,6 +40,24 @@ export function getFolderRequest(): Body {
   return { GetFolderRequest: { _jsns: MAIL } };
 }
 
+/** The id of the mailbox root, the parent of every top-level folder (Zimbra's fixed `1`). */
+export const ROOT_FOLDER_ID = '1';
+
+/**
+ * `CreateFolderRequest`: a mail folder `name` under `parentId` (the root by default), in the mail
+ * (`message`) view the system folders carry. `fie: 1` ("fetch if exists") answers with the folder already
+ * there instead of a `mail.ALREADY_EXISTS` fault, so a second device that created it first, or a
+ * press repeated, lands on the same folder.
+ */
+export function createFolderRequest(name: string, parentId: string = ROOT_FOLDER_ID): Body {
+  return {
+    CreateFolderRequest: {
+      _jsns: MAIL,
+      folder: { name, l: parentId, view: 'message', fie: 1 },
+    },
+  };
+}
+
 /** What a list asks for. */
 export interface SearchOptions {
   /** The folder listed; `null` searches the whole mailbox. */

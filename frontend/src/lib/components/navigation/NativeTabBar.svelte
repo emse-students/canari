@@ -19,7 +19,8 @@
     setBadge,
     type TabSelectedListener,
   } from '@sosweetham/tauri-plugin-system-components-api';
-  import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { mobileNavPlaces, resolveActivePlaceId } from '$lib/navigation/places';
+  import { mailTabVisible, watchMailTab } from '$lib/mail/mailClient.svelte';
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { classColorHex, lucideIconPng, TAB_ICON_CLASSES } from '$lib/mobile/nativeTabIcons';
@@ -34,7 +35,7 @@
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
    *
-   * It replaces `BottomNav` in the iOS app and offers the same four places (`MOBILE_NAV_PLACES`),
+   * It replaces `BottomNav` in the iOS app and offers the same places (`mobileNavPlaces`: the four, and Mail while its gate is open),
    * the same GLYPHS (`PLACE_ICONS`, rasterised - user, 2026-09-30) in the text colour, the selected
    * one in the web bar's yellow, and NO tint on the bar itself (both states are drawn coloured). It
    * carries the same unread dot (`placeBadge`), and appears under the same conditions the layout
@@ -60,6 +61,10 @@
 
   let { visible }: Props = $props();
 
+  // The places follow the Mail tab's gate (D10, D12): a reconfiguration when it opens or shuts.
+  watchMailTab();
+  const places = $derived(mobileNavPlaces({ mail: mailTabVisible() }));
+
   const WIDE_QUERY = '(min-width: 48rem)';
   let wide = $state(false);
   let listener: TabSelectedListener | null = null;
@@ -84,10 +89,11 @@
   async function drawIcons() {
     const normal = classColorHex(TAB_ICON_CLASSES.normal);
     const selected = classColorHex(TAB_ICON_CLASSES.selected);
-    const colours = `${normal}/${selected}`;
+    const list = places;
+    const colours = `${normal}/${selected}/${list.map((p) => p.id).join(',')}`;
     if (iconsDrawnIn === colours) return;
     const drawn: typeof icons = {};
-    for (const place of MOBILE_NAV_PLACES) {
+    for (const place of list) {
       const glyph = PLACE_ICONS[place.icon];
       drawn[place.id] = {
         normal: await lucideIconPng(glyph, normal),
@@ -112,17 +118,16 @@
   async function configure() {
     await drawIcons();
     const active = activePlaceId;
+    const list = places;
     await configureTabBar({
-      items: MOBILE_NAV_PLACES.map((p) => ({
+      items: list.map((p) => ({
         id: p.id,
         title: '',
         image: icons[p.id].normal,
         // The Canari patch (`patches/tauri-plugin-system-components`): the selected state's bitmap.
         selectedImage: icons[p.id].selected,
       })),
-      selectedId: MOBILE_NAV_PLACES.some((p) => p.id === active)
-        ? (active ?? undefined)
-        : undefined,
+      selectedId: list.some((p) => p.id === active) ? (active ?? undefined) : undefined,
     });
     sentBadges = {};
     configurations++;
@@ -156,7 +161,7 @@
       try {
         await configure();
         listener = await onTabSelected(({ id }) => {
-          const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
+          const place = places.find((p) => p.id === id);
           Log.d('NativeTabBar', `tab selected: ${id}`);
           // A RE-TAP of the tab the reader is on is delivered like any tap (UITabBarDelegate
           // `didSelect` fires for the selected item too) and scrolls to the top instead.
@@ -237,8 +242,24 @@
   $effect(() => {
     if (nativeTabBar.status !== 'native') return;
     const active = activePlaceId;
-    if (!active || !MOBILE_NAV_PLACES.some((p) => p.id === active)) return;
+    if (!active || !places.some((p) => p.id === active)) return;
     void selectTab(active).catch(logFailure('select'));
+  });
+
+  // The places changed (the Mail tab's gate opened or shut): the bar is configured again. The first
+  // run is the mount's own configuration.
+  let configuredFor: string | null = null;
+  $effect(() => {
+    const ids = places.map((p) => p.id).join(',');
+    if (nativeTabBar.status !== 'native') return;
+    if (configuredFor === null) {
+      configuredFor = ids;
+      return;
+    }
+    if (configuredFor === ids) return;
+    configuredFor = ids;
+    Log.d('NativeTabBar', `places changed (${ids}) - reconfiguring`);
+    void configure().catch(logFailure('re-place'));
   });
 
   // The theme decides both colours (the text colour, and `accent-icon`), so a theme
@@ -272,7 +293,7 @@
       width: window.innerWidth,
       height: band,
     });
-    const releases = MOBILE_NAV_PLACES.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
+    const releases = places.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
     return () => releases.forEach((release) => release());
   });
 
@@ -320,7 +341,7 @@
   $effect(() => {
     void configurations;
     if (nativeTabBar.status !== 'native') return;
-    for (const place of MOBILE_NAV_PLACES) {
+    for (const place of places) {
       const value = placeBadge(place.id, place.id === activePlaceId) > 0 ? '' : undefined;
       if (place.id in sentBadges && sentBadges[place.id] === value) continue;
       sentBadges[place.id] = value;

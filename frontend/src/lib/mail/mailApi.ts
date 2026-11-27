@@ -20,6 +20,7 @@ import {
   parseAutoComplete,
   parseConversation,
   parseConversationPage,
+  parseCreatedFolder,
   parseFolders,
   parseInfo,
   parseMessage,
@@ -31,6 +32,7 @@ import {
   actionRequest,
   autoCompleteRequest,
   conversationConstraint,
+  createFolderRequest,
   getConvRequest,
   getFolderRequest,
   getInfoRequest,
@@ -117,6 +119,12 @@ export class MailApi {
   async folders(): Promise<MailFolder[]> {
     Log.d('MAIL-API', 'folders');
     return parseFolders(await this.session.call(getFolderRequest()));
+  }
+
+  /** Creates the folder `name` at the mailbox root, or answers the one already there. */
+  async createFolder(name: string): Promise<MailFolder> {
+    Log.d('MAIL-API', 'create folder');
+    return parseCreatedFolder(await this.session.call(createFolderRequest(name)));
   }
 
   /** One page of conversations of a folder (or of a search), newest first. */

@@ -84,6 +84,7 @@ describe('parseServerVersionInfo', () => {
       callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
+      mailMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -282,6 +283,7 @@ describe('buildAppVersionCheckResult', () => {
       callRelay: 'none',
       livesMode: 'on',
       liveReplaysMode: 'off',
+      mailMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: true,
       presencePost: false,
@@ -312,6 +314,7 @@ describe('buildAppVersionCheckResult', () => {
       callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
+      mailMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -390,6 +393,7 @@ describe('fetchServerAppVersionReliable', () => {
       callRelay: 'none',
       livesMode: 'off',
       liveReplaysMode: 'off',
+      mailMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -576,6 +580,24 @@ describe('the live replays switch of /api/version', () => {
     const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
     expect(parseServerVersionInfo(cached)).toEqual(info);
     expect(info?.liveReplaysMode).toBe('on');
+  });
+});
+
+describe('the mail switch of /api/version', () => {
+  it.each(['off', 'on'] as const)('reads %s', (mode) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', mail: { mode } })?.mailMode).toBe(mode);
+  });
+  it.each([undefined, 'on', { mode: 'ON' }, { mode: true }])(
+    'reads %j as CLOSED - a switch that cannot be read fails closed',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', mail: raw })?.mailMode).toBe('off');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', mail: { mode: 'on' } });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.mailMode).toBe('on');
   });
 });
 

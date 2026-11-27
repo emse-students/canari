@@ -308,8 +308,8 @@ the one moment the page is known to hold none.
 
 Eight unit tests (`cargo test --lib mail_socket`), the cap and the close-all of an open in flight
 among them. **Compiled only for the Windows desktop target in lot 1**; Android, iOS, macOS and Linux
-are compiled by their own CI jobs. **The app's OFF switch for the mail is lot 3**: lot 1 builds no
-page that opens a socket, so the commands are unreachable until then.
+are compiled by their own CI jobs. **The app's OFF switch for the mail is `mail_mode`** (lot 3,
+[below](#the-switch-d12)): off by default, and with it off no page opens a socket.
 
 ## The TypeScript layers (`frontend/src/lib/mail/`)
 
@@ -593,12 +593,240 @@ messages in 242,732 bytes (about 237 KiB), framed whole through the WASM TLS and
 
 ### Still open after lot 2
 
-- **Archive** is a `move` to a folder the caller names: Zimbra has no system archive folder, and
-  which folder "Archiver" targets (an existing `Archives`, one created on first use) is a decision
-  for lot 3.
+- ~~**Archive**~~ decided in lot 3: "Archiver" moves to a root-level folder named `Archives`,
+  created on first use ([below](#archiver)).
 - **A mail cache at rest** does not exist yet: everything but the sealed password is in memory. A
   lot that adds one adds its key to `mailLocalKeys` (D8) and decides whether it is sealed under the
   device key (and then re-sealed by a key change).
 - **The closed-account answer is not measured on Partage** (see D8): `account.NO_SUCH_ACCOUNT` to
   the session's own sign-in is Zimbra's documented code, but Partage may answer `AUTH_FAILED`. A
   lot that persists mail probes it before relying on the erasure.
+
+## As built - lot 3
+
+Lot 3 is what a user sees: the Mail tab, its screens, the HTML sandbox (D9) and the server switch
+(D12), on top of lot 2's session, API and store - nothing of the data layer is duplicated. The
+screens follow the mockups the owner validated on 2026-11-27 (Gmail-like rows, a compose button on
+the phone, swipes, long-press selection, a folder drawer, three panes on a desktop).
+
+### The switch (D12)
+
+`platform_config.mail_mode` (`off` | `on`, default `off`, migration
+`apps/core-service/src/migrations/033_platform_config_mail_mode.sql`), set from the admin's platform
+page and served by `/api/version` as `mail.mode`, like `calls_mode`
+([core-service](services/core-service.md)). The client reads it through `serverMailMode()`
+(`stores/appVersionCheck.svelte.ts`); `utils/mailModesAgree.test.ts` holds the two lists of modes
+equal. **Off, nothing of the mail runs**: no client is built, no socket opened, the tab is not drawn,
+and `/mail` says the mailbox is not open yet.
+
+### The tab (D10)
+
+`navigation/places.ts` carries a `mail` place with `gate: 'mail'`: `shownPlaces(places, gates)` and
+`mobileNavPlaces(gates)` drop a gated place whose gate is shut, and the three bars (`BottomNav`,
+`NativeTabBar`, `AppSidebar`) draw from them, so they cannot disagree. The gate is
+`mailTabVisible()` (`mail/mailClient.svelte.ts`): the switch is `on`, AND the account's eligibility
+has been READ (`MailClient.eligibilityRead`, so the tab is never drawn and then withdrawn), AND it is
+not `not_eligible` - an eligible address, or no address yet (see below). Its badge is
+`MailStore.inboxUnread` (`placeBadge.svelte.ts`). `/mail` is not in `MOBILE_SWIPE_PLACES`, so the
+tab swipe never fights the row swipes, and it is a private prefix for robots
+(`seo/resolve.ts`). The [section navigation](frontend/section-navigation.md) is unchanged otherwise.
+
+`watchMailTab()` runs once per document (the bars call it): for the signed-in account with the
+switch on, it builds the account's ONE `MailClient` (`mailClientFor`, which ends a previous
+account's client first), reads its eligibility and, when eligible, resumes the session from a
+remembered password so the badge has a count.
+
+### The address, and "Activer le mail"
+
+The session is built with lot 2's `canariMailContext(userId, deviceKey)` (`mail/mailContext.ts`),
+whose address is lot 1's `schoolMailAddress()` - MiConnect's `school_mail` claim, never typed. The
+sign-in (`MailSignIn.svelte`) shows the address read-only and asks for the password and "Retenir"
+(ticked by default, on every platform, no warning - D6).
+
+**No address is the ordinary state before rollout**: an account signed in before the claim existed
+gets it only at its next full MiConnect sign-in. The screen then says so in plain words
+(`mail_error_address_unknown`, drawn as information, not as an alert) and offers ONE button,
+"Activer le mail", which calls lot 1's `startSchoolMailActivation('/mail')` (`stores/auth.ts`): the
+MiConnect sign-in again, back to `/mail`. **The tab is shown in that state on purpose** (lead,
+2026-11-27): it is how the reader reaches the button.
+
+### The screens (`frontend/src/lib/components/mail/`)
+
+| Component | What it draws |
+| --- | --- |
+| `MailScreen` | the state machine: sign-in, closed or unavailable account, or the mailbox - ONE column below `xl` (list, the conversation in its place, the folders in a drawer, the compose button), THREE from `xl` (folders, list, conversation), chosen by `overlayLayout()` so the column not drawn is not mounted |
+| `MailList`, `MailRow` | search, filter pills (`all`, `unread`, `flagged`, `attachment` - Zimbra terms, `mailFormat.ts`), pull to refresh, paging on `nearViewport`, the row's avatar (a tap selects), long-press to select, swipes |
+| `MailActionBar` | the selection bar (archive, trash, read or unread, more) and the conversation's bar |
+| `MailFolderList` | system folders with unread counts, "Suivis" (`is:flagged` over the whole mailbox), "Archives", the user's folders; never a half list - no row before the tree first loads (a failed mailbox says so there), the last known tree kept when a refresh fails |
+| `MailThread` | the conversation, oldest first: the newest open, earlier ones folded, beyond three a "N messages plus anciens" pill; marked read as it opens (through the store, so the badge follows); attachments downloaded with `saveBlobAs`; reply, reply all, forward |
+| `MailCompose`, `MailRecipientField` | to/cc/bcc chips with the directory's suggestions (`MailApi.directory`, a request counter so a late answer never replaces a newer one), attachments uploaded as attached, sent as plain text through lot 2's `mailCompose.ts`; closing with content saves a draft |
+| `MailHtmlFrame` | D9, below |
+| `MailStatePanel` | every state: an error is an `alert` with "Réessayer" only when `mailErrorRetryable`, anything else a `status` |
+
+Every typed failure has its sentence (`mail/mailErrorText.ts`, a `Record` over `MailErrorKind`, so a
+new kind fails the build): `not_sent` is retryable (the request never left), `incompatible` is not
+(an update is needed). An action is ONE call for every id (`MailStore.act`); its failure is a toast in
+the reader's words.
+
+#### Archiver
+
+`MailStore.archive(ids)` moves to the root-level user folder named `Archives` (`isArchiveFolder`:
+no role, no parent, the name case-insensitive), CREATED on first use with `CreateFolderRequest`
+(`fie: 1`, so a folder made meanwhile elsewhere is returned rather than doubled). A folder the
+school's webmail user already made is reused. `parseCreatedFolder` gives a folder created under the
+root `parentId: null`, as the tree does.
+
+#### The gestures (`mail/mailGestures.ts`)
+
+Arithmetic the row only paints: a swipe RIGHT archives, LEFT trashes; nothing to archive in the
+archive folder, nothing to trash in the trash or junk (deleting for good is a press, never a slip).
+The direction is decided once under the reply swipe's measured slop (`REPLY_SWIPE_LOCK_PX`); a
+vertical stroke is the list's scroll. Past 96 px letting go acts; the row stops following at 160 px.
+The touch listener is non-passive only on a coarse pointer.
+
+### D9 - the HTML sandbox (`mail/mailHtml.ts`, `MailHtmlFrame.svelte`, `security/mailFrameScript.js`)
+
+**Redesigned after the independent security review (lead, 2026-11-27).** A first idea - granting
+`allow-same-origin` so the app could measure the frame - was REFUSED: it joins the mail's document
+to the app's origin (the MLS keys, the sealed mail password), makes a same-site image load carry
+the app's cookies, and sizing from `scrollHeight` loops without end on a `min-height: 100vh` or
+`height: 150vh` mail. ONE mechanism now does the sizing AND the links. Layers, none trusted alone:
+
+1. **The frame**: `<iframe sandbox="allow-scripts" srcdoc>` and nothing else - an OPAQUE origin
+   (never `allow-same-origin`), no popup, no top navigation, no form. `allow-scripts` is for OUR
+   one script.
+2. **A CSP `<meta>`** in the frame's own head: `default-src 'none'; script-src 'sha256-<our
+   script>'; img-src data: [https: after "Afficher les images"]; style-src 'unsafe-inline';
+   font-src data:; form-action 'none'; base-uri 'none'`. A script of the mail revived past the
+   cleaning pass is
+   refused by the hash. A `srcdoc` frame also inherits its parent's policy, so the SAME hash is in
+   the web page's (`WEB_POLICY_DIRECTIVES` in `security/cspDirectives.js`, which nginx's
+   `csp.conf` in `infrastructure/local/Dockerfile.frontend` must equal) and the native WebView's
+   (`tauri.conf.json`, `csp` and `devCsp`). The hash is written ONCE as a value
+   (`MAIL_FRAME_SCRIPT_HASH`, next to the script's text); `mailFrameScript.test.ts` computes it
+   from the text and fails, naming the new one, if any of the four disagrees. **The page's own
+   `frame-src 'self'` is LOAD-BEARING for the mail frame** (second review, I-3): the frame is a
+   frame of the app's page, so a change of that directive (web or Tauri) decides whether the mail
+   is drawn at all, and must be re-read against `MailHtmlFrame` on every platform -
+   `mailFrameScript.test.ts` holds it to `'self'`.
+3. **A cleaning pass** over an inert `DOMParser` document: scripts, frames, plugins, forms,
+   `base`/`meta`/`link` removed; every `on*` attribute, `ping`, `target` and `autofocus` removed.
+   **EVERY
+   `href`, on any element, by local name** (SVG `<a>`, `area`, `xlink:href` - review I1) is
+   removed: a link's `https:`/`http:`/`mailto:` address (`isSafeMailLink`) moves to
+   `data-mail-href` (with `role="link"`, `tabindex="0"`), anything else is dropped. An SVG
+   `<image>` keeps its source only through the image rules. **Viewport-height lengths** (`vh`,
+   `dvh`, `svh`, `lvh`, `vmin`, `vmax`) in style attributes and sheets become pixels (1vh = 8px),
+   so a length cannot grow with the frame it sizes.
+
+**Our script** (`MAIL_FRAME_SCRIPT`) posts two messages to the parent:
+`{type:'mail-frame-height', h}` - the CONTENT's height, when it changed - and
+`{type:'mail-frame-link', href}` when a `data-mail-href` element is clicked or gets Enter (a held
+key's `repeat` ignored, M-1). **The height is read at a zero-height marker the script keeps last in
+the body** (plus the body's bottom padding, border and margin), never from the html or body boxes:
+those follow the frame's own height, and `html,body{height:100%} body{padding-bottom:1px}` made a
+box measure grow the frame by one pixel a round up to the cap (second review, I-1). It is measured
+on load, on every resource load (a capturing `load` listener - a body of fixed height does not
+resize when an image arrives) and on a resize of the root or body. The
+parent (`MailHtmlFrame`) accepts a message ONLY when `event.source` is its own frame's window, and
+only in the two shapes `mailFrameMessages.ts` reads (a finite height; an address `isSafeMailLink`
+accepts again). The height is drawn as is, CAPPED at 20000 px (`MAIL_FRAME_MAX_HEIGHT_PX`; beyond
+it the frame scrolls inside, and the cap is logged): the cap is what proves the sizing ends,
+whatever the mail's CSS. A link goes through `openExternal(href, { siteHandoff: false })` - the
+app's ONE link path, Safe Browsing gate included, but NEVER the sibling-site sign-in handoff
+(`openEcosystemSiteLink`): a mail is written by anyone on the internet (second review, I-2). The same
+address pressed again while it is still opening is dropped - one gesture, opened once (M-1, an
+in-flight marker, no clock). **A `mailto:` link opens Canari's own composer** (decided, lead
+2026-11-27, M-6): `mailtoMessage` (`mailCompose.ts`) parses it by RFC 6068 by hand (`+` stays a
+plus), keeps `to`, `cc`, `bcc`, `subject` and `body` only - a stranger's link chooses no sender,
+reply-to or attachment - and only plain addresses; no Safe Browsing lookup and no `window.open`.
+`window.open`'s `null` is NOT read as a failure (second review, M-2, not applied): with
+`noopener` the HTML spec returns `null` even when the tab opened, so it cannot tell a blocked popup
+from an opened one, and logging it would accuse every success.
+Checked in headless Chrome on the preview: the frame reported its height, and a real click on the
+gala mail's link opened it through `openExternal` in a new tab, the frame navigating nowhere.
+
+**Remote images are blocked by default** (charter principle 3: a tracking pixel tells the sender
+when and where the mail was read). `remoteImageCount` counts them - Zimbra's defanged `dfsrc`,
+backgrounds and SVG images included - and "Afficher les images" adds `https:` to `img-src` for THAT
+message only; an `http:` image is fetched as `https:` (review M1). **`cid:` images resolve only from
+the message's own parts**: the reader downloads the inline parts it carries and passes them as data
+URLs; a `cid:` it does not carry stays empty. A part is drawn inline only when it is an image
+(`isImageMediaType`, which parses the media type off its parameters - review M3) with a
+`Content-ID`, up to 5 MiB (`isInlineImagePart`, review M4); every other part, a bigger image
+included, is listed as an attachment, so each part is either drawn or downloadable.
+
+**The frame is drawn once its document is final, and each document is a new frame.** Drawn at once
+and given the resolved `cid:` images a moment later, Chrome kept the FIRST document on screen - the
+inline logo of the preview stayed broken although the frame's `srcdoc` held its data URL, and
+setting the same `srcdoc` again showed it. So `MailHtmlFrame` waits until THIS message's inline parts
+are settled (loaded or failed: `inlineFor === inlineKey`, which also keeps a previous message's
+images from ever being used), and a new document ("Afficher les images") replaces the element
+(`{#key}`) rather than navigating it in place. A download that never settles leaves the pending
+state drawn and is logged after 15 s - a log, never a cut: no clock decides the document.
+
+The frame's own default style (`mailFrameDocument`) has LITERAL values, not the app's tokens: the
+frame is another document, which `app.css` never reaches, and a mail is written for a light page,
+so the frame stays light in the dark theme.
+
+**An attachment is saved under a bare basename** (`attachmentFileName`, review I4 and M-3):
+directory parts, `:`, the characters Windows reserves (`<>"|?*`), control characters, the
+bidirectional controls (U+202A-202E, U+2066-2069, U+200E/F - `exe.pdf` drawn as `fdp.exe`), leading
+dots and trailing dots or spaces are removed before `saveBlobAs`.
+
+### The sign-out
+
+`auth.ts`'s `clearAuthUnderway` (every Canari sign-out: by choice, expiry, revocation) calls
+`endMailOnSignOut(reason, leavingUserId)` (`mail/mailSignOut.ts`), which runs the sign-out the
+current `MailClient` registered - `MailSession.signOut()`: the token dropped, the remembered
+password forgotten, the server told. **The leaving account's sealed mail password is forgotten
+FIRST, in every case** (`forgetMailPassword`, review I3 and M-4): before any await, so a server that
+does not answer cannot leave it behind, and whether or not this visit built a client - a password
+sealed in an earlier visit is on the device either way. It never throws. `auth.ts` does not import
+the mail client's graph. An account switch ends the previous client too (`mailClientFor`).
+
+**The server's switch turned off** (`followMailSwitch`, review M5) ends the in-memory client and
+the server session, but **KEEPS the sealed remembered password** (decided, lead 2026-11-27, M-5):
+the switch is a kill switch, not the reader's choice to forget, so the mailbox resumes when it is
+turned back on. Only a reader's sign-out of the mailbox, a Canari sign-out or D8 forget it
+(`MailSession.signOut({ keepRemembered: true })` is the switch's alone).
+
+### The dev preview
+
+`/dev/mail-preview?view=` (`inbox`, `thread`, `html`, `compose`, `folders`, `selection`, `signin`,
+`pending`, `error`) runs the real `MailScreen`, client, session, API and store over an INVENTED
+mailbox (`src/test/mailPreview/mailDemoMailbox.ts` - every name and message made up - answering
+through the tests' `FakeZimbra`). `+page.ts` answers 404 outside `vite dev`, and the preview is
+imported behind `import.meta.env.DEV`, so no build contains it; `isSignedOutPath` lets `/dev/*`
+through the sign-in guard under the same constant. The colours in its demo mails are the mails'
+own (another document, out of the tokens' reach).
+
+### Tests
+
+`mailHtml.test.ts` (only our script survives; remote images blocked, then allowed and upgraded;
+`cid:` from the message's own parts only; every link inert, SVG and `xlink:href` included, unsafe
+schemes and `fr.emse.canari://` dropped; viewport units; media types; the inline cap),
+`mailFrameMessages.test.ts` (the two shapes, the cap), `security/mailFrameScript.test.ts` (the hash
+is the text's, and the same in the frame's, the web page's, nginx's and Tauri's policies),
+`mailGestures.test.ts`, `mailFormat.test.ts` (including the saved filename),
+`mailErrorText.test.ts` (every kind said, which ones retry), `mailSignOut.test.ts` (the password
+forgotten with no client registered), `mailClient.svelte.test.ts` (the switch turned off ends the
+client), the store's archive (created once at the root, reused) and whole-mailbox list,
+`CreateFolder`'s request and answer, the gated places (`bottomNavNames.test.ts`), and the
+components `MailSignIn` (no address field; the pending state and its button), `MailStatePanel` and
+`MailHtmlFrame` (no frame before the inline parts settle, then ONE carrying them; a failed part
+still draws it; allowing images is a new frame; the sandbox is `allow-scripts` alone; height and
+links accepted only from its own frame, the height capped; a link opened without the handoff and
+once per gesture; a `mailto:` to the composer). After the second review: the frame script run
+against stand-ins (the content measured, so a frame grown one pixel a round reports nothing new; a
+held Enter sends one link), `frame-src 'self'` held, `mailtoMessage` (`mailCompose.test.ts`),
+`openExternal`'s `siteHandoff: false` (`openExternal.test.ts`), the password forgotten before the
+server is told, and kept by the switch (`mailSession.test.ts`, `mailClient.svelte.test.ts`).
+
+### Still open after lot 3
+
+- **Links on a phone**: the path is `openExternal` on every platform now (no WebView default), but
+  it has not been pressed on a device yet.
+- **A v1 LIMIT, decided (lead, 2026-11-27): the composer sends plain text.** A reply quotes the
+  original as `> ` lines; an HTML composer is not built in v1.
+- **No reading on a phone yet**: the screens were seen only in the dev preview (headless Chrome).

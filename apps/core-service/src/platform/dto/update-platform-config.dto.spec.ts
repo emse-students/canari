@@ -81,6 +81,21 @@ describe('UpdatePlatformConfigDto.liveReplaysMode', () => {
   });
 });
 
+/** The mail switch takes exactly the two values migration 033's CHECK allows. */
+describe('UpdatePlatformConfigDto.mailMode', () => {
+  const errorsFor = (mailMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { mailMode }));
+
+  it.each(['off', 'on'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['ON', 'true', 'always', '', true, 3])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['mailMode']);
+  });
+});
+
 /** The group calls switch takes exactly the two values migration 022's CHECK allows. */
 describe('UpdatePlatformConfigDto.groupCallsMode', () => {
   const errorsFor = (groupCallsMode: unknown) =>

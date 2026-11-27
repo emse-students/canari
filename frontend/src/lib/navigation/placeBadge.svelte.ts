@@ -3,6 +3,7 @@ import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
 import { adminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { totalUnreadMessages } from '$lib/utils/unreadTotal';
+import { mailInboxUnread } from '$lib/mail/mailClient.svelte';
 
 /**
  * Unread count for a place of the bottom bar - what its dot means.
@@ -15,7 +16,8 @@ import { totalUnreadMessages } from '$lib/utils/unreadTotal';
  * channel split here means a salon message cannot light up Discussions, while both web and native
  * bars still ask the same question. `dashboard` carries the items waiting in the admin queues the
  * reader can act on (`adminQueueCounts`, owner 2026-11-18): the dashboard is the way to the
- * Administration row, and a member's counts are empty, so it never lights for them.
+ * Administration row, and a member's counts are empty, so it never lights for them. `mail` carries
+ * the school inbox's unread count (D10), 0 while the tab is hidden.
  */
 export function placeBadge(placeId: string, isActive: boolean): number {
   if (isActive || !globalSession.isLoggedIn) return 0;
@@ -32,5 +34,6 @@ export function placeBadge(placeId: string, isActive: boolean): number {
   }
   if (placeId === 'notifications') return postNotifStore.unread;
   if (placeId === 'dashboard') return adminQueueCounts.total;
+  if (placeId === 'mail') return mailInboxUnread();
   return 0;
 }

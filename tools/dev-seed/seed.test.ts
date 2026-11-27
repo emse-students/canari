@@ -258,6 +258,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "checkpoint_skip_mode IN ('off', 'on')",
     holds: oneOf('checkpoint_skip_mode', ['off', 'on']),
   },
+  CHK_platform_config_mail_mode: {
+    sql: "mail_mode IN ('off', 'on')",
+    holds: oneOf('mail_mode', ['off', 'on']),
+  },
   CHK_platform_config_live_replays_mode: {
     sql: "live_replays_mode IN ('off', 'on')",
     holds: oneOf('live_replays_mode', ['off', 'on']),

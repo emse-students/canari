@@ -84,6 +84,20 @@ export type LiveReplaysMode = 'off' | 'on';
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
 
 /**
+ * The server's switch for the Mail tab (`platform_config.mail_mode`, published by `/api/version` as
+ * `mail.mode`): `off` - the tab is hidden; `on` - it is shown to eligible accounts (an address on
+ * etu.emse.fr or emse.fr). A DISPLAY switch only: the web relay is gated by chat-gateway's own
+ * `MAIL_RELAY_ENABLED`, not by this.
+ */
+export type MailMode = 'off' | 'on';
+
+/**
+ * Every value of {@link MailMode}. Copies of these two strings exist (the SQL CHECK, core's entity,
+ * this, the admin page through this) and `mailModesAgree.test.ts` fails the day one drifts.
+ */
+export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
+
+/**
  * The server's switch for group calls (`platform_config.group_calls_mode`, published by
  * `/api/version` as `calls.groupMode`): `off` - a group conversation shows no call control and the
  * server refuses a group `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` - group calls go peer to
@@ -123,6 +137,7 @@ export type ServerVersionInfo = {
   callRelay: CallRelay;
   livesMode: LivesMode;
   liveReplaysMode: LiveReplaysMode;
+  mailMode: MailMode;
   checkpointSkipMode: CheckpointSkipMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
@@ -164,6 +179,8 @@ export type AppVersionCheckResult = {
   livesMode: LivesMode;
   /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
   liveReplaysMode: LiveReplaysMode;
+  /** Whether the Mail tab is shown to eligible accounts; `off` until a server has said otherwise. */
+  mailMode: MailMode;
   /** Whether a receive-only drain may defer its MLS checkpoint; `off` until a server has said otherwise. */
   checkpointSkipMode: CheckpointSkipMode;
   /**
@@ -306,6 +323,15 @@ function normalizeLiveReplaysMode(raw: unknown): LiveReplaysMode {
 }
 
 /**
+ * The mail mode a `/api/version` body carries (`mail.mode`). ABSENT OR UNKNOWN READS AS `off`: a
+ * server that does not publish the switch has no Mail tab to offer, so the tab stays hidden.
+ */
+function normalizeMailMode(raw: unknown): MailMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return MAIL_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
  * The checkpoint-skip mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: `off` is
  * the behaviour every client has always had, so a server that does not publish the switch - or a
  * value this client does not know - can only ever mean today's durability.
@@ -324,6 +350,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance?: unknown;
     calls?: unknown;
     liveReplays?: unknown;
+    mail?: unknown;
     lives?: unknown;
     checkpointSkip?: unknown;
     oidcPkce?: unknown;
@@ -349,6 +376,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     callRelay: normalizeCallRelay(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
     liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
+    mailMode: normalizeMailMode(obj.mail),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
@@ -376,6 +404,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   calls: { mode: CallsMode; groupMode: GroupCallsMode; relay: CallRelay };
   lives: { mode: LivesMode };
   liveReplays: { mode: LiveReplaysMode };
+  mail: { mode: MailMode };
   checkpointSkip: { mode: CheckpointSkipMode };
   oidcPkce: boolean;
   presencePost: boolean;
@@ -395,6 +424,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     calls: { mode: info.callsMode, groupMode: info.groupCallsMode, relay: info.callRelay },
     lives: { mode: info.livesMode },
     liveReplays: { mode: info.liveReplaysMode },
+    mail: { mode: info.mailMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
@@ -515,6 +545,7 @@ export function buildAppVersionCheckResult(
     callRelay: serverInfo?.callRelay ?? 'none',
     livesMode: serverInfo?.livesMode ?? 'off',
     liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
+    mailMode: serverInfo?.mailMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,

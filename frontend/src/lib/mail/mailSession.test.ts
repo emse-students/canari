@@ -500,4 +500,14 @@ describe('MailSession.signOut', () => {
     expect(states).toEqual(['ready', 'signed_out']);
     await expect(s.call(getFolderRequest())).rejects.toBeInstanceOf(MailError);
   });
+
+  it('keeps the remembered password when asked - the server switch turned off (review M-5)', async () => {
+    const server = mailbox();
+    const { s } = session(server);
+    await s.signIn(GOOD, true);
+    await s.signOut({ keepRemembered: true });
+    expect(s.state.kind).toBe('signed_out');
+    expect(server.zimbra.soapNames.at(-1)).toBe('EndSessionRequest');
+    expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).not.toBeNull();
+  });
 });

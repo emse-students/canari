@@ -10,6 +10,7 @@ import {
   type GroupCallsMode,
   type LivesMode,
   type LiveReplaysMode,
+  type MailMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { parseRetentionRead, type ServedRetention } from '$lib/legal/retention';
@@ -145,6 +146,15 @@ export function serverLivesMode(): LivesMode {
  */
 export function serverLiveReplaysMode(): LiveReplaysMode {
   return lastCheck?.liveReplaysMode ?? 'off';
+}
+
+/**
+ * The server's Mail tab switch as the last `/api/version` answer gave it, `off` before any answer.
+ * Reactive like {@link serverLivesMode}. A DISPLAY switch only: eligibility (an etu.emse.fr or
+ * emse.fr address) is the caller's, and the web relay has its own server flag.
+ */
+export function serverMailMode(): MailMode {
+  return lastCheck?.mailMode ?? 'off';
 }
 
 /**

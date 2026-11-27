@@ -4,7 +4,8 @@
   import { afterNavigate } from '$app/navigation';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
-  import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { APP_PLACES, resolveActivePlaceId, shownPlaces } from '$lib/navigation/places';
+  import { mailInboxUnread, mailTabVisible, watchMailTab } from '$lib/mail/mailClient.svelte';
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
@@ -64,6 +65,10 @@
       isExpanded = false;
     }
   });
+
+  // The Mail place is drawn while its gate is open (D10, D12), like the bottom bar's tab.
+  watchMailTab();
+  const sidebarPlaces = $derived(shownPlaces(APP_PLACES, { mail: mailTabVisible() }));
 </script>
 
 <!-- Dimmed backdrop shown when the sidebar is expanded (smooth transition). -->
@@ -135,7 +140,7 @@
     : 'w-[4.5rem]'}"
 >
   <nav class="flex flex-1 flex-col gap-1.5 p-3">
-    {#each APP_PLACES as place (place.id)}
+    {#each sidebarPlaces as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
       {@const unread = (() => {
@@ -144,6 +149,7 @@
         if (place.id === 'communities') return totalUnreadCommunities;
         if (place.id === 'notifications' && globalSession.isLoggedIn) return postNotifStore.unread;
         if (place.id === 'dashboard' && globalSession.isLoggedIn) return adminQueueCounts.total;
+        if (place.id === 'mail') return mailInboxUnread();
         return 0;
       })()}
 

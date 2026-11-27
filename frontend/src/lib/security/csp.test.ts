@@ -28,6 +28,7 @@ import {
   serializePolicy,
   webDocumentCsp,
 } from './cspPolicy.js';
+import { MAIL_FRAME_SCRIPT_HASH } from './mailFrameScript.js';
 
 // Resolved from the vitest root (`frontend/`) rather than from `import.meta.url`, which vite
 // serves as a non-file URL.
@@ -236,7 +237,13 @@ describe('no script runs unless the policy names it (2026-10-22)', () => {
     expect(scriptCount).toBe(5);
     const hashes = inlineScriptHashes(appHtml);
     expect(hashes).toHaveLength(scriptCount);
-    expect(csp.directives['script-src']).toEqual(['self', 'wasm-unsafe-eval', ...hashes]);
+    // Plus the HTML mail frame's one script, which a `srcdoc` frame runs under this policy too.
+    expect(csp.directives['script-src']).toEqual([
+      'self',
+      'wasm-unsafe-eval',
+      MAIL_FRAME_SCRIPT_HASH,
+      ...hashes,
+    ]);
   });
 
   it('computes the hash a browser computes: the exact text between the tags', () => {

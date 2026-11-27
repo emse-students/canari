@@ -204,3 +204,76 @@ export function forwardMessage(original: MailMessage): OutgoingMessage {
     origin: { kind: 'forward', messageId: original.id, messageIdHeader: original.messageIdHeader },
   };
 }
+
+/** A plain mail address: one `@`, nothing that separates, quotes or groups addresses. */
+const PLAIN_ADDRESS = /^[^\s@<>(),;:"[\]\\]+@[^\s@<>(),;:"[\]\\]+$/;
+/** The longest subject and body a `mailto:` may prefill (a link is not a way to paste a book). */
+const MAILTO_SUBJECT_MAX = 998;
+const MAILTO_BODY_MAX = 20000;
+
+/** `value` percent-decoded, or `null` when it is not valid percent-encoding (RFC 6068: `+` stays). */
+function decodeMailtoPart(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** The plain addresses of a comma-separated, percent-encoded `mailto:` list; the rest dropped. */
+function mailtoAddresses(list: string): MailAddress[] {
+  const decoded = decodeMailtoPart(list);
+  if (decoded === null) return [];
+  return decoded
+    .split(',')
+    .map((part) => part.trim())
+    .filter((address) => PLAIN_ADDRESS.test(address))
+    .map((address) => ({ address, name: null }));
+}
+
+/** `text` without control characters other than a line break or a tab, line breaks as `\n`. */
+function plainText(text: string, max: number): string {
+  return (
+    text
+      .replace(/\r\n?/g, '\n')
+      // eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
+      .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+      .slice(0, max)
+  );
+}
+
+/**
+ * The message a `mailto:` link of a mail opens Canari's own composer with (review M-6, decided by
+ * the lead 2026-11-27) - never the browser, never the Safe Browsing lookup. Parsed by RFC 6068 by
+ * hand (`URLSearchParams` would read `+` as a space): the addresses before `?`, then `to`, `cc`,
+ * `bcc`, `subject` and `body`, header names in any case. EVERY OTHER HEADER IS IGNORED - a link
+ * written by a stranger chooses no sender, no reply-to and no attachment. Only plain addresses are
+ * kept, the subject loses its line breaks, the body is plain text (never HTML). `null` when `href`
+ * is not a `mailto:` link.
+ */
+export function mailtoMessage(href: string): OutgoingMessage | null {
+  const trimmed = href.trim();
+  if (!/^mailto:/i.test(trimmed)) return null;
+  const rest = trimmed.slice('mailto:'.length);
+  const query = rest.indexOf('?');
+  const path = query === -1 ? rest : rest.slice(0, query);
+  const message = { ...emptyMessage(), to: mailtoAddresses(path) };
+  if (query === -1) return message;
+  for (const pair of rest.slice(query + 1).split('&')) {
+    const equals = pair.indexOf('=');
+    if (equals === -1) continue;
+    const name = pair.slice(0, equals).toLowerCase();
+    const value = pair.slice(equals + 1);
+    if (name === 'to' || name === 'cc' || name === 'bcc') {
+      message[name] = [...message[name], ...mailtoAddresses(value)];
+    } else if (name === 'subject') {
+      const subject = decodeMailtoPart(value);
+      if (subject !== null)
+        message.subject = plainText(subject, MAILTO_SUBJECT_MAX).replace(/\n/g, ' ');
+    } else if (name === 'body') {
+      const body = decodeMailtoPart(value);
+      if (body !== null) message.text = plainText(body, MAILTO_BODY_MAX);
+    }
+  }
+  return message;
+}

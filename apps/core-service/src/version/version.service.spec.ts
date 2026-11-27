@@ -21,6 +21,7 @@ describe('VersionService', () => {
       livesMode: 'on',
       checkpointSkipMode: 'on',
       liveReplaysMode: 'on',
+      mailMode: 'on',
       groupCallsMode: 'mesh',
       callRelay: 'none',
       retentionReelDays: 365,
@@ -58,6 +59,12 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.liveReplays).toEqual({ mode: 'on' });
+  });
+
+  it('publishes the mail switch, which only shows or hides the Mail tab', async () => {
+    const out = await service.getVersion();
+
+    expect(out.mail).toEqual({ mode: 'on' });
   });
 
   it('publishes the retention durations in force, which the privacy policy renders', async () => {

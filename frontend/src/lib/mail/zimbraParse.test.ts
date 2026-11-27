@@ -6,6 +6,7 @@ import {
   parseAutoComplete,
   parseConversation,
   parseConversationPage,
+  parseCreatedFolder,
   parseFlags,
   parseFolders,
   parseInfo,
@@ -97,6 +98,30 @@ describe('parseFolders', () => {
     });
     expect(folders[2]).toMatchObject({ role: 'trash', total: 0, unread: 0 });
     expect(flattenFolders(folders).map((f) => f.id)).toEqual(['2', '300', '5', '3']);
+  });
+});
+
+describe('parseCreatedFolder', () => {
+  it('a folder made under the root is root-level (parentId null, as parseFolders gives it)', () => {
+    const folder = parseCreatedFolder({
+      CreateFolderResponse: {
+        folder: [
+          { id: '412', name: 'Archives', l: '1', absFolderPath: '/Archives', view: 'message' },
+        ],
+      },
+    });
+    expect(folder).toMatchObject({ id: '412', name: 'Archives', parentId: null, role: null });
+  });
+
+  it('a folder made under another keeps that parent', () => {
+    const folder = parseCreatedFolder({
+      CreateFolderResponse: { folder: [{ id: '413', name: 'Clubs', l: '300' }] },
+    });
+    expect(folder.parentId).toBe('300');
+  });
+
+  it('an answer with no folder is a typed server failure', () => {
+    expect(() => parseCreatedFolder({ CreateFolderResponse: {} })).toThrow(MailError);
   });
 });
 

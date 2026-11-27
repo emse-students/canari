@@ -15,13 +15,27 @@ export interface AppPlace {
     | 'calendar'
     | 'shopping-bag'
     | 'clipboard-list'
-    | 'calendar-clock';
+    | 'calendar-clock'
+    | 'mail';
   href: string;
   /** Whether this place appears in the mobile bottom navigation bar. */
   mobileNav: boolean;
+  /**
+   * A place shown only while its gate is open - the Mail tab (`mail`: the server's switch is on and
+   * the account is eligible, `mail/mailClient.svelte.ts`). A gated place is in no static list below;
+   * the bars ask {@link shownPlaces} with the gates' current answers.
+   */
+  gate?: PlaceGate;
 }
 
-// Mobile order: Feed | Communities | Chats | Dashboard - the four with `mobileNav`. The bar draws
+/** The gates a place may wait on. */
+export type PlaceGate = 'mail';
+
+/** The answer of every gate, as the bars read it at render time. */
+export type PlaceGates = Readonly<Record<PlaceGate, boolean>>;
+
+// Mobile order: Feed | Communities | Chats | (Mail) | Dashboard - the ones with `mobileNav`, Mail only
+// while its gate is open (D10). The bar draws
 // NO text (see `BottomNav.svelte`), so `label` is what its `sr-only` name reads; the desktop
 // sidebar shows all places and draws `label` visibly (mobileNav ignored).
 export const APP_PLACES: AppPlace[] = [
@@ -48,6 +62,15 @@ export const APP_PLACES: AppPlace[] = [
     icon: 'message-circle',
     href: '/chat',
     mobileNav: true,
+  },
+  {
+    id: 'mail',
+    label: () => m.nav_mail_label(),
+    description: () => m.nav_mail_desc(),
+    icon: 'mail',
+    href: '/mail',
+    mobileNav: true,
+    gate: 'mail',
   },
   {
     id: 'notifications',
@@ -100,11 +123,28 @@ export const APP_PLACES: AppPlace[] = [
 ];
 
 /**
- * The four places of the phone's bottom bar, in order - drawn by `BottomNav` on the web and
- * Android, and handed to the native tab bar on iOS (`NativeTabBar`). One list, so the two bars
- * cannot offer different places.
+ * The four UNGATED places of the phone's bottom bar, in order - what the tab swipe walks and the
+ * guided tour points at. The bars themselves draw {@link mobileNavPlaces} (these four, plus Mail
+ * while its gate is open), the web bar (`BottomNav`) and the native iOS bar (`NativeTabBar`) from the
+ * same function, so the two bars cannot offer different places.
  */
-export const MOBILE_NAV_PLACES: AppPlace[] = APP_PLACES.filter((p) => p.mobileNav);
+export const MOBILE_NAV_PLACES: AppPlace[] = APP_PLACES.filter((p) => p.mobileNav && !p.gate);
+
+/** `places` without the gated ones whose gate is shut. Pure: the caller reads the gates. */
+export function shownPlaces(places: readonly AppPlace[], gates: PlaceGates): AppPlace[] {
+  return places.filter((p) => !p.gate || gates[p.gate]);
+}
+
+/**
+ * The bottom bar's places with the gates' answers: the four fixed ones, and Mail between Chats and
+ * the Dashboard while its gate is open. What `BottomNav` and the native iOS bar draw.
+ */
+export function mobileNavPlaces(gates: PlaceGates): AppPlace[] {
+  return shownPlaces(
+    APP_PLACES.filter((p) => p.mobileNav),
+    gates
+  );
+}
 
 /**
  * The CanaReels camera (C5): a tab LEFT of the feed, reached by swiping right from it and by nothing
