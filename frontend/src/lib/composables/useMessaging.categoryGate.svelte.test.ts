@@ -217,6 +217,66 @@ describe("a private conversation's level gates the notification this client rais
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
+  // THE iPHONE OF 1.8.3-alpha.1: woken in the background by the server's SILENT push (its answer to
+  // "none"), the app decrypted the frame 140 ms before the sign-in read of the levels answered, and
+  // raised the group as "all". The frame now waits for that one read.
+  describe('a frame that lands before the levels are read', () => {
+    function deferredPreferences() {
+      let answer!: (snapshot: unknown) => void;
+      api.fetchNotificationPreferences.mockReturnValue(
+        new Promise((resolve) => {
+          answer = resolve;
+        })
+      );
+      return (groupLevels: Record<string, string>) =>
+        answer({ disabled: [], groupLevels, groupCalls: {} });
+    }
+
+    it('waits for the read, and raises nothing at none', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      (ctx as { userId: string }).userId = ME64;
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w1' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      answer({ 'conv-1': 'none' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('raises it once the read answers "all"', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w2' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      answer({});
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    });
+
+    it('joins a read already in flight rather than asking again', async () => {
+      const answer = deferredPreferences();
+      const signIn = notificationPreferences.load();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w3' });
+      answer({ 'conv-1': 'none' });
+      await signIn;
+      await flushMacrotask();
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+
+    it('decides under the account default, and says so, when the read fails', async () => {
+      api.fetchNotificationPreferences.mockRejectedValue(new Error('offline'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w4' });
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('unreadable'))).toBe(true);
+    });
+  });
+
   it('looks the level up by the GROUP id, so a DM keyed me::peer obeys it', async () => {
     const GROUP = '0b9f3d7e-1111-4222-8333-444455556666';
     api.fetchNotificationPreferences.mockResolvedValue({

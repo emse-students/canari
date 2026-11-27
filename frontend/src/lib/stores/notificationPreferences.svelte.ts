@@ -57,6 +57,15 @@ const channelReads = new SvelteMap<string, Promise<boolean>>();
 const channelKey = (id: string): string => id.replace(/^channel_/, '');
 /** Whether {@link groupLevels} has been answered by the server at least once this session. */
 let loaded = $state(false);
+/** The one read in flight: every caller that asks while it runs shares its answer. */
+let loadInFlight: Promise<boolean> | null = null;
+/** Names the read {@link loadInFlight} holds, so only that read clears it when it settles. */
+let loadSeq = 0;
+/**
+ * Bumped by {@link notificationPreferences.reset}: a read that started for the previous account and
+ * answers after the sign-out is dropped, never applied to the next one.
+ */
+let generation = 0;
 
 const sameSet = <T>(a: readonly T[], b: readonly T[]) =>
   a.length === b.length && a.every((x) => b.includes(x));
@@ -127,21 +136,54 @@ export const notificationPreferences = {
     return pushEnabled.includes(category) && !disabled.includes(category);
   },
 
-  /** Reads the account's set from the server. Never throws; a failure is logged and keeps the last set. */
-  async load(): Promise<boolean> {
-    try {
-      const snapshot = await fetchNotificationPreferences();
-      disabled = snapshot.disabled;
-      pushEnabled = snapshot.pushEnabled;
-      unknownDisabled = snapshot.unknownDisabled;
-      groupLevels = snapshot.groupLevels;
-      groupCalls = snapshot.groupCalls;
-      loaded = true;
-      return true;
-    } catch (e) {
-      Log.d('notificationPreferences.load failed - keeping the current set', e);
-      return false;
-    }
+  /**
+   * Reads the account's set from the server. Never throws; a failure is logged and keeps the last set.
+   * A call made while a read is in flight shares it: one request, one answer for every asker.
+   */
+  load(): Promise<boolean> {
+    if (loadInFlight) return loadInFlight;
+    const started = generation;
+    const seq = ++loadSeq;
+    // Started on the next microtask, so `loadInFlight` is set before the read can settle - even when
+    // the request throws synchronously.
+    const read = Promise.resolve().then(async () => {
+      try {
+        const snapshot = await fetchNotificationPreferences();
+        if (started !== generation) {
+          Log.d('notificationPreferences.load answered after a sign-out - dropped');
+          return false;
+        }
+        disabled = snapshot.disabled;
+        pushEnabled = snapshot.pushEnabled;
+        unknownDisabled = snapshot.unknownDisabled;
+        groupLevels = snapshot.groupLevels;
+        groupCalls = snapshot.groupCalls;
+        loaded = true;
+        return true;
+      } catch (e) {
+        Log.d('notificationPreferences.load failed - keeping the current set', e);
+        return false;
+      } finally {
+        if (seq === loadSeq) loadInFlight = null;
+      }
+    });
+    loadInFlight = read;
+    return read;
+  },
+
+  /**
+   * Resolves once the server has answered this account's set at least once this session - at once
+   * when it already has, else by joining (or starting) the read. Resolves false when that read
+   * failed: the caller then decides under the account default and says so.
+   *
+   * WHY A DECISION WAITS FOR IT. Until the first answer every conversation reads as `all` and every
+   * category as on, which is the account default, not this account's choice. A phone woken in the
+   * background by a SILENT push (the server's own answer to `none`) pulls and decrypts the frame
+   * before the sign-in read answers, and raised it as `all`: a group at "Aucune" rang the iPhone
+   * (1.8.3-alpha.1, 2026-11-27 - the frame raised 140 ms before the preferences answered).
+   */
+  answered(): Promise<boolean> {
+    return loaded ? Promise.resolve(true) : this.load();
   },
 
   /**
@@ -299,5 +341,7 @@ export const notificationPreferences = {
     channelLevels = {};
     channelReads.clear();
     loaded = false;
+    loadInFlight = null;
+    generation++;
   },
 };

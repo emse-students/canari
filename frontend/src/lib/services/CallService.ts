@@ -905,7 +905,13 @@ export class CallService {
       }
       // The conversation's call permission: the server already withheld the ring push, and the
       // in-app invite is the half it cannot read. The missed-call line is `handleCallSignalForChat`'s
-      // to write, from the same predicate, so the timeline has one writer.
+      // to write, from the same predicate, so the timeline has one writer. Read only once the account's
+      // set has answered: before that `callsAllowed` is the default, and "Aucune" would ring.
+      if (!(await notificationPreferences.answered())) {
+        appendLog(
+          `[Call] WARN invite ${callMsg.callId}: the account's notification settings are unreadable - the call permission is the default`
+        );
+      }
       if (!notificationPreferences.callsAllowed(groupId)) {
         appendLog(
           `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are not allowed in this conversation`

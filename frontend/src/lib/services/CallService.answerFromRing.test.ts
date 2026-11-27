@@ -5,6 +5,12 @@ import type { IMlsService } from '$lib/mls-client';
 import { CallService } from './CallService';
 import { setPendingCallAccept, takePendingCallAccept } from '$lib/stores/pendingCallAccept';
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
+await (await import('../../test/answeredPreferences')).answerPreferences();
+
 /**
  * An answer given on the ring (the Android CallStyle notification, iOS CallKit) joins the call from
  * the facts the ring carried, with NO MLS `call_invite`: the server delivers that transport frame

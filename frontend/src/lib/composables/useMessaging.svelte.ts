@@ -1512,10 +1512,44 @@ export function useMessaging() {
      */
     arrivalSeen: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
-    salonLevelRead = false
+    salonLevelRead = false,
+    /** True on the re-entry that follows the account's first preferences answer - see below. */
+    preferencesRead = false
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
+    /**
+     * Decides again once a read this decision needs has answered, with what it learnt. Caught here:
+     * the re-entry runs outside the caller's `afterTheRow`, and a throw must still cost the message
+     * nothing and be said.
+     */
+    const decideAgain = (salon: boolean, preferences: boolean) => {
+      try {
+        notifyInbound(
+          ctx,
+          conversationKey,
+          convo,
+          senderId,
+          content,
+          mentionsMe,
+          isSystem,
+          isOwn,
+          sentAt,
+          serverAt,
+          covers,
+          announced,
+          authorProven,
+          arrivalSeen,
+          salon,
+          preferences
+        );
+      } catch (e) {
+        console.error(
+          `[NOTIF] Inbound in ${conversationKey} - the decision after a read threw; nothing raised:`,
+          e
+        );
+      }
+    };
     const mine = countingReadPoint(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
@@ -1532,6 +1566,23 @@ export function useMessaging() {
         `[NOTIF] Inbound in ${conversationKey} at ${sentAt} is already read here - nothing raised.`
       );
       return;
+    }
+
+    // NOTHING BELOW IS DECIDED BEFORE THE ACCOUNT'S SET HAS ANSWERED. Until then the store holds the
+    // account DEFAULT (every category on, every conversation `all`), not this account's choice. A
+    // phone the server's SILENT push woke in the background (its answer to `none`, or to "messages"
+    // off) pulls and decrypts the frame before the sign-in read answers - the iPhone raised a group
+    // at "Aucune" 140 ms before its preferences landed (1.8.3-alpha.1, 2026-11-27). So the frame
+    // waits for that ONE read (shared, never one per frame) and re-enters; if the read FAILED it is
+    // decided under the default, said here at the level that accuses.
+    if (!notificationPreferences.loaded) {
+      if (!preferencesRead) {
+        void notificationPreferences.answered().then(() => decideAgain(salonLevelRead, true));
+        return;
+      }
+      console.warn(
+        `[NOTIF] Inbound in ${conversationKey} - the account's notification settings are unreadable; decided under the account default.`
+      );
     }
 
     // THE ACCOUNT'S OWN SWITCH for this kind of notification. The server already refuses to PUSH a muted
@@ -1570,25 +1621,9 @@ export function useMessaging() {
     } else {
       level = notificationPreferences.channelLevel(conversationKey);
       if (level === undefined && !salonLevelRead) {
-        void notificationPreferences.loadChannelLevel(conversationKey).then(() => {
-          notifyInbound(
-            ctx,
-            conversationKey,
-            convo,
-            senderId,
-            content,
-            mentionsMe,
-            isSystem,
-            isOwn,
-            sentAt,
-            serverAt,
-            covers,
-            announced,
-            authorProven,
-            arrivalSeen,
-            true
-          );
-        });
+        void notificationPreferences
+          .loadChannelLevel(conversationKey)
+          .then(() => decideAgain(true, preferencesRead));
         return;
       }
       if (level === undefined) {
@@ -1733,7 +1768,12 @@ export function useMessaging() {
   /** Whether the once-per-session line of an `unattributed` reaction has been said. */
   let unattributedSaid = false;
 
-  function notifyInboundReaction(reaction: InboundReaction, ctx: MessagingContext): void {
+  function notifyInboundReaction(
+    reaction: InboundReaction,
+    ctx: MessagingContext,
+    /** True on the re-entry that follows the account's first preferences answer (`notifyInbound`'s rule). */
+    preferencesRead = false
+  ): void {
     const key = reaction.conversationKey;
     const tag = `${reaction.messageId.slice(0, 8)} in ${key.slice(0, 16)}`;
     const verdict = inboundReactionVerdict(reaction, ctx.userId);
@@ -1764,6 +1804,26 @@ export function useMessaging() {
       return;
     }
     if (typeof document === 'undefined') return;
+    // The switch and the level below are the ACCOUNT'S only once its set has answered - before that
+    // they are the default, and a reaction in a conversation at "Aucune" would be raised as `all`.
+    // The same wait as `notifyInbound`, for the same reason.
+    if (!notificationPreferences.loaded) {
+      if (!preferencesRead) {
+        void notificationPreferences
+          .answered()
+          .then(() => notifyInboundReaction(reaction, ctx, true))
+          .catch((e: unknown) =>
+            console.error(
+              `[NOTIF] Reaction ${tag} - the decision after the preferences read threw; nothing raised:`,
+              e
+            )
+          );
+        return;
+      }
+      console.warn(
+        `[NOTIF] Reaction to my message ${tag} - the account's notification settings are unreadable; decided under the account default.`
+      );
+    }
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({

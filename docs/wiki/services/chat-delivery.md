@@ -3513,6 +3513,19 @@ The three decisions are asserted against ONE contract, `libs/contracts/mention-d
 `canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
 target yet: there is no Xcode on the workstation that wrote it).
 
+**Nothing is decided before the account's set has answered (2026-11-27).** Until the first
+`GET /mls/notification-preferences` answers, the store holds the account DEFAULT (every category on,
+every conversation `all`), not this account's choice. Read on the iPhone 12 (`1.8.3-alpha.1`): the
+server sent the frames of a group at `none` silent (`[PUSH_SEND] level=none ... sent silent`), iOS
+woke the terminated app in the background for that silent push, the app pulled and decrypted the
+frame and `notifyInbound` raised it 140 ms BEFORE the preferences read answered - "Aucune" rang.
+So `notifyInbound`, the reaction trigger and both call-permission reads (`CallService`'s in-app ring,
+`handleCallSignalForChat`'s record) wait for `notificationPreferences.answered()`: one shared read
+(the sign-in one when it is in flight, never one per frame), the frame re-entering once it answers.
+A read that FAILED decides under the default and says so at WARN (`[NOTIF] ... settings are
+unreadable`), the salon level's rule. A read answering after a sign-out is dropped, never applied to
+the next account.
+
 **When this device's copy of the levels refreshes, and why that is enough.** The store is read at
 sign-in, at every visit to the notification settings, and at every opening of a conversation's
 panel (a salon's: its settings panel, which also writes the cache on save). No socket event announces a level changed on ANOTHER device, so until one of those three, a

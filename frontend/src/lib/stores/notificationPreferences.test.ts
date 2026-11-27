@@ -223,3 +223,42 @@ describe('notificationPreferences', () => {
     });
   });
 });
+
+describe('notificationPreferences.answered - a decision waits for the first answer', () => {
+  it('resolves at once once loaded, and shares one in-flight read otherwise', async () => {
+    let answer!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (answer = r)));
+    const a = notificationPreferences.answered();
+    const b = notificationPreferences.load();
+    answer({ disabled: [], groupLevels: { g: 'none' }, groupCalls: {} });
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    expect(notificationPreferences.groupLevel('g')).toBe('none');
+    expect(await notificationPreferences.answered()).toBe(true);
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves false on a failed read, and the next ask reads again', async () => {
+    api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('offline'));
+    expect(await notificationPreferences.answered()).toBe(false);
+    api.fetchNotificationPreferences.mockResolvedValueOnce({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
+    expect(await notificationPreferences.answered()).toBe(true);
+    expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a read that answers after a sign-out, so the next account never inherits it', async () => {
+    let answer!: (v: unknown) => void;
+    api.fetchNotificationPreferences.mockReturnValue(new Promise((r) => (answer = r)));
+    const read = notificationPreferences.load();
+    notificationPreferences.reset();
+    answer({ disabled: [], groupLevels: { g: 'none' }, groupCalls: {} });
+    expect(await read).toBe(false);
+    expect(notificationPreferences.loaded).toBe(false);
+    expect(notificationPreferences.groupLevel('g')).toBe('all');
+  });
+});
