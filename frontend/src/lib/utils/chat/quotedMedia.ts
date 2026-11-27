@@ -53,6 +53,13 @@ function visualOf(content: string): QuotedVisual | null {
  */
 export function quotedIdOf(msg: { content: string; replyTo?: { id: string } }): string | undefined {
   if (msg.replyTo) return msg.replyTo.id;
+  // Answered per CONTENT, like `quotedVisualMedia`: the thread asks for every row at every render.
+  if (quotedIds.has(msg.content)) return quotedIds.get(msg.content);
   const env = parseEnvelope(msg.content);
-  return env.kind === 'text' || env.kind === 'media' ? env.replyTo?.id : undefined;
+  const id = env.kind === 'text' || env.kind === 'media' ? env.replyTo?.id : undefined;
+  if (quotedIds.size >= ANSWERS_MAX) quotedIds.clear();
+  quotedIds.set(msg.content, id);
+  return id;
 }
+
+const quotedIds = new Map<string, string | undefined>();

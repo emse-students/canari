@@ -143,7 +143,13 @@ type SealOutcome =
 /** What `recharger_mls_au_resume` did - mirrors `ReloadOutcome` in `src-tauri/src/commands/storage.rs`. */
 type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live-ahead';
 
-/** * The close code a LEAVING page sends (RFC 6455 "going away"). The patched websocket plugin * (`src-tauri/patches/tauri-plugin-websocket`, `GOING_AWAY`) stops forwarding frames on a connection * closed with it: the number is the contract between the two, change both or neither. */ export const PAGE_LEAVING_CLOSE_CODE = 1001;
+/**
+ * The close code a LEAVING page sends (RFC 6455 "going away"). The patched websocket plugin
+ * (`src-tauri/patches/tauri-plugin-websocket`, `GOING_AWAY`) stops forwarding frames on a connection
+ * closed with it: the number is the contract between the two, change both or neither.
+ */
+export const PAGE_LEAVING_CLOSE_CODE = 1001;
+
 /**
  * MLS service implementation for Tauri (mobile/desktop).
  * Delegates all cryptographic operations to the native Rust side via `invoke()`.
@@ -681,7 +687,9 @@ export class TauriMlsService extends BaseMlsService {
       // that continuation: the plugin's reader then kept the connection and answered every gateway
       // frame into the dead page's channel, `[TAURI] Couldn't find callback id N` every ~15 s
       // after a reload (iPhone 12, 1.8.2-alpha.8, a language switch: 7 lines in 90 s). The two
-      // invocations leave in order, the frame first; no watcher is registered, since nobody
+      // invocations are not awaited (the page is gone once this returns), so their order at the plugin is
+      // not guaranteed: an answer to the frame that beat the close would still be forwarded, but it needs a
+      // server round trip against two local IPC calls issued back to back. No watcher is registered, since nobody
       // is left to read what it would learn.
       const frame = ws.send(JSON.stringify({ type: 'disconnect' }));
       // A CLOSE CODED 1001 ("going away"), NOT `disconnect()`'s 1000: the plugin's reader mutes the

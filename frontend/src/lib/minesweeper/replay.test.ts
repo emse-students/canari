@@ -160,15 +160,18 @@ describe('fitCellSize', () => {
   });
 
   it('fits every board and room a floor-sized cell can hold, whole', () => {
+    // Every room here holds the floor-sized grid, so each MUST fit whole.
     for (const [w, h, cols, rows] of [
       [374, 440, 18, 32],
       [300, 400, 18, 32],
       [374, 640, 9, 9],
-      [200, 300, 18, 32],
+      [250, 300, 18, 32],
     ] as const) {
+      expect(REPLAY_CELL_MIN_PX * rows + (rows - 1)).toBeLessThanOrEqual(h);
+      expect(REPLAY_CELL_MIN_PX * cols + (cols - 1)).toBeLessThanOrEqual(w);
       const size = fitCellSize(w, h, cols, rows, 1);
-      const floorFits = REPLAY_CELL_MIN_PX * rows + (rows - 1) <= h;
-      if (floorFits) expect(size * rows + (rows - 1)).toBeLessThanOrEqual(h);
+      expect(size * rows + (rows - 1)).toBeLessThanOrEqual(h);
+      expect(size * cols + (cols - 1)).toBeLessThanOrEqual(w);
     }
   });
 
