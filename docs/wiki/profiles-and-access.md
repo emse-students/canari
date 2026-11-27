@@ -1129,7 +1129,6 @@ Decided 2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.m
 same day, NOTHING BUILT. One entry per work package, each `target: 1.8.3`:
 [Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md),
 [MiConnect](backlog.d/alumni-merge-miconnect-policy-event-push-and-manual-mark.md),
-[pickers](backlog.d/a-duplicate-waiting-for-its-merge-is-in-no-picker-and-homonyms-are-told-apart.md),
 [Sky](backlog.d/alumni-merge-sky-transfers-then-erases-the-duplicate.md),
 [MiGallery](backlog.d/alumni-merge-migallery-transfers-then-erases-the-duplicate.md),
 [Le Cercle](backlog.d/alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md).
@@ -1287,6 +1286,12 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
   logged at warning (`[PICKER] homonyms with nothing to tell apart`), never shown bare. The same rule
   holds on the sites' admin lists (MiGallery's "Utilisateurs & rôles" showed two identical rows). Charter
   principle 7.
+  **As built (1.8.3):** the clause is `applyMergingDuplicateVisibility` in `users.service.ts`, judged
+  against PostgreSQL by `picker-merging-duplicate.integration.spec.ts`; the search rows are
+  `UserSearchRow` (`user-search-row.ts`, `earliestCursus`: the lowest-promo well-formed entry, else the
+  legacy pair, silent because it runs per hit); `distinguishHomonyms` is rendered by
+  `UserAutocomplete.svelte` (so `MultiUserSelector` too) and `MentionDropdown.svelte`. A pair nothing
+  tells apart keeps its promo beside it, and the warning names a count, never a name.
 - **D57 - The merge's Event survives the duplicate** (a defect of `1.8.0`, P2, found 2026-11-26). No
   `custom_alumni_merge` Event exists in production although a merge completed. Cause, read in
   authentik 2026.8.6: the policy journals through `Event.from_http`, which during a flow sets the

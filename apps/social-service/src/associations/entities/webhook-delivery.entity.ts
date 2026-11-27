@@ -7,6 +7,10 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
  * which is why the admin retry button looked dead: a successful retry inserted a `delivered` row
  * and left the original `failed` one in the list, and a failed retry simply added a second failure.
  *
+ * `parked` is a delivery the Cercle ACCEPTED for a member who has never signed in there: it holds the
+ * top-up and credits it at their first sign-in. Terminal on this side - never retried, never in the
+ * failure list, and garbage-collected like `delivered`.
+ *
  * Failures are retried automatically on a backoff (`nextAttemptAt`), and manually from the admin
  * dashboard once the reason has been fixed.
  */
@@ -29,7 +33,7 @@ export class WebhookDelivery {
   paymentIntentId: string;
 
   @Column({ length: 20, default: 'pending' })
-  status: 'pending' | 'delivered' | 'failed';
+  status: 'pending' | 'delivered' | 'parked' | 'failed';
 
   @Column({ type: 'int', default: 0 })
   attemptCount: number;

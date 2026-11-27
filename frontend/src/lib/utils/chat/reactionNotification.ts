@@ -218,7 +218,7 @@ export function reactionNotificationKey(conversationKey: string): string {
  * left TWO entries in the iPhone's Notification Center, where the Android shade replaces the line.
  * The slot is what a notification REPLACES, and a reactor's newer reaction to the same message
  * replaces their older one
- * ([backlog](../../../../../docs/wiki/backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)).
+ * ([read on the iPhone](../../../../../docs/wiki/device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)).
  * The page's post and the push of the same reaction still share it, so they are still one.
  *
  * THE REACTED-TO MESSAGE, NEVER THE CONVERSATION: the server sends this hash to Apple on the

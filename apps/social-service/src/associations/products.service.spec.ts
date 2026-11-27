@@ -2375,6 +2375,50 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(options.headers['X-Canari-Signature']).toBe(`sha256=${expected}`);
     });
 
+    it('a 202 from the Cercle is PARKED: accepted, off the ladder, never retried', async () => {
+      // The member has not signed in to the Cercle yet. It holds the top-up and credits it at their
+      // first sign-in, so retrying would only repeat the answer and nothing needs a human.
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() =>
+        of({ status: 202, data: { ok: true, parked: true } })
+      );
+
+      const updated = await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect(updated.status).toBe('parked');
+      expect(updated.nextAttemptAt).toBeNull();
+      expect(updated.lastError).toBeNull();
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(1);
+    });
+
+    it('is told apart by the status alone: a 200 stays delivered whatever its body says', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() =>
+        of({ status: 200, data: { ok: true, parked: true } })
+      );
+
+      expect((await service.retryWebhookDelivery('asso1', 'd1')).status).toBe('delivered');
+    });
+
+    it('a 404 is still a failure: an unknown route is not a member who is not there yet', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('Request failed with status code 404');
+      });
+
+      const updated = await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect(updated.status).toBe('failed');
+      expect(updated.lastError).toContain('404');
+      expect(updated.nextAttemptAt).not.toBeNull();
+    });
+
     it('restarts the automatic ladder, because a manual retry means something was fixed', async () => {
       const { service, productRepo, deliveryRepo, httpService } = makeService();
       deliveryRepo.findOne.mockResolvedValue(failedRow({ autoRetryCount: 4 }));
