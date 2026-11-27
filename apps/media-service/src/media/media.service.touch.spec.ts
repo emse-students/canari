@@ -38,6 +38,61 @@ function serviceWith(items: ServiceInternals['meta']['items']): {
   return { service, persisted: () => persistCalls };
 }
 
+describe('MediaService.holdWindows', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = 2_000_000_000_000;
+  type Entry = Record<string, unknown>;
+
+  function windowsOf(items: Record<string, Entry>, ids: string[]) {
+    const service = Object.create(MediaService.prototype) as MediaService;
+    (service as unknown as { meta: unknown }).meta = { items };
+    return service.holdWindows(ids, NOW);
+  }
+
+  it('answers the idle window the object was stamped with, else the default', () => {
+    const windows = windowsOf(
+      {
+        [UUID_A]: {
+          createdAt: 1,
+          lastAccessAt: 1,
+          retentionClass: 'ephemeral',
+          idleRetentionMs: 10 * DAY,
+        },
+        [UUID_B]: { createdAt: 1, lastAccessAt: 1, retentionClass: 'ephemeral' },
+      },
+      [UUID_A, UUID_B]
+    );
+    expect(windows[UUID_A]).toBe(10 * DAY);
+    expect(windows[UUID_B]).toBe(90 * DAY);
+  });
+
+  it('answers null for a class no sweep takes, and nothing for unknown or purged ids', () => {
+    const windows = windowsOf(
+      {
+        [UUID_A]: { createdAt: 1, lastAccessAt: 1, retentionClass: 'archive' },
+        [UUID_PURGED]: { createdAt: 1, lastAccessAt: 1, retentionClass: 'ephemeral', purgedAt: 5 },
+      },
+      [UUID_A, UUID_PURGED, UUID_B, 'nonsense']
+    );
+    expect(windows).toEqual({ [UUID_A]: null });
+  });
+
+  it('answers the time left to a chat hold, which reading does not move', () => {
+    const windows = windowsOf(
+      {
+        [UUID_A]: {
+          createdAt: 1,
+          lastAccessAt: 1,
+          retentionClass: 'chat-reel',
+          holds: { post: null, chat: { dueAt: NOW + 3 * DAY } },
+        },
+      },
+      [UUID_A]
+    );
+    expect(windows[UUID_A]).toBe(3 * DAY);
+  });
+});
+
 describe('MediaService.touch', () => {
   const OLD = 1_000;
 

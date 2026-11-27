@@ -335,3 +335,25 @@ describe('FormReminderScheduler.checkReminders - the push carries the facts of t
     expect(content).not.toHaveProperty('icon');
   });
 });
+
+/**
+ * The weekly GC of Cercle deliveries sweeps `delivered` only: a PARKED row is a top-up Le Cercle
+ * still holds for a member who has not signed in, and it is what `/admin/cercle` and the daily
+ * report read - sweeping it would hide money still owed.
+ */
+describe('FormReminderScheduler.purgeDeliveredWebhooks', () => {
+  it('deletes delivered rows only, never parked or failed ones', async () => {
+    const query = jest.fn(async (_sql: string, _params: unknown[]) => ({ rowCount: 0 }));
+    const scheduler = new FormReminderScheduler(
+      { manager: { query } } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    await scheduler.purgeDeliveredWebhooks();
+    const sql = String(query.mock.calls[0][0]);
+    expect(sql).toMatch(/status = 'delivered'/);
+    expect(sql).not.toMatch(/parked|failed/);
+  });
+});

@@ -30,13 +30,42 @@ import { RequestDeadlineError } from '$lib/utils/requestDeadline';
  * raw rejection is kept in `cause` for the log - never for a decision.
  */
 export class TransportFailureError extends TypeError {
+  /**
+   * @param networkStack The HTTP stack that failed, recorded at the throw ({@link NetworkStack}); absent
+   *   for a failure raised where no routing exists (an XHR upload, the web build's one stack).
+   *   NOT `stack`: that is the Error's own trace, which a field of that name would overwrite on
+   *   every failure and every subclass (`DeliveryUnreachableError`, `NotFromApiError`, ...).
+   */
   constructor(
     readonly cause: unknown,
-    message = `request got no answer: ${String(cause)}`
+    message = `request got no answer: ${String(cause)}`,
+    readonly networkStack?: NetworkStack
   ) {
     super(message);
     this.name = 'TransportFailureError';
   }
+}
+
+/**
+ * THE TWO HTTP STACKS OF A TAURI PHONE, which can disagree about the same server: the WebView's own
+ * network stack and resolver (`webview`, first-party reads), and the HTTP plugin's reqwest with the
+ * system resolver (`plugin`, writes with a JSON body). One verdict "the server is unreachable" earned
+ * on one must not be lifted by an answer on the other (docs/wiki/frontend/offline-and-weak-network.md,
+ * "Two stacks, one verdict").
+ */
+export type NetworkStack = 'webview' | 'plugin';
+
+/** Which stack delivered each answer, recorded where the routing is known. A Response cannot carry it. */
+const answerStacks = new WeakMap<Response, NetworkStack>();
+
+/** The stack that delivered `res`; `undefined` when it went through no routing (the web build). */
+export function stackOfAnswer(res: Response): NetworkStack | undefined {
+  return answerStacks.get(res);
+}
+
+function tagAnswer(res: Response, stack: NetworkStack): Response {
+  answerStacks.set(res, stack);
+  return res;
 }
 
 /**
@@ -167,14 +196,14 @@ function abortedSignal(input: RequestInfo | URL, init?: RequestInit): AbortSigna
 export function conformNativeFetch(native: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     try {
-      return await native(input, init);
+      return tagAnswer(await native(input, init), 'webview');
     } catch (raw) {
       if (
         raw instanceof TypeError &&
         !(raw instanceof TransportFailureError) &&
         !abortedSignal(input, init)
       ) {
-        throw new TransportFailureError(raw);
+        throw new TransportFailureError(raw, undefined, 'webview');
       }
       throw raw;
     }
@@ -204,7 +233,7 @@ export function conformNativeFetch(native: typeof fetch): typeof fetch {
 export function conformPluginFetch(plugin: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     try {
-      return await plugin(input, init);
+      return tagAnswer(await plugin(input, init), 'plugin');
     } catch (raw) {
       const aborted = abortedSignal(input, init);
       if (aborted) {
@@ -217,7 +246,7 @@ export function conformPluginFetch(plugin: typeof fetch): typeof fetch {
       if (raw instanceof TransportFailureError) throw raw;
       // Not logged here: nothing is swallowed, and the caller's own failure line carries the raw
       // sentence through `cause` - one line per failure, not two.
-      throw new TransportFailureError(raw);
+      throw new TransportFailureError(raw, undefined, 'plugin');
     }
   }) as typeof fetch;
 }

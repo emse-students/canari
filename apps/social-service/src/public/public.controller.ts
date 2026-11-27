@@ -6,14 +6,12 @@ import {
   Query,
   Headers,
   Logger,
-  ForbiddenException,
   BadRequestException,
   NotFoundException,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
-import * as crypto from 'crypto';
 import type { Response } from 'express';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
@@ -26,6 +24,7 @@ import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
 import { RouteParams } from '../common/route-params';
+import { assertCercleApiKey } from './cercle-api-key';
 
 /**
  * Public projection of an association/list for the read-only showcase.
@@ -128,7 +127,6 @@ function answerNoPhoto(res: Response): void {
 @Controller('public')
 export class PublicController {
   private readonly logger = new Logger(PublicController.name);
-  private readonly cercleApiKey = process.env.CERCLE_API_KEY ?? '';
 
   constructor(
     private readonly associations: AssociationsService,
@@ -136,19 +134,6 @@ export class PublicController {
     private readonly poster: PosterService,
     private readonly postPreviews: PostPreviewService
   ) {}
-
-  /** Throws ForbiddenException unless the header matches CERCLE_API_KEY (timing-safe). */
-  private assertCercleApiKey(key: string): void {
-    const expected = Buffer.from(this.cercleApiKey);
-    const received = Buffer.from(key ?? '');
-    if (
-      expected.length === 0 ||
-      received.length !== expected.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      throw new ForbiddenException();
-    }
-  }
 
   /**
    * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
@@ -417,7 +402,7 @@ export class PublicController {
     @Query('sub') sub: string,
     @Headers('x-api-key') apiKey: string
   ) {
-    this.assertCercleApiKey(apiKey);
+    assertCercleApiKey(apiKey);
     // Security: mitigates CodeQL alert #2478 — query params may arrive as arrays, bypassing sanitization
     if (Array.isArray(assoSlug)) {
       assoSlug = assoSlug[0];
