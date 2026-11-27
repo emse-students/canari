@@ -7,18 +7,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { LESSONS } from '$lib/minesweeper/tutorial/lessons';
+import { FLAG_PRIMARY_STORAGE_KEY } from '$lib/minesweeper/controls';
 import Page from './+page.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
 
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
+  // The gestures were chosen already: the first-time choice has its own test.
+  localStorage.setItem(FLAG_PRIMARY_STORAGE_KEY, '0');
   app = mount(Page, { target: document.body });
   flushSync();
 });
 afterEach(() => {
   if (app) unmount(app, { outro: false });
   app = null;
+  localStorage.clear();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });
@@ -70,9 +74,8 @@ describe('the tutorial page', () => {
     byText('Recommencer').click();
     flushSync();
     expect(testId('tutorial-lost')).toBeNull();
-    byText('Drapeau').click();
-    flushSync();
-    cell(8).click();
+    // The flag is the other gesture: a right click here.
+    cell(8).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     flushSync();
     expect(testId('tutorial-solved')).not.toBeNull();
   });
@@ -101,5 +104,19 @@ describe('the tutorial page', () => {
     byText('Leçon précédente').click();
     flushSync();
     expect(testId('tutorial-progress')?.textContent).toContain(`1 sur ${LESSONS.length}`);
+  });
+
+  it('asks the gestures the first time, and keeps the choice for the game', () => {
+    if (app) unmount(app, { outro: false });
+    document.body.innerHTML = '';
+    localStorage.removeItem(FLAG_PRIMARY_STORAGE_KEY);
+    app = mount(Page, { target: document.body });
+    flushSync();
+    expect(testId('controls-choice')).not.toBeNull();
+    document.querySelector<HTMLButtonElement>('[data-choice="flag"]')!.click();
+    flushSync();
+    expect(testId('controls-choice')).toBeNull();
+    expect(localStorage.getItem(FLAG_PRIMARY_STORAGE_KEY)).toBe('1');
+    expect(testId('tutorial-gestures')?.textContent).toContain('Clic gauche : drapeau');
   });
 });

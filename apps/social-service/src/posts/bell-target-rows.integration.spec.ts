@@ -37,7 +37,10 @@ import {
 } from './post-notifications.it-schema';
 import { AssociationPermissionFlag as F } from '../associations/entities/association-member.entity';
 import { PG_SESSION_OPTIONS } from '../common/pg-session-options';
-import { REPORT_ALREADY_ANNOUNCED_SQL } from '../admin-queues/admin-queue-sql';
+import {
+  REPORT_ALREADY_ANNOUNCED_SQL,
+  alumniDuplicatePendingSql,
+} from '../admin-queues/admin-queue-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -608,6 +611,104 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     await q(`DELETE FROM content_reports WHERE id IN ($1, $2)`, [report, second]);
   });
 
+  it('an Alumni duplicate notice is served to a global admin while the duplicate waits, leaves EVERY admin bell once one marks it, and returns when the mark is withdrawn', async () => {
+    // The first build that draws this notice (`ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION`).
+    const servedTo183 = async (reader: string): Promise<string[]> =>
+      (await bell.getNotifications(reader, 50, '1.8.3')).map((n) => n.type).sort();
+    const dup = id(60);
+    const target = id(61);
+    const pending = async (): Promise<number> =>
+      (
+        (await q(
+          `SELECT count(*)::int AS n FROM alumni_duplicate_flags adf WHERE ${alumniDuplicatePendingSql('adf')}`
+        )) as { n: number }[]
+      )[0].n;
+    const merge = (completed: boolean, cancelled: boolean, marked = true) =>
+      q(
+        `INSERT INTO alumni_merges ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held,
+           "markedAt", "completedAt", "cancelledAt")
+         VALUES ('adm', $1, 'alumni-0001', $2, '{}'::jsonb, CASE WHEN $5::boolean THEN now() END,
+           CASE WHEN $3::boolean THEN now() END, CASE WHEN $4::boolean THEN now() END)`,
+        [dup, target, completed, cancelled, marked]
+      );
+    await q(`INSERT INTO users (id, admin) VALUES ('adm2', true) ON CONFLICT (id) DO NOTHING`);
+    await q(`UPDATE users SET admin = true WHERE id = 'adm2'`);
+    await q(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [dup]);
+    for (const u of ['adm', 'adm2', 'f1']) await row(u, 'admin_alumni_duplicate', dup);
+
+    // It waits: both admins are served it and COUNT it, a member who somehow holds the row is not.
+    expect(await pending()).toBe(1);
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    expect(await servedTo183('adm2')).toEqual(['admin_alumni_duplicate']);
+    expect(await servedTo183('f1')).toEqual([]);
+    // A build before the floor is not served a type it cannot draw.
+    expect(await servedTo171('adm')).toEqual([]);
+    expect(await served('adm')).toEqual([]);
+
+    // A merge only REQUESTED (written, the editor not yet written to, so not marked) removes nothing:
+    // an interrupted mark leaves the item waiting.
+    await merge(false, false, false);
+    expect(await pending()).toBe(1);
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+
+    // One admin marks it for a merge (an OPEN, MARKED merge row): gone from every bell and every count.
+    await q(`DELETE FROM alumni_merges`);
+    await merge(false, false);
+    expect(await pending()).toBe(0);
+    expect(await servedTo183('adm')).toEqual([]);
+    expect(await servedTo183('adm2')).toEqual([]);
+
+    // The mark is withdrawn (cancelled: closed, never merged): it waits again, for the same row.
+    await q(`DELETE FROM alumni_merges`);
+    await merge(true, true);
+    expect(await pending()).toBe(1);
+    expect(await servedTo183('adm2')).toEqual(['admin_alumni_duplicate']);
+
+    // MiConnect completed the merge: still gone, and nothing was announced.
+    await merge(true, false);
+    expect(await pending()).toBe(0);
+    expect(await servedTo183('adm')).toEqual([]);
+
+    // A flag a later reading resolved (the duplicate is gone) leaves the bells; one that matches
+    // again returns.
+    await q(`DELETE FROM alumni_merges`);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = now() WHERE "duplicateUuid" = $1`, [
+      dup,
+    ]);
+    expect(await pending()).toBe(0);
+    expect(await servedTo183('adm')).toEqual([]);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = NULL WHERE "duplicateUuid" = $1`, [
+      dup,
+    ]);
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+
+    // ONE row for a BATCH (meta.duplicateUuids), keyed on its first duplicate: it stays while ANY of
+    // them still waits, and leaves only when none does.
+    await q(`DELETE FROM post_notifications WHERE type = 'admin_alumni_duplicate'`);
+    const dup2 = id(62);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = NULL`);
+    await q(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [dup2]);
+    await row('adm', 'admin_alumni_duplicate', dup, { duplicateUuids: [dup, dup2] });
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = now() WHERE "duplicateUuid" = $1`, [
+      dup,
+    ]);
+    // The first duplicate (the row's key) is handled, the second still waits: the notice stays.
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await merge(false, false); // a marked merge of `dup` changes nothing for `dup2`
+    expect(await servedTo183('adm')).toEqual(['admin_alumni_duplicate']);
+    await q(`UPDATE alumni_duplicate_flags SET "resolvedAt" = now() WHERE "duplicateUuid" = $1`, [
+      dup2,
+    ]);
+    expect(await servedTo183('adm')).toEqual([]);
+
+    // An admin who loses the flag loses the notice too.
+    await q(`UPDATE users SET admin = false WHERE id = 'adm2'`);
+    expect(await servedTo183('adm2')).toEqual([]);
+    await q(`DELETE FROM alumni_duplicate_flags`);
+    await q(`DELETE FROM alumni_merges`);
+  });
+
   it('a report is announced unless a notice about its subject is still owed, and a handled notice never comes back (`REPORT_ALREADY_ANNOUNCED_SQL`)', async () => {
     const [before, x, y, z, elsewhere] = [id(50), id(51), id(52), id(53), id(54)];
     const file = (report: string, minutesAgo: number, type = 'user') =>
@@ -654,10 +755,24 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
 
   it("keeps the bell's one statement walking the reader's index with no sort", async () => {
     await row('f1', 'event_open', E);
-    const [sql, params] = bell.bellPageQuery('f1', 30).getQueryAndParameters();
-    const plan = JSON.stringify(
-      (await q(`EXPLAIN (FORMAT JSON) ${sql}`, params))[0]['QUERY PLAN'][0].Plan
+    // The plan must not depend on whether autoanalyze happened to run: seed other readers' rows in
+    // bulk, then ANALYZE, as bell-page.integration.spec does (deterministic statistics).
+    await q(
+      `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", text, "createdAt")
+         SELECT 'plan-fill-' || (g % 40), 'event_open', $1, 'someone', 'A title',
+                now() - make_interval(mins => g)
+           FROM generate_series(1, 4000) g`,
+      [E]
     );
-    expect(plan).not.toContain('"Node Type":"Sort"');
+    try {
+      await q('ANALYZE post_notifications');
+      const [sql, params] = bell.bellPageQuery('f1', 30).getQueryAndParameters();
+      const plan = JSON.stringify(
+        (await q(`EXPLAIN (FORMAT JSON) ${sql}`, params))[0]['QUERY PLAN'][0].Plan
+      );
+      expect(plan).not.toContain('"Node Type":"Sort"');
+    } finally {
+      await q(`DELETE FROM post_notifications WHERE "recipientId" LIKE 'plan-fill-%'`);
+    }
   });
 });

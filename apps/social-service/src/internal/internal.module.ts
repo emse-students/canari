@@ -5,6 +5,7 @@ import { InternalFormsController } from './internal-forms.controller';
 import { InternalInvitesController } from './internal-invites.controller';
 import { InternalLegacyCotisationsController } from './internal-legacy-cotisations.controller';
 import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
+import { InternalAlumniDuplicatesController } from './internal-alumni-duplicates.controller';
 import { InternalChannelReadController } from './internal-channel-read.controller';
 import { InternalDistributionEntitlementController } from './internal-distribution-entitlement.controller';
 import { InternalPaymentsController } from './internal-payments.controller';
@@ -64,6 +65,7 @@ import { RetentionBootNotice } from './retention-boot-notice';
     InternalInvitesController,
     InternalLegacyCotisationsController,
     InternalProfileNotificationsController,
+    InternalAlumniDuplicatesController,
     InternalChannelReadController,
     InternalDistributionEntitlementController,
     InternalPresenceController,
