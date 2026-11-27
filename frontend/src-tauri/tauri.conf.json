@@ -169,6 +169,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "admin-alumni-duplicates"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

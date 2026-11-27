@@ -159,6 +159,8 @@
     <string name="notif_social_admin_profile_correction_body">Une personne demande une correction de son profil.</string>
     <string name="notif_social_admin_report_title">Nouveau signalement</string>
     <string name="notif_social_admin_report_body">Un contenu ou une personne a été signalé.</string>
+    <string name="notif_social_admin_alumni_duplicate_title">Doublon Alumni à rattacher</string>
+    <string name="notif_social_admin_alumni_duplicate_body">Un compte créé par Alumni ressemble à un compte existant.</string>
     <string name="notif_social_booking_cancelled_title">%1$s a annulé une réservation</string>
     <string name="notif_social_booking_cancelled_body">Elle n\'aura pas lieu</string>
     <string name="notif_social_booking_withdrawn_title">%1$s a quitté votre réservation</string>

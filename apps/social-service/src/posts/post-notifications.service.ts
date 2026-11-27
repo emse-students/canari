@@ -28,6 +28,7 @@ import {
   eventPendingContent,
   eventPendingCoorganiserContent,
   eventCoorganiserAcceptedContent,
+  adminAlumniDuplicateContent,
   adminProfileCorrectionContent,
   adminReportContent,
   associationPostContent,
@@ -603,6 +604,8 @@ export class PostNotificationsService {
         return adminProfileCorrectionContent();
       case 'admin_report':
         return adminReportContent();
+      case 'admin_alumni_duplicate':
+        return adminAlumniDuplicateContent();
       default:
         return null;
     }

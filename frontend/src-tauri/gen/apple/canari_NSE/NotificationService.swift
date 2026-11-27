@@ -396,7 +396,8 @@ class NotificationService: UNNotificationServiceExtension {
     // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
     // shape: fixed sentences, nothing variable (the content-free rule).
     case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
-      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report",
+      "social_admin_alumni_duplicate":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),

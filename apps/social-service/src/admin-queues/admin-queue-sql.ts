@@ -10,8 +10,8 @@
  * counts".
  *
  * The tables are read straight out of the shared database, as this service already reads `users`:
- * `profile_correction_requests` is core-service's (its migration 010), the two others are this
- * service's.
+ * `profile_correction_requests` (core migration 010) and `alumni_duplicate_flags` (core migration
+ * 031, with `alumni_merges`, 028-029) are core-service's, the two others are this service's.
  */
 
 /**
@@ -26,6 +26,20 @@ export function isGlobalAdminSql(user: string): string {
 /** Profile correction request row `r` still waits for an admin: `pending` (an `applying` claim is in hand). */
 export function profileCorrectionPendingSql(r: string): string {
   return `${r}.status = 'pending'`;
+}
+
+/**
+ * Alumni duplicate flag `f` (core's `alumni_duplicate_flags`) still waits for an admin: no later
+ * reading found it gone or no longer matching (`resolvedAt`), and no merge of it stands - an open one
+ * (requested or marked: the admin has answered, MiConnect carries it out at the next sign-in) or a
+ * completed one. A CANCELLED merge does not count, so a duplicate whose mark was withdrawn waits
+ * again, exactly as the page lists it again. ONE definition: the count, the bell gate and the
+ * announcement read it, and `AlumniDuplicateQueue.reconcile` converges the table on what the page
+ * lists, so the two cannot disagree for longer than one reading.
+ */
+export function alumniDuplicatePendingSql(f: string): string {
+  return `(${f}."resolvedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM alumni_merges aq_m
+      WHERE aq_m."duplicateUuid" = ${f}."duplicateUuid"::text AND aq_m."cancelledAt" IS NULL))`;
 }
 
 /** Report row `r` still waits for a moderator: neither reviewed nor dismissed. */

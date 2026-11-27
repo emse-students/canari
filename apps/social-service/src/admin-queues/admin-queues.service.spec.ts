@@ -1,7 +1,11 @@
 import { Logger } from '@nestjs/common';
 import { AdminQueuesService } from './admin-queues.service';
 import { AdminQueuesController } from './admin-queues.controller';
-import { LOCK_REPORT_SUBJECT_SQL, REPORT_ALREADY_ANNOUNCED_SQL } from './admin-queue-sql';
+import {
+  LOCK_REPORT_SUBJECT_SQL,
+  REPORT_ALREADY_ANNOUNCED_SQL,
+  alumniDuplicatePendingSql,
+} from './admin-queue-sql';
 import { socialDeepLink } from '../push/push-target';
 import { NotificationPushFailedError } from '../posts/post-notifications.service';
 
@@ -57,15 +61,18 @@ describe('AdminQueuesService', () => {
   }
 
   describe('pendingCounts', () => {
-    it('counts all three queues for a global admin, unscoped, without asking any door', async () => {
+    it('counts all four queues for a global admin, unscoped, without asking any door', async () => {
       const { service, query, associations } = make({
-        row: { 'profile-corrections': 2, moderation: 1, agenda: 4 },
+        row: { 'profile-corrections': 2, moderation: 1, agenda: 4, 'alumni-duplicates': 3 },
       });
       expect(await service.pendingCounts('adm', true)).toEqual({
         'profile-corrections': 2,
         moderation: 1,
         agenda: 4,
+        'alumni-duplicates': 3,
       });
+      // The count reads the ONE predicate the bell gate and the announcement read.
+      expect(query.mock.calls[0][0]).toContain(alumniDuplicatePendingSql('adf'));
       expect(associations.isContentModerator).not.toHaveBeenCalled();
       expect(query.mock.calls[0][1]).toEqual(['adm', true]);
     });
@@ -76,6 +83,7 @@ describe('AdminQueuesService', () => {
       const sql = query.mock.calls[0][0];
       expect(sql).toContain('content_reports');
       expect(sql).not.toContain('profile_correction_requests');
+      expect(sql).not.toContain('alumni_duplicate_flags');
       expect(sql).not.toContain('association_calendar_events');
       expect(query.mock.calls[0][1]).toEqual(['mod', false]);
     });
@@ -119,6 +127,27 @@ describe('AdminQueuesService', () => {
       expect(socialDeepLink({ target: 'admin-profile-corrections' })).toBe(
         'fr.emse.canari://admin-profile-corrections'
       );
+    });
+
+    it('tells EVERY global admin of a flagged Alumni duplicate - once, as the platform, with no name', async () => {
+      const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
+      const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
+      expect(await service.announceAlumniDuplicate(duplicate)).toBe(2);
+      expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
+      expect(notifications.createNotifications).toHaveBeenCalledWith({
+        recipientIds: ['a1', 'a2'],
+        type: 'admin_alumni_duplicate',
+        postId: duplicate,
+        actorId: 'system',
+        actorName: 'Canari',
+        text: '',
+        pushData: { target: 'admin-alumni-duplicates' },
+      });
+      expect(socialDeepLink({ target: 'admin-alumni-duplicates' })).toBe(
+        'fr.emse.canari://admin-alumni-duplicates'
+      );
+      // The badges of the admins recount.
+      expect(signal.changed).toHaveBeenCalledWith({ queue: 'alumni-duplicates' });
     });
 
     it('never tells the person who asked, even an admin', async () => {

@@ -12,10 +12,15 @@ import {
 import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import { holdsBdeAgendaRightOverSql } from '../spaces/bde';
 import { AdminQueueSignal, type AdminQueueChange } from './admin-queue-signal.service';
-import { ADMIN_MODERATION_TARGET, ADMIN_PROFILE_CORRECTIONS_TARGET } from '../push/push-target';
+import {
+  ADMIN_ALUMNI_DUPLICATES_TARGET,
+  ADMIN_MODERATION_TARGET,
+  ADMIN_PROFILE_CORRECTIONS_TARGET,
+} from '../push/push-target';
 import {
   LOCK_REPORT_SUBJECT_SQL,
   REPORT_ALREADY_ANNOUNCED_SQL,
+  alumniDuplicatePendingSql,
   calendarEventPendingSql,
   profileCorrectionPendingSql,
   reportPendingSql,
@@ -25,7 +30,12 @@ import {
  * The admin queues a pending count is kept for, named by the key of their entry in the client's
  * admin registry (`frontend/src/lib/admin/adminSections.ts`), so a count lands on its row by name.
  */
-export const ADMIN_QUEUE_KEYS = ['agenda', 'moderation', 'profile-corrections'] as const;
+export const ADMIN_QUEUE_KEYS = [
+  'agenda',
+  'moderation',
+  'profile-corrections',
+  'alumni-duplicates',
+] as const;
 
 /** One of {@link ADMIN_QUEUE_KEYS}. */
 export type AdminQueueKey = (typeof ADMIN_QUEUE_KEYS)[number];
@@ -37,12 +47,16 @@ export type AdminQueueKey = (typeof ADMIN_QUEUE_KEYS)[number];
  */
 export type AdminQueueCounts = Partial<Record<AdminQueueKey, number>>;
 
-/** The two queues whose new items are told to every global admin (owner, 2026-11-18). */
-type AnnouncedQueue = 'profile-corrections' | 'moderation';
+/** The queues whose new items are told to every global admin (owner, 2026-11-18; 2026-11-26). */
+type AnnouncedQueue = 'profile-corrections' | 'moderation' | 'alumni-duplicates';
 
 const ANNOUNCED: Readonly<
-  Record<AnnouncedQueue, { type: 'admin_profile_correction' | 'admin_report'; target: string }>
+  Record<
+    AnnouncedQueue,
+    { type: 'admin_profile_correction' | 'admin_report' | 'admin_alumni_duplicate'; target: string }
+  >
 > = {
+  'alumni-duplicates': { type: 'admin_alumni_duplicate', target: ADMIN_ALUMNI_DUPLICATES_TARGET },
   'profile-corrections': {
     type: 'admin_profile_correction',
     target: ADMIN_PROFILE_CORRECTIONS_TARGET,
@@ -58,7 +72,7 @@ const ANNOUNCED: Readonly<
  * a reload, on another device, and the moment another admin handles an item. The scope of a queue is
  * the scope its page and its actions already apply - `reportInBdeScopeSql` for a BDE or institution
  * moderator, `holdsBdeAgendaRightOverSql` for an event validator (each event's `canValidate`), the
- * platform administrator alone for the profile corrections - so a count never exceeds what the same
+ * platform administrator alone for the profile corrections and the Alumni duplicates - so a count never exceeds what the same
  * caller is shown and allowed to handle.
  *
  * THE NOTICE CLEARS BY ITSELF: its bell row is shown only while its reader is a global admin and the
@@ -88,7 +102,7 @@ export class AdminQueuesService {
 
   /**
    * The caller's pending counts, ONE statement over the queues their tiers open: a global admin all
-   * three; otherwise the reports if they moderate somewhere (`isContentModerator`, the queue's own
+   * four; otherwise the reports if they moderate somewhere (`isContentModerator`, the queue's own
    * door) and the agenda if they validate events somewhere (`isUserBdeAdmin`, the agenda queue's
    * door) - each counted within the reach their page applies.
    */
@@ -103,6 +117,8 @@ export class AdminQueuesService {
     if (isGlobalAdmin) {
       columns.push(`(SELECT count(*)::int FROM profile_correction_requests pcr
           WHERE ${profileCorrectionPendingSql('pcr')}) AS "profile-corrections"`);
+      columns.push(`(SELECT count(*)::int FROM alumni_duplicate_flags adf
+          WHERE ${alumniDuplicatePendingSql('adf')}) AS "alumni-duplicates"`);
     }
     if (moderates) {
       columns.push(`(SELECT count(*)::int FROM content_reports r WHERE ${reportPendingSql('r')}
@@ -145,6 +161,19 @@ export class AdminQueuesService {
   }
 
   /**
+   * Core-service flagged an Alumni duplicate that waits for an attachment (`AlumniDuplicateQueue`,
+   * once per duplicate): EVERY global admin is told - no one asked for it, so no one is excluded.
+   * Throws on a failed write: the internal caller logs it.
+   */
+  async announceAlumniDuplicate(duplicateUuid: string): Promise<number> {
+    try {
+      return await this.announce('alumni-duplicates', duplicateUuid, null);
+    } finally {
+      await this.signal.changed({ queue: 'alumni-duplicates' });
+    }
+  }
+
+  /**
    * A report was filed: every global admin but its reporter is told - UNLESS a notice about its
    * subject is still on their bells (`REPORT_ALREADY_ANNOUNCED_SQL`), so five reports on one post are
    * one notice, while a subject that waited before the notices existed, or whose announcement
@@ -180,7 +209,7 @@ export class AdminQueuesService {
 
   /**
    * The notice of a new item in `queue`, to every global admin (`users.admin`) but `excludeId` - the
-   * person who filed it, never told of their own request. The PLATFORM is the actor and the row
+   * person who filed it, never told of their own request (null: nobody asked, all are told). The PLATFORM is the actor and the row
    * carries no text: who asked and what they wrote are the queue's to show (the content-free push,
    * `adminProfileCorrectionContent`). Answers how many admins have the bell row; none is said at
    * WARN, since an item nobody is told about waits unseen. Rows written and only the push failed is
@@ -189,11 +218,11 @@ export class AdminQueuesService {
   private async announce(
     queue: AnnouncedQueue,
     itemId: string,
-    excludeId: string
+    excludeId: string | null
   ): Promise<number> {
     const { type, target } = ANNOUNCED[queue];
     const admins: { id: string }[] = await this.reports.manager.query(
-      `SELECT id FROM users WHERE admin = true AND id <> $1`,
+      `SELECT id FROM users WHERE admin = true AND id IS DISTINCT FROM $1`,
       [excludeId]
     );
     if (admins.length === 0) {

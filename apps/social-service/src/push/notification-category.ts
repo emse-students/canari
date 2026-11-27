@@ -147,6 +147,7 @@ export const NOTIFICATION_TYPE_CATEGORY: Readonly<Record<NotificationType, strin
   // An item waiting in a global admin's queue: operational, no switch silences it.
   admin_profile_correction: null,
   admin_report: null,
+  admin_alumni_duplicate: null,
   form_stale_open: null,
 };
 
@@ -220,6 +221,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, string | null>> = 
   member_repost: null,
   admin_profile_correction: null,
   admin_report: null,
+  admin_alumni_duplicate: null,
   form_stale_open: null,
 };
 

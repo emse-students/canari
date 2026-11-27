@@ -99,12 +99,13 @@ database, legacy cotisations - configure or inspect, nothing waits there):
 | `profile-corrections` | `profile_correction_requests.status = 'pending'` (an `applying` claim is in an admin's hands) | a global admin only | - |
 | `moderation` | `content_reports.status = 'pending'` (not reviewed, not dismissed) | a global admin (all) or a content moderator (`isContentModerator`) | `reportInBdeScopeSql` - what the queue page lists for that moderator |
 | `agenda` | `association_calendar_events.status = 'pending'` | a global admin (all) or an event validator (`isUserBdeAdmin`) | `holdsBdeAgendaRightOverSql` - each event's own `canValidate` |
+| `alumni-duplicates` | core's `alumni_duplicate_flags` row not `resolvedAt`, with NO `alumni_merges` row that is not cancelled (`alumniDuplicatePendingSql`: marked for a merge, or merged, takes it out; a cancelled mark brings it back) | a global admin only | - |
 
 The predicates are one fragment each (`apps/social-service/src/admin-queues/admin-queue-sql.ts`),
 read by the counts, the bell gates and the announcement alike.
 
 **The counts: `GET /api/moderation/admin-queues`** (`AdminQueuesController`) answers
-`{ counts: { agenda?, moderation?, 'profile-corrections'? } }` from the queues' own rows in ONE
+`{ counts: { agenda?, moderation?, 'profile-corrections'?, 'alumni-duplicates'? } }` from the queues' own rows in ONE
 statement, at every read - no counter is kept, so a count is right after a reload, on another device,
 and the moment another admin handles an item. Open to every signed-in caller; a queue the caller
 cannot act on is ABSENT (a member with no tier gets `{}`), never zero, so the route tells nobody the
@@ -124,6 +125,31 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   announced by its next report (review of 2026-11-18). The read and the write run under the subject's
   transaction-scoped advisory lock (`LOCK_REPORT_SUBJECT_SQL`), so two reports filed at once write
   one notice. Opens `/admin/moderation`.
+- `admin_alumni_duplicate` (owner, 2026-11-26: "quand il y a une fusion d'alumni, je devrais recevoir
+  une notif, comme toutes les autres fonctionnalités de la console admin"): when an Alumni sign-in
+  created an account that matches an existing one. EVERY global admin is told (nobody asked for it, so
+  nobody is excluded), ONCE per duplicate: core-service's `AlumniDuplicateQueue.flag` writes the
+  `alumni_duplicate_flags` row and posts `POST /internal/notifications/alumni-duplicate-flagged` only
+  when that INSERT is new - a row that exists is never announced again, however often the page is read
+  or a mark is cancelled (charter principle 3, "your attention is not for sale"). The push is
+  content-free as the other two (`social_admin_alumni_duplicate`, "Doublon Alumni à rattacher", no
+  name) and opens `/admin/alumni-duplicates`; floor `1.8.3` (`ALUMNI_DUPLICATE_NOTICE_MIN_CLIENT_VERSION`).
+  A duplicate is FOUND, since it lives at MiConnect, at the Canari sign-in that creates its account
+  (`AlumniMergeService.flagNewAccount`, production only, fire-and-forget) and whenever the admin page is read
+  (`AlumniDuplicateQueue.reconcile`, which also converges the table on what the page lists: a flag no
+  longer listed is resolved, one that matches again waits again with NO new notice). A duplicate
+  created at MiConnect that signs in nowhere in Canari and that no admin reads waits for the next
+  reading; a push at MiConnect's creation of it is a MiConnect-side event, not built. **It clears for
+  every admin when one marks it for a merge** (the open `alumni_merges` row is the state; no write
+  to the flag), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
+  (mark, cancel, resolution) with NO push. When MiConnect completes the merge nothing is announced: the
+  item has been gone since the mark. There is no "dismiss". The unpaired duplicates of the manual
+  merge ([profiles-and-access](../../profiles-and-access.md)) are not queue items: only a duplicate
+  that matches an account is. Proved in `alumni-duplicate-queue.service.spec.ts` (once, never again,
+  resolved, reopened), `alumni-merge-queue.spec.ts` (the sign-in, the cancel), `admin-queues.service.spec.ts`
+  (every admin told, the predicate in the count), `bell-target-rows.integration.spec.ts` and
+  `bde-moderation.integration.spec.ts` (the predicate against PostgreSQL: marked, cancelled, completed,
+  resolved), and `alumni-duplicate-queue.wiring.spec.ts` (the dependencies are required).
 - **The agenda is not announced here**: its validators are already told by `event_proposed` (and the
   global admins when no BDE governs the event), so a second notice would say the same thing twice.
 
@@ -181,7 +207,7 @@ delivers to none and says so at ERROR, so the gateway ships with or before the s
 names it - both are in the same release.
 
 **Content-free**: the push carries the key only (`social_admin_profile_correction`,
-`social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title
+`social_admin_report`, `social_admin_alumni_duplicate`), composed on the device from fixed sentences; the `full` mode's legacy title
 and body name nobody either, and the `wake` mode (`push_mode`) applies as to every push. No switch
 silences them (category `null`, never counted by the daily cap). Floor `1.7.1`
 (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`): no older build is served or pushed either type.

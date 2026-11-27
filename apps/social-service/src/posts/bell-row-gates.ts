@@ -5,6 +5,7 @@ import { staleOpenAskedSql } from '../forms/stale-open-forms';
 import type { NotificationType } from '../push/notification-client-floor';
 import {
   isGlobalAdminSql,
+  alumniDuplicatePendingSql,
   profileCorrectionPendingSql,
   reportNoticeOwedSql,
 } from '../admin-queues/admin-queue-sql';
@@ -228,6 +229,10 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
       WHERE bell_pcr.id = ${target} AND ${profileCorrectionPendingSql('bell_pcr')}))`,
   admin_report: ({ reader, target }) =>
     `(${isGlobalAdminSql(reader)} AND ${reportNoticeOwedSql(target)})`,
+  // An Alumni duplicate waits for an attachment: gone from every admin bell once one admin marks it.
+  admin_alumni_duplicate: ({ reader, target }) => `(${isGlobalAdminSql(reader)}
+    AND EXISTS (SELECT 1 FROM alumni_duplicate_flags bell_adf
+      WHERE bell_adf."duplicateUuid" = ${target} AND ${alumniDuplicatePendingSql('bell_adf')}))`,
   // The question put to a form left open (owner, 2026-11-21): shown to the recipients the sweep
   // chose (`staleOpenRecipients`: the MANAGE_FORMS holders of an association's form, the owner of a
   // personal one) while the question is STILL put - the form open, asked, not answered by a close,

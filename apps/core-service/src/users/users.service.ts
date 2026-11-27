@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -18,6 +19,7 @@ import {
   DirectoryUserRow,
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
+import { AlumniMergeService } from './alumni-merge.service';
 import { cursusEntryFilter } from './cursus-filter';
 import { UserBlocksService } from './user-blocks.service';
 import {
@@ -45,6 +47,14 @@ export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
+
+  /**
+   * Told when an account is CREATED, to put an Alumni duplicate in the admins' queue the moment it
+   * appears. A property dependency, so the specs that build this service by hand need no new
+   * argument; `alumni-duplicate-queue.wiring.spec` holds that Nest refuses to boot without it.
+   */
+  @Inject(AlumniMergeService) private readonly alumniMerge?: AlumniMergeService;
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -310,7 +320,11 @@ export class UsersService implements OnModuleInit {
       promo,
       formation,
     });
-    return await this.userRepository.save(newUser);
+    const created = await this.userRepository.save(newUser);
+    // An account an Alumni sign-in created may be a duplicate that waits for an admin (the page
+    // reading is the witness when this fails); never awaited, never throws.
+    if (created.miconnectUuid) void this.alumniMerge?.flagNewAccount(created.miconnectUuid);
+    return created;
   }
 
   /**

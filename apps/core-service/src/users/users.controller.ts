@@ -25,6 +25,7 @@ import { AvatarService, AVATAR_SUBJECT_ID } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
 import { AlumniMergeService } from './alumni-merge.service';
+import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -162,7 +163,8 @@ export class UsersController {
     private readonly corrections: ProfileCorrectionService,
     private readonly accountErasure: AccountErasureService,
     private readonly sessions: AuthSessionsService,
-    private readonly alumniMerge: AlumniMergeService
+    private readonly alumniMerge: AlumniMergeService,
+    private readonly alumniQueue: AlumniDuplicateQueue
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -648,8 +650,14 @@ export class UsersController {
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Get('admin/alumni-duplicates')
-  listAlumniDuplicates() {
-    return this.alumniMerge.listDuplicates();
+  async listAlumniDuplicates() {
+    const duplicates = await this.alumniMerge.listDuplicates();
+    // The admins' queue converges on what this page lists: a duplicate matching an account is flagged
+    // (and told, once), one no longer listed is resolved (`AlumniDuplicateQueue`). Never throws.
+    await this.alumniQueue.reconcile(
+      duplicates.filter((d) => d.targets.length > 0).map((d) => d.duplicate.uuid)
+    );
+    return duplicates;
   }
 
   /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */

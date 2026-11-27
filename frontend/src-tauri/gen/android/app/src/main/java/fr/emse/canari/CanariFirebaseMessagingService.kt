@@ -7805,6 +7805,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_admin_report_title),
                 res.getString(R.string.notif_social_admin_report_body)
             )
+            "social_admin_alumni_duplicate" -> Pair(
+                res.getString(R.string.notif_social_admin_alumni_duplicate_title),
+                res.getString(R.string.notif_social_admin_alumni_duplicate_body)
+            )
             // The bookings' notices (WP-N): who acted names the title - a person, or the
             // association of the space - and the body is the place, the organiser's word for a
             // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).

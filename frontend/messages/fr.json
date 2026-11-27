@@ -6649,6 +6649,7 @@
   "notif_live_reinstated_text": "Votre droit de diffuser a été rétabli ; une suspension en cours reste appliquée jusqu'à sa fin.",
   "notif_admin_profile_correction_text": "Une personne demande une correction de son profil.",
   "notif_admin_report_text": "Un contenu ou une personne a été signalé.",
+  "notif_admin_alumni_duplicate_text": "Doublon Alumni à rattacher : un compte créé par Alumni ressemble à un compte existant.",
   "moderation_type_live": "Live",
   "moderation_type_live_chat": "Message de live",
   "moderation_chat_line_verified": "Texte vérifié par le serveur",

@@ -1,8 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { DataSource } from 'typeorm';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
 import { chatDeliveryUrl, socialUrl } from '../internal/service-urls';
+import { isDevEstate } from '../platform/deploy-build';
+import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import { MiconnectEditorClient, type MiconnectUserListing } from './miconnect-editor.client';
 import {
   AlumniMergeAlreadyMergedError,
@@ -220,6 +222,41 @@ export class AlumniMergeService {
   ) {}
 
   /**
+   * The Alumni duplicates' admin queue, which learns of a duplicate's finding and of its mark. A
+   * PROPERTY dependency so a hand-built spec needs no new argument; Nest refuses to boot without it
+   * (`alumni-duplicate-queue.wiring.spec`), so it is absent only in such a spec.
+   */
+  @Inject(AlumniDuplicateQueue) private readonly queue?: AlumniDuplicateQueue;
+
+  /**
+   * A Canari account was just created for MiConnect account `miconnectUuid` (its first sign-in): when
+   * that account was created by an Alumni sign-in and matches an existing one, it is a duplicate
+   * that waits for an admin, and the admins are told NOW, not when someone next opens the page
+   * (`AlumniDuplicateQueue`). Production only, like every editor call: dev shares production
+   * MiConnect, so a dev sign-in must neither read it nor tell production's admins. NEVER THROWS: the
+   * sign-in does not wait on it, and a failure is logged at error - the page reading finds the
+   * duplicate anyway.
+   */
+  async flagNewAccount(miconnectUuid: string): Promise<void> {
+    if (isDevEstate()) return;
+    const tag = miconnectUuid.slice(0, 8);
+    try {
+      const account = await this.editor.userByUuid(miconnectUuid);
+      if (!account || !isAlumniCreated(account) || !isPersonAccount(account)) return;
+      const targets = await this.targetsOf(account);
+      if (targets.length === 0) {
+        this.logger.log(`[ALUMNI_MERGE] new Alumni account ${tag} matches no existing account`);
+        return;
+      }
+      await this.queue?.flag(account.uuid);
+    } catch (err) {
+      this.logger.error(
+        `[ALUMNI_MERGE] the new account ${tag} was NOT checked for a duplicate: ${String(err)}`
+      );
+    }
+  }
+
+  /**
    * Every Alumni-created account that matches an existing account by name and promo (D47), but not
    * one already in an open merge: those are listed by {@link listOpenMerges}.
    */
@@ -412,6 +449,8 @@ export class AlumniMergeService {
       [open.id]
     );
     this.logger.log(`[ALUMNI_MERGE] marked ${tag} held=${JSON.stringify(open.held)}`);
+    // The duplicate left the admins' queue (a merge of it stands): every admin's badge recounts.
+    await this.queue?.changed();
     return { held: open.held, status: 'marked' };
   }
 
@@ -444,6 +483,8 @@ export class AlumniMergeService {
       [open.id, actorId]
     );
     this.logger.log(`[ALUMNI_MERGE] cancelled ${tag}`);
+    // The duplicate waits again (a cancelled merge stands for nothing): every admin's badge recounts.
+    await this.queue?.changed();
   }
 
   /**
