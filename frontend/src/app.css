@@ -2285,11 +2285,18 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 
 /* THE BANNERS ON A FULL-SCREEN PLACE (Mi 9T, 2026-11-27: the Alumni banner drew over the clock on
    `/games/play`). The shell gave its status-bar padding back above, and the banner column sits in the
-   shell, so a banner was painted from y = 0. The column takes the inset itself, only while it holds a
-   banner (an empty one would be a dead band over a place that pads its own controls). During a call
-   the rule below zeroes the variable for the subtree, so the bar is not padded twice. */
-.fullscreen-place-open .app-banner-column:not(:empty) {
+   shell, so a banner was painted from y = 0. WHEN THE COLUMN HOLDS A VISIBLE BANNER (`data-app-banner`,
+   set by `Banner` and `CallBanner`; the sr-only `ConnectionAnnouncer` is always in the column and is
+   deliberately NOT marked, so `:empty` would never be true) it takes the inset, and the content row
+   below it zeroes the variable for its subtree - the page's own inset then resolves to 0, nothing is
+   applied twice (the call-bar rule below is the same pattern). With no banner nothing changes, the
+   camera place included (its preview must reach y = 0). Pinned by `fullBleedBanner.test.ts`. */
+.fullscreen-place-open .app-banner-column:has([data-app-banner]) {
   padding-top: var(--safe-area-inset-top, 0px);
+}
+
+.fullscreen-place-open .app-banner-column:has([data-app-banner]) + .app-content-row {
+  --safe-area-inset-top: 0px;
 }
 
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView
