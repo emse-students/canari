@@ -209,7 +209,7 @@ const daysWithin =
     const v = row[column];
     return !given(v) || (typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max);
   };
-const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+const FORMATIONS = ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'];
 const CAMPUSES = ['saint-etienne', 'gardanne'];
 
 /**
@@ -229,7 +229,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     holds: oneOf('campus', CAMPUSES, true),
   },
   CHK_association_audiences_formation: {
-    sql: "formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    sql: "formation IS NULL OR formation IN ('ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre')",
     holds: oneOf('formation', FORMATIONS, true),
   },
   CHK_associations_type: {
@@ -291,7 +291,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     holds: oneOf('campus', CAMPUSES),
   },
   CHK_spaces_formation: {
-    sql: "formation IN ('ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre')",
+    sql: "formation IN ('ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre')",
     holds: oneOf('formation', FORMATIONS),
   },
   // `status` defaults to 'pending' since migration 114.

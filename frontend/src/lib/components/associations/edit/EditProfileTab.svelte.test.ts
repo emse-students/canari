@@ -31,7 +31,7 @@ const PARENT = '00000000-0000-4000-8000-0000000000bb';
 const OTHER_BDE = '00000000-0000-4000-8000-0000000000cc';
 const CANDIDATES = [
   { id: PARENT, name: 'BDE', type: 'association', isBDE: true, archived: false },
-  { id: OTHER_BDE, name: 'BDE FSSS', type: 'association', isBDE: true, archived: false },
+  { id: OTHER_BDE, name: 'BDE FISA', type: 'association', isBDE: true, archived: false },
   { id: 'dd', name: 'BDS', type: 'association', isBDE: false, archived: false },
 ] as unknown as Association[];
 const list = {
@@ -105,9 +105,9 @@ describe('the list parent picker', () => {
     await tick();
     const options = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]'));
     const labels = options.map((o) => o.textContent!.trim());
-    expect(labels).toContain('BDE FSSS');
+    expect(labels).toContain('BDE FISA');
     expect(labels).not.toContain('BDS');
-    options.find((o) => o.textContent!.trim() === 'BDE FSSS')!.click();
+    options.find((o) => o.textContent!.trim() === 'BDE FISA')!.click();
     flushSync();
 
     const payload = await save(target);
