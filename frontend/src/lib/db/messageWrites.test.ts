@@ -34,7 +34,7 @@ describe('every IStorage member is classified', () => {
 });
 
 describe('observeMessageWrites', () => {
-  const msg = (conversationId: string) => ({ id: 'm', conversationId }) as StoredMessage;
+  const msg = (conversationId: string, id = 'm') => ({ id, conversationId }) as StoredMessage;
 
   function fakeStore() {
     return {
@@ -52,11 +52,43 @@ describe('observeMessageWrites', () => {
     const seen: TouchedConversations[] = [];
     const off = subscribeMessageWrites((t) => seen.push(t));
     const store = observeMessageWrites(fakeStore());
-    await store.saveMessages([msg('g-1'), msg('g-2'), msg('g-1')], 'k');
+    await store.saveMessages(
+      [msg('g-1', 'a'), msg('g-2', 'b'), msg('g-1', 'c'), msg('g-1', 'a')],
+      'k'
+    );
     await store.getMessages('g-1', 'k');
     await store.clear();
     off();
-    expect(seen).toEqual([['g-1', 'g-2'], 'all']);
+    expect(seen).toEqual([
+      [
+        { conversationId: 'g-1', ids: ['a', 'c'] },
+        { conversationId: 'g-2', ids: ['b'] },
+      ],
+      'all',
+    ]);
+  });
+
+  it('names the ids of every write that names them, and a whole conversation when it drops one', () => {
+    expect(MESSAGE_WRITES.updateMessage(['g-1', 'm', {}, 'k'])).toEqual([
+      { conversationId: 'g-1', ids: ['m'] },
+    ]);
+    expect(MESSAGE_WRITES.mergeMessages(['g-1', ['a', 'b'], () => null, 'k'])).toEqual([
+      { conversationId: 'g-1', ids: ['a', 'b'] },
+    ]);
+    expect(MESSAGE_WRITES.moveMessages(['g-1', 'g-2', ['a'], 'k'])).toEqual([
+      { conversationId: 'g-1', ids: ['a'] },
+      { conversationId: 'g-2', ids: ['a'] },
+    ]);
+    expect(MESSAGE_WRITES.deleteMessage(['g-1', 'm'])).toEqual([
+      { conversationId: 'g-1', ids: ['m'] },
+    ]);
+    expect(MESSAGE_WRITES.importEncryptedRow([{ id: 'r', conversationId: 'g-3' }])).toEqual([
+      { conversationId: 'g-3', ids: ['r'] },
+    ]);
+    expect(MESSAGE_WRITES.deleteConversation(['g-4'])).toEqual([
+      { conversationId: 'g-4', ids: 'all' },
+    ]);
+    expect(MESSAGE_WRITES.deleteOldMessages([])).toBe('all');
   });
 
   it('announces a FAILED write too: it may have written part of its rows', async () => {
@@ -65,7 +97,7 @@ describe('observeMessageWrites', () => {
     const store = observeMessageWrites(fakeStore());
     await expect(store.updateMessage('g-9', 'm', {}, 'k')).rejects.toThrow('disk full');
     off();
-    expect(seen).toEqual([['g-9']]);
+    expect(seen).toEqual([[{ conversationId: 'g-9', ids: ['m'] }]]);
   });
 
   it('keeps a failing listener from hiding the write from the next one', async () => {
@@ -78,7 +110,7 @@ describe('observeMessageWrites', () => {
     await observeMessageWrites(fakeStore()).saveMessages([msg('g-3')], 'k');
     offA();
     offB();
-    expect(seen).toEqual([['g-3']]);
+    expect(seen).toEqual([[{ conversationId: 'g-3', ids: ['m'] }]]);
     expect(error).toHaveBeenCalledOnce();
     error.mockRestore();
   });

@@ -25,13 +25,16 @@ state) and `frontend/src/lib/components/search/` (the page). The decisions of th
 - **On a desktop, the chat sidebar's filter is gone**; its header carries a magnifier that links
   the same page. `/` or Ctrl/Cmd+K focuses the field from anywhere on the home page.
 - **`/posts?q=words` opens it prefilled** - the URL the SEO `SearchAction` already advertises, so a
-  search engine's sitelinks box lands on a real search instead of a feed.
+  search engine's sitelinks box lands on a real search instead of a feed. The effect that hands the
+  words over tracks `initialQuery` ALONE (`untrack` around the run): it used to track the search's own
+  state, so every answer that landed re-ran it and asked every section again, the server ones
+  included, for as long as the page stayed open (`UniversalSearch.initialQuery.svelte.test.ts`).
 
 ## The sections, their sources, and their ranking
 
 | Section | Source | Answered by | Ranking inside the section |
 | --- | --- | --- | --- |
-| Personnes | **server** | `GET /api/users/search` (the directory's trigram search, [search-contract](../search-contract.md)) | the server's own: trigram similarity |
+| Personnes | **server** | `GET /api/users/directory?q=` (the directory's trigram search, [search-contract](../search-contract.md)) | the server's own: trigram similarity |
 | Discussions | **device** | the stored conversation rows + the live map (`heldConversations.ts`), and the local message index | names first (tiers below, then the most recent), then the messages holding every word, newest first |
 | Communautés | **device** | the communities and salons the sidebar already holds (`hasAccess === false` skipped) | tiers, then the sidebar's order |
 | Associations | **list** | the directory list the Associations page reads | tiers, then the directory's order |
@@ -40,10 +43,13 @@ state) and `frontend/src/lib/components/search/` (the page). The decisions of th
 | Formulaires | **list** | the forms the reader manages (`/forms`) | tiers, then the most recently updated |
 | Paramètres | **device** | a static index built from the settings page's own control labels (`settingsSearchIndex()`) | tiers, then the page's order |
 
-**The three sources are said on the page**, under each section heading ("Cherché sur cet appareil :
-rien n'est envoyé.", "Liste lue une fois, filtrée sur cet appareil : vos mots ne sont pas envoyés.",
-"Cherché par le serveur de Canari."), because principle 1 is a
-promise a reader should be able to check:
+**The three sources are said on the page**, beside each section heading, because principle 1 is a
+promise a reader should be able to check. A phone line is short, so the heading carries an icon and a
+short label (a phone "Sur l'appareil", a filter "Filtré ici", a cloud "Serveur Canari"), and the whole
+sentence ("Cherché sur cet appareil : rien n'est envoyé.", "Liste lue une fois, filtrée sur cet
+appareil : vos mots ne sont pas envoyés.", "Cherché par le serveur de Canari.") is the label's tooltip
+and what a screen reader says (review of 2026-11-27: the sentence wrapped into three lines on a
+phone):
 
 - **device**: matched over what the device holds; the query never leaves it.
 - **list**: the server sends the same list its own page reads, ONCE per opening of the search, and
@@ -64,6 +70,14 @@ would offer a wrong hit for most short queries. Every typed word must be a subst
 
 ## The overview, the chips, "Tout afficher"
 
+- **Every row has one shape**, whatever its section (`SearchHitRow`): a face or a logo or the
+  section's icon, the title, the words around the match with the typed words marked, a grey line, and
+  for a post its first picture at the end. **A post in the overview is such a row**
+  (`postSearchHit`): who published it (`postAuthorName`, its face, its association's logo, or no face
+  for "Anonyme"), the words around the match, when it was published, and its first picture as the
+  ThumbHash the post already carries - painted from the post itself, so the row fetches nothing. It
+  opens the post's page. The Posts chip draws the feed's own cards (review of 2026-11-27: the overview
+  drew bare text).
 - **The overview** shows the top 3 of every section (`OVERVIEW_LIMIT`), each with its count and a
   "Tout afficher (N)" button when there are more. A section with no match is not drawn; a section
   that failed says so in its own place (a provider throws, it never answers an empty list for a
@@ -100,34 +114,88 @@ and its history by the in-conversation search.
 
 **Built by reading the store through its own decrypting reads** (`IStorage.getMessages`), one
 conversation at a time, most recent first, yielding to the main thread between conversations
-(`yieldToMainThread`). The result lives in MEMORY ONLY. **It is never written to disk**: the store is
-sealed at rest with the device key, and a plaintext index beside it would undo that seal for every
-word of every conversation.
+(`yieldToMainThread`). Inside one conversation the read is one `SELECT` and one awaited AES-GCM
+decrypt per row, so even a single conversation of 50,000 messages never holds the main thread for
+one long frame. The result lives in MEMORY ONLY - see [why not on disk](#why-in-memory-and-not-on-disk-the-evidence).
 
-**Kept true without a clock.** Every message write of the store crosses one seam,
-`observeMessageWrites` (`db/messageWrites.ts`), a proxy that `getStorage` puts under the device-key
-gate on both backends. `MESSAGE_WRITES` names, per write method, the conversations it touches
-(`'all'` for a clear, a retention sweep or a re-seal); every other `IStorage` member is listed in
-`NOT_A_MESSAGE_WRITE`, and `messageWrites.test.ts` parses the interface and fails on a member in
-neither list, so a new write cannot bypass the index unseen. A write marks its conversations dirty
-and tells the search, which re-runs Discussions; the next refresh re-reads ONLY the dirty
-conversations. The dirty mark is cleared BEFORE a read, so a write landing during it is read by the
-next pass. A refresh is single-flight: a second caller joins the pass under way.
+**It answers while it fills** (review of 2026-11-27; it used to make Discussions wait for the
+first pass, names included). The Discussions provider NEVER awaits the index: the conversation names
+answer at once, the index answers what it holds now, and the answer carries `partial: true` while
+the index is `filling` (no pass yet, a pass under way, or a write not read yet). The page then draws
+"Lecture des messages de l'appareil..." under the rows instead of "Aucun résultat", and never says
+"nothing found" for a partial section. The index tells the search again after 1, 2, 4, 8...
+conversations read and once its passes end, so a store of N conversations costs O(log N) re-runs of
+the section, with no clock. An answer given while the index was filling is owed that last word even
+when the pass changed nothing (`answeredWhileFilling`), and an answer given once it is full is owed
+none - which is what keeps the re-run from looping.
 
-**Its lifetime.** ONE index per realm (`localIndexRegistry.ts`). Opened, and warmed, when the search
-opens; **discarded when the search closes, and at every sign-out** - `clearAuth` and
-`clearAuthLocally` both call `discardLocalMessageIndex('signed out')` (`auth.searchIndex.test.ts`),
-so the account signed in next can never search the messages of the one that left. A discarded index
-answers nothing and stops listening.
+**Kept true without a clock, at the cost of the rows written.** Every message write of the store
+crosses one seam, `observeMessageWrites` (`db/messageWrites.ts`), a proxy that `getStorage` puts
+under the device-key gate on both backends. `MESSAGE_WRITES` names, per write method, the
+conversations AND the message ids it touches (`{ conversationId, ids }`; `ids: 'all'` when a
+conversation's rows are all dropped; `'all'` for a clear, a retention sweep or a re-seal); every other
+`IStorage` member is listed in `NOT_A_MESSAGE_WRITE`, and `messageWrites.test.ts` parses the
+interface and fails on a member in neither list, so a new write cannot bypass the index unseen. A
+write starts the pass that reads it, and that pass re-reads ONLY the rows named
+(`IStorage.getMessagesByIds`): an id the store no longer answers was deleted or moved away and is
+forgotten, so **a message deleted or retracted after it was indexed is never shown**. Before this, a
+write re-read its whole conversation: one new message in a 50,000-message group cost the whole
+group's decrypt again, at every message, for as long as the search stayed open. A write landing
+during a pass is read by the next one; the passes loop until one meets no new write - work
+proportional to the writes. A conversation whose read FAILS is searched by none of its messages (not
+by rows a write may have deleted meanwhile), logged, and re-read by the next pass a write starts; it
+does not keep the index "filling", so a failing conversation cannot loop the passes.
+
+**Retention.** `deleteOldMessages` names no rows, so it answers `'all'` and the next pass reads the
+store again from scratch: correct, and paid once per sweep while a search is open. The device's
+window is 5 years on the apps and 90 days in a browser (`deviceWindowMs()`).
+
+**Its lifetime, and whose it is.** ONE index per realm (`localIndexRegistry.ts`), registered FOR AN
+ACCOUNT: `openLocalMessageIndex(owner, ...)` discards an index held for another account rather than
+hand it over, and the wiring answers no index once the signed-in account is not the one that opened
+the search. Opened, and warmed, when the search opens; **discarded when the search closes, and at
+every sign-out** - `clearAuth` and `clearAuthLocally` both call `discardLocalMessageIndex('signed out')`
+(`auth.searchIndex.test.ts`). So the account signed in next can never search the messages of the one
+that left, whether the switch went through a sign-out or not. A discarded index answers nothing and
+stops listening.
 
 **What it costs, measured.** 50,000 messages sealed with AES-GCM, read back on a desktop under bun
 (2026-11-26): **6.5 s** of decrypting (one AES-GCM per message, the same per-message cost the store
 pays on every read of a conversation), **17 ms** of folding, **13 ms of scanning per query**, and
 about **16 MB** of text held. The first pass is linear in the messages held and is paid once per
-opening of the search; after it, a query is a scan, and a write costs a re-read of its conversation
-alone. Nothing in the pass depends on a clock: it ends when its list of conversations ends, at any
-size, and a conversation of any length is one read. **A phone is slower, and that number is owed**
-by the reading below. While the first pass runs, the Discussions section shows its skeleton.
+opening of the search, in the background: the names and every other section answer during it, and
+the messages arrive as it fills. After it, a query is a scan, and a write costs its own rows. **A
+phone is slower, and that number is owed** by the reading of [the entry](../backlog.d/universal-search.md);
+if it is too slow on the Mi 9T, [the sealed snapshot](../backlog.d/universal-search-sealed-index-snapshot.md)
+is the measured next step.
+
+### Why in memory and not on disk: the evidence
+
+The question (review of 2026-11-27): if the whole database were encrypted at rest, a full-text index
+inside it (SQLite FTS5 on the apps) would be equally protected and would remove the rebuild.
+
+**The database is NOT encrypted as a whole; the app seals each row.** Read in the code:
+
+- `db/types.ts`, `EncryptedMessageRow`: *"The content field of StoredMessage is never stored in
+  plaintext - only this encrypted form exists on disk"*. Each row carries its own 12-byte IV and an
+  AES-256-GCM `cipher_text` under the device key; `id`, `conversation_id`, `timestamp` and the order
+  key are CLEAR columns (pagination and retention read them).
+- `db/sqlite.ts` opens a plain SQLite file through the Tauri SQL plugin (no SQLCipher, no `PRAGMA
+  key`) and encrypts in `saveMessages` (`encryptData(toMessagePayload(msg), deviceKeyB64)`) and
+  decrypts in every read. The conversations table is plaintext metadata. IndexedDB on the web is the
+  same shape (`db/indexeddb.ts`).
+- The device key itself is the `SealedStore` key (`messages`, `graine`, `outbox`), re-sealed by
+  `swapSealedPayloads` on a key change.
+
+So an FTS5 table (or any token table) written beside `messages` would store every word of every
+conversation in clear in a file that today holds only ciphertext - it would undo the seal, and charter
+principle 1 refuses it. A keyed-hash token index (HMAC of each word under a key derived from the
+device key) would hide the words but leak their frequencies and co-occurrences, and still needs a
+substring-capable scheme the search contract relies on; it is not equivalent either. **The in-memory
+index is the right design for this store.** If the rebuild is measured too slow on a phone, the step
+that keeps the seal is to persist the index SEALED - one AES-GCM blob per conversation under the
+device key - so a reopening costs one decrypt per conversation instead of one per message
+([backlog](../backlog.d/universal-search-sealed-index-snapshot.md)).
 
 **Its one limit, on the web: one tab.** The seam sees the writes of its own realm. A message written
 by ANOTHER tab of the same browser (two tabs open on the chat) is not noted until the search is
@@ -141,7 +209,15 @@ closed and reopened. A phone has one realm, so this is a web-only gap; closing i
   logs counts and durations, never a word, a name or a message).
 - The words typed are sent ONLY for People and Posts, both said "Cherché par le serveur de Canari." on the
   page, both of which were already server searches before this change.
-- The decrypted index is never persisted, and is gone at sign-out.
+- The decrypted index is never persisted, and is gone at sign-out and at any account change.
+- **A message row shows its conversation's face, never its sender's**: a sender's face is a request
+  for that member's avatar and name, which would tell the server which members wrote the messages that
+  matched. The conversation's face is one the chat list already loaded; a group shows the section's
+  icon.
+- Checked fetch by fetch (review of 2026-11-27): Discussions, Communautés and Paramètres make no
+  request; Associations, Événements and Formulaires make one each per opening, carrying no word
+  (`listAssociationDirectory()`, `listAggregatedCalendarFeed(window)`, `getForms()`); only Personnes
+  (`/api/users/directory?q=`) and Posts (`/api/posts/search`) carry the words.
 
 ## Accessibility and the keyboard (desktop)
 
@@ -192,6 +268,4 @@ own wrapper and the filters now live under the chips, not under the field.
   the bookings chantier's space list as a provider.
 - **Opening a message hit opens its conversation, not the message**: the jump to that message (the
   in-conversation search's `jumpToMessage`) is not wired from here.
-- **Discussions waits for the first pass** before showing even its name hits; answering the names
-  first and the messages when the pass ends would show the first rows sooner on a large store.
 - **The phone reading**: on [the entry](../backlog.d/universal-search.md) (a reading may only target the earliest tier, so it lives in the `1.8.4` entry itself).

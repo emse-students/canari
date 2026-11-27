@@ -12,6 +12,10 @@ import type { ChannelSidebarWorkspace } from '$lib/composables/useChannelWorkspa
 import type { DirectorySearchResult } from '$lib/profile/api';
 import type { Association, AssociationCalendarFeedEvent } from '$lib/associations/api';
 import type { Form } from '$lib/forms/api';
+import type { PostEntity } from '$lib/posts/api';
+import { postAuthorName } from '$lib/posts/postAuthorName';
+import { markdownToPlainText } from '$lib/seo/text';
+import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
 import type { SettingsSearchEntry } from '$lib/settings/settingsSections';
 import { directoryUserFacts } from '$lib/directory/userFacts';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -58,7 +62,9 @@ export interface DiscussionsDeps {
 
 /**
  * Discussions: conversation NAMES first (ranked, then most recent), then the MESSAGES holding every
- * typed word, newest first. Both read only what the device holds; the query never leaves it.
+ * typed word, newest first. Both read only what the device holds; the query never leaves it. The
+ * names never wait for the message index: what it holds is answered now, flagged `partial` while it
+ * fills.
  */
 export function discussionsProvider(deps: DiscussionsDeps): SearchProvider {
   return {
@@ -75,14 +81,24 @@ export function discussionsProvider(deps: DiscussionsDeps): SearchProvider {
         key: `conversation/${c.meta.id}`,
         title: c.conversationType === 'self' ? deps.selfLabels()[0] : c.displayName,
         subtitle: c.lastActivityAt ? timeAgo(new Date(c.lastActivityAt).toISOString()) : undefined,
-        avatarUserId: c.conversationType === 'group' ? undefined : c.contactId || undefined,
+        avatarUserId: conversationAvatar(c),
         open: () => deps.open(c.meta.id),
       }));
       const index = deps.index();
       let messageHits: SearchHit[] = [];
       let messageTotal = 0;
+      let partial = false;
       if (index) {
-        await index.refresh();
+        // NEVER AWAITED: the names answer now, and the messages arrive as the index fills - it tells
+        // the search again as it reads (`LocalMessageIndex.filling`).
+        if (index.wants(conversations.map((c) => c.meta.id))) {
+          index
+            .refresh()
+            .catch((e: unknown) =>
+              console.error(`[SEARCH] the local index did not fill: ${String(e).slice(0, 200)}`)
+            );
+        }
+        partial = index.filling;
         const room = Math.max(0, limit - nameHits.length);
         const found = index.search(q, room);
         messageTotal = found.total;
@@ -96,7 +112,7 @@ export function discussionsProvider(deps: DiscussionsDeps): SearchProvider {
               title,
               subtitle: timeAgo(new Date(hit.at).toISOString()),
               snippet: snippetAround(hit.text, q),
-              avatarUserId: getAvatarFor(conv, hit.senderId),
+              avatarUserId: conversationAvatar(conv),
               open: () => deps.open(hit.conversationId),
             },
           ];
@@ -105,14 +121,20 @@ export function discussionsProvider(deps: DiscussionsDeps): SearchProvider {
       return {
         hits: [...nameHits, ...messageHits].slice(0, limit),
         total: nameHits.length + messageTotal,
+        partial,
       };
     },
   };
 }
 
-/** A message row shows its author's face; a group's name row shows none of anybody's. */
-function getAvatarFor(conv: HeldConversation, senderId: string): string | undefined {
-  return conv.conversationType === 'group' ? senderId || undefined : conv.contactId || senderId;
+/**
+ * A message row shows its CONVERSATION's face, the one its name row and the chat list show - never
+ * the sender's. A sender's face is a request for that member's avatar (and name), so drawing it
+ * would tell the server which members wrote the messages that matched (charter principle 1); the
+ * conversation's face is one the chat list already loaded. A group shows the section's icon.
+ */
+function conversationAvatar(conv: HeldConversation): string | undefined {
+  return conv.conversationType === 'group' ? undefined : conv.contactId || undefined;
 }
 
 /** Communautés: the communities the reader belongs to and their salons, as the device holds them. */
@@ -255,6 +277,29 @@ export function formsProvider(deps: { forms: () => Promise<Form[]> }): SearchPro
         })),
       };
     },
+  };
+}
+
+/**
+ * ONE POST AS A ROW OF THE OVERVIEW, the same shape as every other section's (owner, 2026-11-26:
+ * *"une app homogène"*): who published it (the post header's own resolver, `postAuthorName`, with
+ * its face or logo - none for "Anonyme"), the words around the match, when it was published, and its
+ * first picture as the ThumbHash the post already carries (painted from the post itself, so the row
+ * fetches nothing). It opens the post's page; the Posts chip draws the feed's full cards instead.
+ */
+export function postSearchHit(post: PostEntity, query: string): SearchHit {
+  const plain = markdownToPlainText(post.markdown ?? '');
+  const first = post.media?.find((media) => media.type === 'image' || media.type === 'video');
+  return {
+    key: `post/${post.id}`,
+    title: postAuthorName(post),
+    snippet: plain ? snippetAround(plain, foldQuery(query)) : undefined,
+    subtitle: timeAgo(post.publishedAt || post.createdAt),
+    href: `/posts/${encodeURIComponent(post.id)}`,
+    avatarUserId: post.association || post.anonymous ? undefined : post.authorId || undefined,
+    imageUrl: post.association ? (post.association.logoUrl ?? null) : undefined,
+    imageId: post.association?.id,
+    thumbnailUrl: placeholderDataUrl(first?.placeholder) ?? undefined,
   };
 }
 

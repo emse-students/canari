@@ -12,15 +12,24 @@ export interface DiscardableIndex {
 }
 
 let current: DiscardableIndex | null = null;
+/** The account whose messages {@link current} holds. */
+let currentOwner: string | null = null;
 
-/** The open index, when one is open and not discarded. */
-export function openIndex(): DiscardableIndex | null {
+/**
+ * `owner`'s open index, when one is open and not discarded. One held for another account is
+ * discarded here, never handed over.
+ */
+export function openIndex(owner: string): DiscardableIndex | null {
+  if (current && currentOwner !== owner)
+    discardLocalMessageIndex('another account opened the search');
   return current && !current.isDiscarded ? current : null;
 }
 
-/** Records `index` as the realm's open one. */
-export function registerIndex(index: DiscardableIndex): void {
+/** Records `index`, holding `owner`'s messages, as the realm's open one. */
+export function registerIndex(index: DiscardableIndex, owner: string): void {
+  if (current && current !== index) current.discard();
   current = index;
+  currentOwner = owner;
 }
 
 /**
@@ -33,6 +42,7 @@ export function discardLocalMessageIndex(reason: string): boolean {
   const held = current.size;
   current.discard();
   current = null;
+  currentOwner = null;
   console.debug(`[SEARCH] local index discarded (${reason}): ${held} message(s) forgotten`);
   return true;
 }

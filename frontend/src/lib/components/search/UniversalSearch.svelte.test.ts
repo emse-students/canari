@@ -111,10 +111,12 @@ describe('UniversalSearch', () => {
     expect(people.querySelector('[data-search-show-all="people"]')?.textContent).toContain(
       m.search_show_all_count({ count: 8 })
     );
-    expect(root.querySelector('[data-search-source="server"]')?.textContent).toContain(
-      m.search_source_server()
-    );
-    expect(root.querySelector('[data-search-source="device"]')?.textContent).toContain(
+    // A short label on one line; the whole sentence for a tooltip and a screen reader.
+    const server = root.querySelector('[data-search-source="server"]')!;
+    expect(server.textContent).toContain(m.search_source_server_short());
+    expect(server.getAttribute('title')).toBe(m.search_source_server());
+    expect(server.querySelector('.sr-only')?.textContent).toBe(m.search_source_server());
+    expect(root.querySelector('[data-search-source="device"]')?.getAttribute('title')).toBe(
       m.search_source_device()
     );
     expect(root.querySelectorAll('[data-search-chip]')).toHaveLength(8);
@@ -132,12 +134,45 @@ describe('UniversalSearch', () => {
     expect(root.querySelectorAll('[data-search-hit]')).toHaveLength(8);
   });
 
-  it('draws the posts with the card the feed draws', async () => {
-    const root = render([], [{ id: 'p-1' } as PostEntity]);
+  it('draws a post as a row in the overview, and as the feed card in its chip', async () => {
+    const post = {
+      id: 'p-1',
+      markdown: 'Le gala',
+      authorId: 'u-1',
+      authorFirstName: 'Camille',
+      authorLastName: 'Galand',
+      media: [],
+      publishedAt: '2026-11-20T10:00:00.000Z',
+      createdAt: '2026-11-20T10:00:00.000Z',
+    } as unknown as PostEntity;
+    const root = render([], [post]);
     await type('gala');
+    const row = root.querySelector('[data-search-section="posts"] [data-search-hit]');
+    expect(row?.getAttribute('href')).toBe('/posts/p-1');
+    expect(row?.textContent).toContain('Camille Galand');
+    expect(root.querySelector('[data-search-section="posts"] [data-post-card]')).toBeNull();
+    (root.querySelector('[data-search-chip="posts"]') as HTMLElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
     expect(root.querySelector('[data-search-section="posts"] [data-post-card]')?.textContent).toBe(
       'p-1'
     );
+  });
+
+  it('says the device is still reading instead of "nothing found" while the index fills', async () => {
+    const root = render([
+      {
+        section: 'discussions',
+        source: 'device',
+        search: async () => ({ hits: [], total: 0, partial: true }),
+      },
+    ]);
+    await type('zzz');
+    expect(root.querySelector('[data-search-partial]')?.textContent).toContain(
+      m.search_discussions_reading()
+    );
+    expect(root.textContent).not.toContain(m.search_no_results({ query: 'zzz' }));
+    expect(root.textContent).not.toContain(m.search_section_empty());
   });
 
   it('says so when nothing anywhere matched', async () => {

@@ -32,15 +32,15 @@ beforeEach(() => {
 describe('a sign-out drops the local message index', () => {
   it('clearAuth discards it', async () => {
     const index = heldIndex();
-    registerIndex(index);
+    registerIndex(index, 'u-1');
     await clearAuth('chosen');
     expect(index.discarded).toBe(true);
-    expect(openIndex()).toBeNull();
+    expect(openIndex('u-1')).toBeNull();
   });
 
   it('clearAuthLocally discards it too', async () => {
     const index = heldIndex();
-    registerIndex(index);
+    registerIndex(index, 'u-1');
     await clearAuthLocally();
     expect(index.discarded).toBe(true);
   });

@@ -39,6 +39,8 @@ export interface SectionState<H = SearchHit> {
   total: number;
   /** How many rows the section asks for now. */
   limit: number;
+  /** The device is still reading for this section: more rows may arrive (`SearchSectionAnswer`). */
+  partial: boolean;
 }
 
 /** The Posts section's reader: the existing post search, filters included (1.8.2). */
@@ -48,7 +50,7 @@ export type PostsSearch = (
 ) => Promise<PostEntity[]>;
 
 function idle<H>(limit: number): SectionState<H> {
-  return { status: 'idle', hits: [], total: 0, limit };
+  return { status: 'idle', hits: [], total: 0, limit, partial: false };
 }
 
 /** Whether `query` asks anything at all of a section. */
@@ -112,11 +114,12 @@ export function createUniversalSearch(opts: {
         hits: answer.hits,
         total: answer.total ?? answer.hits.length,
         limit,
+        partial: answer.partial ?? false,
       };
     } catch (e) {
       if (disposed || epochs[section] !== epoch) return;
       console.error(`[SEARCH] the ${section} section failed: ${String(e).slice(0, 200)}`);
-      sections[section] = { status: 'failed', hits: [], total: 0, limit };
+      sections[section] = { status: 'failed', hits: [], total: 0, limit, partial: false };
     }
   }
 
@@ -254,7 +257,7 @@ export function createUniversalSearch(opts: {
       void runPosts();
     },
 
-    /** The Discussions section again: the store changed under an open search. */
+    /** The Discussions section again: the local index read more, or the store changed under it. */
     rerunDiscussions(): void {
       if (isSearchableQuery(query)) void runSection('discussions');
     },

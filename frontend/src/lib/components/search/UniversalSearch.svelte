@@ -12,15 +12,19 @@
    * leaves the field for the first result and the arrows walk the results (`rovingTarget`); "/" or
    * Ctrl/Cmd+K reaches the field from anywhere on the page (desktop).
    */
-  import { onDestroy, type Snippet, type Component } from 'svelte';
+  import { onDestroy, untrack, type Snippet, type Component } from 'svelte';
   import {
     Building2,
     CalendarDays,
     ClipboardList,
+    Cloud,
+    ListFilter,
+    LoaderCircle,
     MessageCircle,
     Newspaper,
     Search,
     Settings,
+    Smartphone,
     Users,
     UsersRound,
     X,
@@ -36,6 +40,7 @@
   import { rovingTarget } from '$lib/components/ui/rovingFocus';
   import { createUniversalSearch, type UniversalSearch } from '$lib/search/universalSearch.svelte';
   import { wireUniversalSearch, type UniversalSearchWiring } from '$lib/search/wiring';
+  import { postSearchHit } from '$lib/search/providers';
   import { SEARCH_SECTIONS, type SearchSectionId, type SearchSource } from '$lib/search/types';
   import type { PostEntity } from '$lib/posts/api';
   import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
@@ -88,10 +93,22 @@
     settings: m.search_section_settings,
   };
 
-  const SOURCE_LINES: Record<SearchSource, () => string> = {
-    device: m.search_source_device,
-    list: m.search_source_list,
-    server: m.search_source_server,
+  /**
+   * WHERE A SECTION ANSWERS FROM, SAID UNDER ITS HEADING (charter principle 1 is a promise a reader
+   * can check): an icon and a short label that fit one phone line, the whole sentence as the
+   * tooltip and as what a screen reader says.
+   */
+  const SOURCES: Record<
+    SearchSource,
+    { icon: Component<{ size?: number }>; short: () => string; full: () => string }
+  > = {
+    device: {
+      icon: Smartphone,
+      short: m.search_source_device_short,
+      full: m.search_source_device,
+    },
+    list: { icon: ListFilter, short: m.search_source_list_short, full: m.search_source_list },
+    server: { icon: Cloud, short: m.search_source_server_short, full: m.search_source_server },
   };
 
   let search = $state<UniversalSearch | null>(null);
@@ -133,12 +150,18 @@
   });
 
   // `?q=` (the site's declared search URL) arrives once, as a command the page already stripped.
+  // ONLY `initialQuery` IS TRACKED: the run reads the search's state (the sections, the words), and
+  // an effect tracking it re-ran at every answer that landed - asking every section again, the
+  // server ones included, for as long as the page stayed open.
   $effect(() => {
-    if (!initialQuery) return;
-    words = initialQuery;
-    const s = ensureSearch();
-    s.setQuery(initialQuery);
-    s.submit();
+    const asked = initialQuery;
+    if (!asked) return;
+    untrack(() => {
+      words = asked;
+      const s = ensureSearch();
+      s.setQuery(asked);
+      s.submit();
+    });
   });
 
   // The phone's magnifier opens the bar: the field takes the focus, which is the gesture's purpose.
@@ -215,7 +238,12 @@
     if (s.focus) return [s.focus];
     return SEARCH_SECTIONS.filter((id) => {
       const state = id === 'posts' ? s.posts : s.sections[id];
-      return state.status === 'loading' || state.status === 'failed' || state.hits.length > 0;
+      return (
+        state.status === 'loading' ||
+        state.status === 'failed' ||
+        state.hits.length > 0 ||
+        state.partial
+      );
     });
   });
 
@@ -226,7 +254,10 @@
     const asked = SEARCH_SECTIONS.map((id) => (id === 'posts' ? s.posts : s.sections[id])).filter(
       (state) => state.status !== 'idle'
     );
-    return asked.length > 0 && asked.every((st) => st.status === 'done' && st.hits.length === 0);
+    return (
+      asked.length > 0 &&
+      asked.every((st) => st.status === 'done' && st.hits.length === 0 && !st.partial)
+    );
   });
 
   function stateOf(id: SearchSectionId) {
@@ -306,7 +337,10 @@
     bind:this={resultsEl}
     aria-label={m.search_results_label()}
     aria-live="polite"
-    aria-busy={shownSections.some((id) => stateOf(id).status === 'loading')}
+    aria-busy={shownSections.some((id) => {
+      const st = stateOf(id);
+      return st.status === 'loading' || st.partial;
+    })}
     class="space-y-4"
     onkeydown={onResultsKeydown}
   >
@@ -318,6 +352,8 @@
     {#each shownSections as id (id)}
       {@const state = stateOf(id)}
       {@const Icon = ICONS[id]}
+      {@const source = SOURCES[search.sourceOf(id)]}
+      {@const SourceIcon = source.icon}
       <section
         aria-labelledby="search-section-{id}"
         class="bg-cn-surface rounded-2xl p-3"
@@ -328,10 +364,13 @@
             {TITLES[id]()}
           </h2>
           <p
-            class="text-text-muted min-w-0 text-right text-xs"
+            class="text-text-muted flex min-w-0 shrink-0 items-center gap-1 text-xs"
             data-search-source={search.sourceOf(id)}
+            title={source.full()}
           >
-            {SOURCE_LINES[search.sourceOf(id)]()}
+            <span class="inline-flex" aria-hidden="true"><SourceIcon size={12} /></span>
+            <span aria-hidden="true">{source.short()}</span>
+            <span class="sr-only">{source.full()}</span>
           </p>
         </header>
 
@@ -346,7 +385,7 @@
           </div>
         {/if}
 
-        {#if state.status === 'loading' && state.hits.length === 0}
+        {#if state.status === 'loading' && state.hits.length === 0 && !state.partial}
           <ul class="space-y-1" aria-hidden="true" data-search-skeleton>
             {#each [0, 1] as i (i)}
               <li class="flex items-center gap-3 px-2 py-2">
@@ -357,8 +396,15 @@
           </ul>
         {:else if state.status === 'failed'}
           <p class="text-red-err px-2 py-2 text-sm" role="alert">{m.search_section_failed()}</p>
-        {:else if state.hits.length === 0}
+        {:else if state.hits.length === 0 && !state.partial}
           <p class="text-text-muted px-2 py-2 text-sm">{m.search_section_empty()}</p>
+        {:else if id === 'posts' && search.focus === null}
+          <!-- The overview draws a post as a row like every other section; the chip, the feed's card. -->
+          <ul class="space-y-0.5">
+            {#each search.posts.hits as p (p.id)}
+              <SearchHitRow hit={postSearchHit(p, search.query)} icon={Icon} />
+            {/each}
+          </ul>
         {:else if id === 'posts'}
           <div class="space-y-5">
             {#each search.posts.hits as p (p.id)}
@@ -371,6 +417,14 @@
               <SearchHitRow {hit} icon={Icon} />
             {/each}
           </ul>
+        {/if}
+        {#if state.partial}
+          <p class="text-text-muted flex items-center gap-2 px-2 py-1 text-xs" data-search-partial>
+            <span class="inline-flex animate-spin motion-reduce:animate-none" aria-hidden="true"
+              ><LoaderCircle size={12} /></span
+            >
+            {m.search_discussions_reading()}
+          </p>
         {/if}
 
         {#if search.focus === null && (state.total > state.hits.length || (id === 'posts' && state.hits.length >= state.limit))}

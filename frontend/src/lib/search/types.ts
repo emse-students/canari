@@ -48,6 +48,10 @@ export interface SearchHit {
   avatarUserId?: string;
   /** An image the row draws instead (an association logo, a community cover). */
   imageUrl?: string | null;
+  /** Whose logo {@link SearchHit.imageUrl} is (its fallback colour); the row's key when absent. */
+  imageId?: string;
+  /** A small picture at the row's end (a post's first media, as its ThumbHash data URL). */
+  thumbnailUrl?: string;
 }
 
 /** What one provider answers for one query. */
@@ -55,6 +59,11 @@ export interface SearchSectionAnswer<H = SearchHit> {
   hits: H[];
   /** The total the server counted, when it counts; absent means `hits` is the whole answer. */
   total?: number;
+  /**
+   * The device is still reading what this section searches (the local message index filling): the
+   * answer is partial, and the section is asked again when it is not.
+   */
+  partial?: boolean;
 }
 
 /** What a provider is asked: the words, and how many rows the section wants this time. */

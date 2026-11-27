@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * ONE RESULT OF THE UNIVERSAL SEARCH, whatever its section: a face or a logo or the section's icon,
-   * the title, a grey line, and for a message the words around the match with the typed words marked.
+   * the title, a grey line, for a message or a post the words around the match with the typed words
+   * marked, and a post's first picture at the end.
    * A link when the result is a page, a button when it opens something in place (a conversation, an
    * event's sheet). `data-search-hit` is what the arrow keys walk (`UniversalSearch.svelte`).
    */
@@ -46,7 +47,7 @@
     {#if hit.avatarUserId}
       <Avatar userId={hit.avatarUserId} fill shape="circle" />
     {:else if hit.imageUrl !== undefined}
-      <AssociationAvatar id={hit.key} name={hit.title} logoUrl={hit.imageUrl} fill />
+      <AssociationAvatar id={hit.imageId ?? hit.key} name={hit.title} logoUrl={hit.imageUrl} fill />
     {:else}
       <span
         class="bg-cn-surface-alt text-text-muted flex h-full w-full items-center justify-center rounded-full"
@@ -69,6 +70,15 @@
       <span class="text-text-muted block truncate text-xs">{hit.subtitle}</span>
     {/if}
   </span>
+  {#if hit.thumbnailUrl}
+    <img
+      src={hit.thumbnailUrl}
+      alt=""
+      aria-hidden="true"
+      class="h-10 w-10 shrink-0 rounded-lg object-cover"
+      data-search-thumbnail
+    />
+  {/if}
 {/snippet}
 
 <li>

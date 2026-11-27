@@ -66,8 +66,9 @@ export interface UniversalSearchWiring {
 }
 
 /**
- * Wires every section for one opening of the search. `onStoreChanged` is called when a store write
- * named a conversation while the search is open (the Discussions section runs again);
+ * Wires every section for one opening of the search. `onStoreChanged` is called when the local
+ * message index holds something new - it read further, or read a store write (the Discussions
+ * section runs again);
  * `onOpenEvent` opens an event's sheet over the search.
  */
 export function wireUniversalSearch(opts: {
@@ -87,13 +88,21 @@ export function wireUniversalSearch(opts: {
 
   let index: LocalMessageIndex | null = null;
   const messageIndex = (): LocalMessageIndex | null => {
+    // THE SEARCH BELONGS TO THE ACCOUNT THAT OPENED IT: if another one is signed in now, it reads
+    // nothing (and `openLocalMessageIndex` never hands one account's index to another).
+    const signedIn = globalSession.userId ?? getSavedUserId() ?? '';
     const storage = globalSession.storage;
     const key = globalSession.deviceKeyB64;
-    if (!storage || !key) return null;
+    if (!uid || signedIn !== uid || !storage || !key) return null;
+    if (index?.isDiscarded) index = null;
     index ??= openLocalMessageIndex(
+      uid,
       {
         conversationIds: async () => (await conversations()).map((c) => c.meta.id),
         readMessages: (id) => storage.getMessages(id, key),
+        readMessagesByIds: async (id, ids) => [
+          ...(await storage.getMessagesByIds(id, ids, key)).rows.values(),
+        ],
       },
       appendLog,
       opts.onStoreChanged

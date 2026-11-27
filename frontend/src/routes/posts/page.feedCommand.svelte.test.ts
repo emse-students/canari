@@ -41,7 +41,7 @@ vi.mock('$app/navigation', async (orig) => ({
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: { userId: null, deviceKeyB64: null, isLoggedIn: false },
 }));
-vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1' }));
+vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1', getSavedUserId: () => 'u1' }));
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),

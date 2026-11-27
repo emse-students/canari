@@ -16,8 +16,10 @@ import {
   eventsWindow,
   formsProvider,
   peopleProvider,
+  postSearchHit,
   settingsProvider,
 } from './providers';
+import type { PostEntity } from '$lib/posts/api';
 
 /** One test per section: what it reads, what it ranks first, where a row leads. */
 afterEach(() => discardLocalMessageIndex('test teardown'));
@@ -91,6 +93,8 @@ describe('Discussions', () => {
       {
         conversationIds: async () => conversations.map((c) => c.meta.id),
         readMessages: async (id) => store.get(id) ?? [],
+        readMessagesByIds: async (id, ids) =>
+          (store.get(id) ?? []).filter((msg) => ids.includes(msg.id)),
       },
       () => {}
     );
@@ -109,6 +113,7 @@ describe('Discussions', () => {
     const store = new Map([['g-2', [message('g-2', 'm-1', 'on attend Renée demain', 5)]]]);
     const { p, open, index } = provider(conversations, store);
     expect(p.source).toBe('device');
+    await index.refresh();
     const answer = await p.search({ query: 'renee', limit: 10 });
     expect(answer.hits.map((h) => h.key)).toEqual(['conversation/g-1', 'message/g-2/m-1']);
     expect(answer.total).toBe(2);
@@ -132,9 +137,25 @@ describe('Discussions', () => {
       ['g-2', [message('g-2', 'a', 'le gala', 1), message('g-2', 'b', 'gala encore', 2)]],
     ]);
     const { p, index } = provider(conversations, store);
+    await index.refresh();
     const answer = await p.search({ query: 'gala', limit: 2 });
     expect(answer.hits.map((h) => h.key)).toEqual(['conversation/g-1', 'message/g-2/b']);
     expect(answer.total).toBe(3);
+    index.discard();
+  });
+
+  it('answers the NAMES at once, never waiting for the index, and the messages as it fills', async () => {
+    const conversations = [held('g-1', 'Gala'), held('g-2', 'Bureau', 'group')];
+    const store = new Map([['g-2', [message('g-2', 'a', 'le gala', 1)]]]);
+    const { p, index } = provider(conversations, store);
+    const first = await p.search({ query: 'gala', limit: 5 });
+    expect(first.hits.map((h) => h.key)).toEqual(['conversation/g-1']);
+    expect(first.partial).toBe(true);
+    // The search this answer was given to is told again once the index is full.
+    await index.refresh();
+    const second = await p.search({ query: 'gala', limit: 5 });
+    expect(second.hits.map((h) => h.key)).toEqual(['conversation/g-1', 'message/g-2/a']);
+    expect(second.partial).toBe(false);
     index.discard();
   });
 
@@ -255,5 +276,53 @@ describe('Paramètres', () => {
       href: '/settings/preferences',
     });
     expect(p.source).toBe('device');
+  });
+});
+
+describe('a post as a row of the overview', () => {
+  const base = {
+    id: 'p-1',
+    markdown: '**Les places** pour le gala sont en vente !',
+    mentions: [],
+    links: [],
+    media: [],
+    images: [],
+    polls: [],
+    createdAt: '2026-11-20T10:00:00.000Z',
+    publishedAt: '2026-11-20T10:00:00.000Z',
+    updatedAt: '2026-11-20T10:00:00.000Z',
+  } as unknown as PostEntity;
+
+  it('has the shape of every row: who published it, the words around the match, when, where', () => {
+    const hit = postSearchHit(
+      { ...base, authorId: 'u-1', authorFirstName: 'Camille', authorLastName: 'Galand' },
+      'gala'
+    );
+    expect(hit.title).toBe('Camille Galand');
+    expect(hit.avatarUserId).toBe('u-1');
+    expect(hit.snippet?.text).toBe('Les places pour le gala sont en vente !');
+    expect(hit.snippet?.ranges).toEqual([[19, 23]]);
+    expect(hit.subtitle).toBeTruthy();
+    expect(hit.href).toBe('/posts/p-1');
+    expect(hit.thumbnailUrl).toBeUndefined();
+  });
+
+  it('draws an association post under its logo, and an anonymous one under no face', () => {
+    const asso = postSearchHit(
+      {
+        ...base,
+        authorId: 'u-1',
+        association: { id: 'a-1', name: 'BDE', slug: 'bde', logoUrl: null },
+      },
+      'gala'
+    );
+    expect(asso.title).toBe('BDE');
+    expect(asso.avatarUserId).toBeUndefined();
+    expect(asso.imageUrl).toBeNull();
+    expect(asso.imageId).toBe('a-1');
+    const anonymous = postSearchHit({ ...base, authorId: 'u-1', anonymous: true }, 'gala');
+    expect(anonymous.title).toBe(m.post_anonymous_label());
+    expect(anonymous.avatarUserId).toBeUndefined();
+    expect(anonymous.imageUrl).toBeUndefined();
   });
 });

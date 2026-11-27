@@ -37,7 +37,7 @@ SCREENS = [
     ("header-profile", "Feed", ["Accéder au profil"], ["À propos de moi"], ["Associations"]),
     ("header-notifs", "Feed", ["Notifs"], ["Non lu", "Cette semaine"], ["Associations"]),
     ("header-compose", "Feed", ["Publier"], ["Nouvelle publication"], []),
-    ("header-search", "Feed", ["Rechercher"], ["Rechercher dans les posts", "Effacer"], []),
+    ("header-search", "Feed", ["Rechercher"], ["Rechercher dans Canari", "Fermer la recherche"], []),
     ("header-grid", "Tableau de bord", ["@grid"], [], []),
 ]
 
