@@ -3255,7 +3255,8 @@ into a conversation about to disappear.
 
 Under a `memberAdded` notice of a ready private group, `MessageBubble` draws one button per added user
 the caller offers (`offerHistoryTo` = `useConversations.canSendHistoryTo` = `canOfferHistoryTo`: still
-on the roster, not the viewer). It opens `HistoryGrantDialog` (24 h, 7 days, 30 days, everything, or
+on the roster, not the viewer, and the served `minClientVersion` at or above
+`HISTORY_GRANT_NOTICE_FIRST_VERSION` - every admitted build draws the notice, principle 1). It opens `HistoryGrantDialog` (24 h, 7 days, 30 days, everything, or
 a past date), whose send is `grantHistoryToNewcomer`; a `historyGranted` notice carries an "En savoir
 plus" disclosure. The mechanism, its checks and its settled design points:
 [history-reconciliation](../../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25).

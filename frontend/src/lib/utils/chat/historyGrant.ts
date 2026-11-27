@@ -27,12 +27,36 @@
  *    the same lifted windows. Any other answer keeps the full drop.
  *
  * An older client ignores both frames (an unknown system event is acked silently): its newcomer
- * receives nothing, which is the decided default, so no version floor is needed.
+ * receives nothing, which is the decided default - but an older MEMBER would draw no notice, and the
+ * notice every member reads is the condition the exception rests on (charter principle 1). So the
+ * button is offered only while the server's `minClientVersion` is at or above
+ * {@link HISTORY_GRANT_NOTICE_FIRST_VERSION}: every build still admitted then draws the notice
+ * (lead, 2026-11-27).
  */
 import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
 import type { ExclusionWindow } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { compareSemver } from '$lib/utils/appVersion';
+
+/**
+ * THE FIRST BUILD THAT DRAWS THE HISTORY-GRANT NOTICE (`historyGranted`). A grant is offered only
+ * while the server's `minClientVersion` is at or above it, so no member still admitted runs a build
+ * that would receive the hand-over silently (charter principle 1; lead, 2026-11-27).
+ */
+export const HISTORY_GRANT_NOTICE_FIRST_VERSION = '1.8.3';
+
+/**
+ * Whether the served client floor (`minClientVersion`, `null` before the version check answered)
+ * guarantees every admitted member draws the grant's notice. An unknown floor is not a floor.
+ */
+export function floorDrawsGrantNotice(minClientVersion: string | null | undefined): boolean {
+  return (
+    typeof minClientVersion === 'string' &&
+    minClientVersion !== '' &&
+    compareSemver(minClientVersion, HISTORY_GRANT_NOTICE_FIRST_VERSION) >= 0
+  );
+}
 
 /** The visible event a grant is sent and drawn as. */
 export const HISTORY_GRANT_EVENT = 'historyGranted' as const;
@@ -168,14 +192,18 @@ export function grantSinceForDate(isoDate: string, now: number): number | null {
  * of an existing member never shows it (it restores its own history). Beside that: a private group
  * conversation that is ready (never a community, a 1:1 or "Mes notes"), a target that is not this
  * account, and a target the roster still holds - a person removed since has nothing to receive.
+ * And the served client floor must draw the notice ({@link floorDrawsGrantNotice}).
  */
 export function canOfferHistoryTo(params: {
   conversation: Pick<Conversation, 'conversationType' | 'lifecycle'> | null | undefined;
   target: string;
   self: string;
   members: readonly string[];
+  /** The server's `minClientVersion`, `null` before the version check answered. */
+  minClientVersion: string | null | undefined;
 }): boolean {
-  const { conversation, target, self, members } = params;
+  const { conversation, target, self, members, minClientVersion } = params;
+  if (!floorDrawsGrantNotice(minClientVersion)) return false;
   if (conversation?.conversationType !== 'group' || conversation.lifecycle !== 'active') {
     return false;
   }

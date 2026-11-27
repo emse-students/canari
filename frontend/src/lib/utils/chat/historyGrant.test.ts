@@ -2,6 +2,7 @@
 import {
   canOfferHistoryTo,
   grantSinceFor,
+  HISTORY_GRANT_NOTICE_FIRST_VERSION,
   grantSinceForDate,
   historyGrantPayload,
   issuedGrantFor,
@@ -118,10 +119,22 @@ describe('the button - offered for a newcomer of a private group only', () => {
     target: 'newbie',
     self: 'alice',
     members: ['alice', 'newbie'],
+    minClientVersion: HISTORY_GRANT_NOTICE_FIRST_VERSION,
   };
 
   it('is offered for an added member of a ready private group', () => {
     expect(canOfferHistoryTo(base)).toBe(true);
+  });
+
+  // Principle 1: the exception rests on the notice every member reads, so it is offered only while
+  // no build admitted by the server's floor would receive the hand-over without drawing it.
+  it('is hidden while the served client floor is below the first build that draws the notice', () => {
+    expect(HISTORY_GRANT_NOTICE_FIRST_VERSION).toBe('1.8.3');
+    expect(canOfferHistoryTo({ ...base, minClientVersion: '1.7.0' })).toBe(false);
+    expect(canOfferHistoryTo({ ...base, minClientVersion: '1.8.3-alpha.1' })).toBe(false);
+    expect(canOfferHistoryTo({ ...base, minClientVersion: null })).toBe(false);
+    expect(canOfferHistoryTo({ ...base, minClientVersion: '1.8.3' })).toBe(true);
+    expect(canOfferHistoryTo({ ...base, minClientVersion: '1.9.0' })).toBe(true);
   });
 
   it('is never offered to oneself, nor for a person no longer a member', () => {

@@ -979,13 +979,24 @@ and three layers drop a newcomer's past on purpose - the answerer's filter on th
 - **"En savoir plus"** is a disclosure under the notice (`chat_history_grant_explainer`), not a link
   to a page: it says what was sent, by whom, and that the server saw nothing.
 - **The button** is drawn under a `memberAdded` notice only, for an added user who is still on the
-  roster and is not the viewer, in a ready private group (`canOfferHistoryTo`). A member's further
+  roster and is not the viewer, in a ready private group, and only while the served client floor
+  draws the notice (`canOfferHistoryTo`; "Mixed versions" below). A member's further
   device is added by itself and draws no `memberAdded`, so a new device of an existing member is
   never offered it - it restores its own history.
 
-**Mixed versions.** An older client ignores both frames (an unknown system event is acked
-silently): an older newcomer receives nothing, which is the decided default, and an older member
-sees no notice - so no floor is needed. **What a grant ask does not survive:** a reload of the
+**Mixed versions - the grant waits for a floor (lead, 2026-11-27, reversible).** An older client
+ignores both frames (an unknown system event is acked silently): an older newcomer receives nothing,
+which is the decided default. But an older MEMBER draws no notice either, and the notice every member
+reads is the very condition the exception rests on - **charter principle 1, *your messages are
+yours*** ([principes](../../principes.md)): a hand-over of the other members' messages that some of
+them cannot see is a silent one. So the button is offered only while the server's `minClientVersion`
+(the `/api/version` answer the client already reads, `getAppVersionCheck`) is at or above
+`HISTORY_GRANT_NOTICE_FIRST_VERSION` (`1.8.3`, the first build that draws `historyGranted`):
+`floorDrawsGrantNotice`, inside `canOfferHistoryTo`, so the press path is gated by the same predicate;
+an unknown floor offers nothing, and the decision is logged at debug once per value. The receiving
+and answering paths are not gated - a grant can only exist once the floor allows it. Until the floor
+is raised to `1.8.3` (once both stores serve it) the button does not show. **What a grant ask does
+not survive:** a reload of the
 newcomer's page between its ask and the answer (the ask and its secret live in memory; the answer
 is then refused `no-open-ask`) - the member presses again.
 

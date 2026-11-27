@@ -69,7 +69,12 @@ import {
   sendHistoryRangeRequest,
   grantHistoryToNewcomer,
 } from '$lib/utils/chat/groupActions';
-import { canOfferHistoryTo } from '$lib/utils/chat/historyGrant';
+import {
+  canOfferHistoryTo,
+  floorDrawsGrantNotice,
+  HISTORY_GRANT_NOTICE_FIRST_VERSION,
+} from '$lib/utils/chat/historyGrant';
+import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
 import {
   clearPendingGroupExit,
   classifyExitFailure,
@@ -2956,16 +2961,35 @@ export function useConversations() {
   /**
    * Whether the selected conversation's `memberAdded` notice offers "Envoyer l'historique des
    * messages" for `userId` - the newcomer predicate (`canOfferHistoryTo`), read against the roster
-   * this composable holds for the selected group.
+   * this composable holds for the selected group, and gated on the served client floor
+   * (`floorDrawsGrantNotice`: every admitted build must draw the grant's notice, principle 1).
    */
   function canSendHistoryTo(userId: string, selfId: string): boolean {
     const key = selectedContact;
+    const minClientVersion = getAppVersionCheck()?.minClientVersion ?? null;
+    noteHistoryGrantFloor(minClientVersion);
     return canOfferHistoryTo({
       conversation: key ? conversations.get(key) : null,
       target: userId,
       self: selfId,
       members: groupMembers,
+      minClientVersion,
     });
+  }
+
+  /**
+   * The floor the grant gate last read, so its decision is said once per change - the predicate
+   * runs at every render of every `memberAdded` notice.
+   */
+  let historyGrantFloorSeen: string | null | undefined = undefined;
+
+  /** Logs, at debug and once per value, whether the served floor lets a grant be offered. */
+  function noteHistoryGrantFloor(minClientVersion: string | null) {
+    if (minClientVersion === historyGrantFloorSeen) return;
+    historyGrantFloorSeen = minClientVersion;
+    console.debug(
+      `[HISTORY_GRANT] client floor ${minClientVersion ?? 'unknown'} - "Envoyer l'historique" ${floorDrawsGrantNotice(minClientVersion) ? 'offered' : `not offered (below ${HISTORY_GRANT_NOTICE_FIRST_VERSION}, the first build that draws the notice)`}`
+    );
   }
 
   /**

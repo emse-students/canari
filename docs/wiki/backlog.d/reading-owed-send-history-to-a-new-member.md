@@ -1,8 +1,10 @@
-## Reading owed - a member sends their history to a new group member (owner, 2026-11-25)
+## P2 - Reading owed - a member sends their history to a new group member (owner, 2026-11-25)
 
-target: 1.8.2
+target: 1.8.3
 
 **Built, covered by unit tests, never read across two devices** ([history-reconciliation](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25); owner decision of 2026-11-25, item 5, [decisions](../decisions/owner-decisions-of-2026-11-25.md); charter principle 1). The cross-client rig drives only a DEPLOYED build, so it reads this once a pre-release carrying it serves dev.
+
+**Precondition:** the button shows only while the served `minClientVersion` is at or above `1.8.3` (`HISTORY_GRANT_NOTICE_FIRST_VERSION`, principle 1 - [the floor](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)), so read it on dev once dev's floor is `1.8.3`; below it, step 2 reads "no button".
 
 **What to read** (dev, two browser contexts, W1 `owner` and W2 `peer`; then once on a phone as the newcomer):
 
