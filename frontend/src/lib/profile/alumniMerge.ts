@@ -26,7 +26,7 @@ export interface AlumniAccount {
  * `auto`: the target is the duplicate's unique match by name and promo (D47). `manual`: an admin
  * chose it with a written reason (D55), and MiConnect re-checks both names at the sign-in.
  */
-export type AlumniMergeMode = 'auto' | 'manual';
+type AlumniMergeMode = 'auto' | 'manual';
 
 /** The bounds of a manual merge's reason, the server's (`alumni-merge.errors.ts`). */
 export const ALUMNI_MERGE_REASON_MIN = 20;
@@ -49,7 +49,7 @@ export interface AlumniOpenMerge {
 }
 
 /** One sibling site's job of a completed merge (D52-D54). */
-export interface AlumniMergeSiteState {
+interface AlumniMergeSiteState {
   site: string;
   state: 'pending' | 'blocked' | 'done';
   outcome: 'absent' | 'transferred' | 'merged' | null;
