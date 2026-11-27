@@ -1,6 +1,8 @@
 ## Reading owed - P2 - "Synchronisation en attente" is no longer raised with the app open, on the Mi 9T
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 **Built (2026-11-26), verified by the JVM suite, `cargo test` and by COMPILING only**
 ([mobile](../frontend/mobile.md#the-pending-db-sweep-raises-its-notice-on-real-failures-only-2026-11-26)):

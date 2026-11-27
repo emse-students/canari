@@ -108,7 +108,21 @@ describe('an unreadable direct message does not repeat its sender (owner, 2026-1
     expect(nse).toContain(
       'senderName: shownName, groupName: groupName, declared: isGroup, locale: ctx.locale'
     );
-    expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(2);
+    // The decrypted banner's title is the push's name, or an unnamed group's members' label.
+    expect(nse.match(/groupName: groupName, declaredGroup: isGroup,/g)).toHaveLength(1);
+    expect(nse.match(/groupName: titleName, declaredGroup: isGroup,/g)).toHaveLength(1);
+    // Both iOS paths title an unnamed group through the ONE Rust rule, declared in both headers
+    // (`mobile/unnamed_group_label.rs`), only when the push declares a group and names none.
+    expect(nse).toContain('canari_native_unnamed_group_title(dir.path, ctx.userId, groupId');
+    expect(nse).toContain('groupName.isEmpty && isGroup == true');
+    expect(app).toContain(
+      'canari_native_unnamed_group_title(dir.UTF8String, ctx.userId.UTF8String'
+    );
+    expect(app).toContain('groupName.length == 0 && isGroup != nil && isGroup.boolValue');
+    expect(app).toContain('CanariShowMessageNotification(shownName, titleName, body,');
+    for (const header of ['canari_NSE/canari_mls_ffi.h', 'Sources/canari/canari_rust_bridge.h']) {
+      expect(read(header), header).toContain('char *canari_native_unnamed_group_title(');
+    }
     expect(nse).toContain('declared ?? (!groupName.isEmpty && groupName != senderName)');
     expect(nse).toContain('return localized("notif.message.new", locale: locale)');
     expect(app).toContain('CanariBuildFallbackText(shownName, groupName, isGroup)');
@@ -232,6 +246,33 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
     expect(record).toMatch(/is unreadable: \$\{e\.javaClass\.simpleName\}"\)\s*null\s*\}/);
     expect(application).toMatch(
       /if \(removed != null\) \{\s*migrations\.edit\(\)\.putBoolean\(SALON_SHORTCUTS_RETIRED, true\)\.apply\(\)/
+    );
+  });
+});
+
+describe('an unnamed group with no label says why, at the level it deserves', () => {
+  const APPLE = resolve(here, '../../../src-tauri/gen/apple');
+  const nse = readFileSync(join(APPLE, 'canari_NSE/NotificationService.swift'), 'utf8');
+  const app = readFileSync(join(APPLE, 'Sources/canari/canari_push.mm'), 'utf8');
+  const ORDINARY = '"alone", "name-unknown", "no-name-file", "other-account"';
+
+  it('Android: the ordinary reasons at info, any other reason at error', () => {
+    expect(kotlin).toContain(`${ORDINARY} ->\n                Log.i(TAG, "[GROUP_LABEL]`);
+    expect(kotlin).toMatch(
+      /else ->\s*Log\.e\(TAG, "\[GROUP_LABEL\] [^"]*ERROR no label \(\$reason\)/
+    );
+  });
+
+  it('iOS, the extension and the app process: the same split', () => {
+    expect(nse).toContain(`case ${ORDINARY}:`);
+    expect(nse).toMatch(
+      /default:\s*NseLog\.log\.error\("\[CanariNSE\] \[GROUP_LABEL\][^"]*ERROR no label/
+    );
+    expect(app).toContain(
+      '[@[ @"alone", @"name-unknown", @"no-name-file", @"other-account" ] containsObject:reason]'
+    );
+    expect(app).toMatch(
+      /\} else \{\s*NSLog\(@"\[CanariPush\] \[GROUP_LABEL\] group=%@ ERROR no label/
     );
   });
 });

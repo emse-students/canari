@@ -1,6 +1,8 @@
 ## Reading owed - a cloud item picked in the Android app is sent or refused at the pick (2026-11-26)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 **Built and tested; read on the Mi 9T on `1.8.2-alpha.8` except for a cloud item** ([chat](../frontend/modules/chat.md#a-picked-file-is-read-at-the-pick-p1-of-181-2026-11-26)). A member's log export, picked in the composer on 1.8.1, was queued with zero bytes: the WebView reads exactly the size the picked document's provider STATES, and the Downloads provider states 0 for some logs. The file chooser now hands the page a native copy read to its end (`PickedFiles.kt`), the save checks the size its provider records, and the composer still refuses a file it cannot read.
 

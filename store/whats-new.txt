@@ -1,2 +1,2 @@
-version: 1.8.2
-« @tous » prévient tous les membres d'un groupe, ou d'un salon quand un modérateur l'écrit. Un formulaire à places limitées vous garde une place 10 minutes, et ses répondants peuvent former un groupe. La recherche de posts filtre par personne et par association. Une mise à jour ne peut plus effacer l'historique de vos messages. Les fichiers choisis dans l'application partent avec tout leur contenu. Moins de fausses alertes de synchronisation, et des aperçus MiGallery plus nets.
+version: 1.8.3
+Un membre d'un groupe privé peut envoyer son historique à une personne qui vient d'être ajoutée. Le bloc-notes devient « Mes notes ». Un ancien élève qui se connecte par Alumni retrouve son compte existant. La formation FSSS s'appelle désormais FISA. Une photo envoyée en réponse n'a plus de cadre, et sa citation en montre une miniature. Un fichier choisi affiche sa progression. Les courbes reviennent sur la page d'usage, et l'affichage des posts est plus soigné.

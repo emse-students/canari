@@ -12,9 +12,10 @@
 #
 # SINCE 2026-11-18 THE TERMS HOLD WAS A PROVIDER'S, NOT A FILE'S, AND SINCE 2026-11-20 IT IS LIFTED:
 # 45-consent.yaml builds the flow on every instance and 50-providers.yaml declares which providers
-# name it - now all nine, production's included. That declaration is asserted below, without Docker;
-# test-blueprints.sh asserts it on a built instance. Holding a provider again is removing it from
-# BOUND here, in the blueprint and in test-consent-flow.py (docs/wiki/infrastructure/authentik.md).
+# name it - now all eight (nine until Archives MINO was retired, 2026-11-27), production's
+# included. That declaration is asserted below, without Docker; test-blueprints.sh asserts it on a
+# built instance. Holding a provider again is removing it from BOUND here, in the blueprint and in
+# test-consent-flow.py (docs/wiki/infrastructure/authentik.md).
 #
 # Run by `make test-ci-scripts` and by CI. No Docker, no network.
 set -uo pipefail
@@ -54,7 +55,7 @@ for file in "$blueprints"/held/*.yaml; do
 done
 # THE HOLD THE USER DECIDED, named rather than derived: the providers whose `authorization_flow` is
 # the terms flow, read from the blueprint, must be exactly BOUND.
-BOUND="miconnect-archives miconnect-canari miconnect-canari-dev miconnect-canari-local miconnect-cercle miconnect-migallery miconnect-mino-wiki miconnect-reseau miconnect-sky"
+BOUND="miconnect-canari miconnect-canari-dev miconnect-canari-local miconnect-cercle miconnect-migallery miconnect-mino-wiki miconnect-reseau miconnect-sky"
 bound="$(awk '
   /^[[:space:]]*-[[:space:]]*model:/ { name = "" }
   /^[[:space:]]*name: "miconnect-/ && name == "" { v = $2; gsub(/"/, "", v); name = v }

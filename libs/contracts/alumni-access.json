@@ -3,7 +3,7 @@
     "THE ALUMNI ACCESS RULE (D42-D44, owner 2026-11-23): ITS CONSTANTS AND ITS CASES, RUN BY BOTH IMPLEMENTATIONS.",
     "",
     "MiConnect decides with three expression policies (infrastructure/authentik/blueprints/45-consent.yaml:",
-    "the link step's reminder and block; 60-applications.yaml: the MiGallery / Le Cercle gate). Canari's",
+    "the link step's reminder and block; 60-applications.yaml: the MiGallery / Le Cercle / MinoWiki gate). Canari's",
     "sign-in handoff must answer the SAME question before it signs a person into those sites, and it cannot",
     "ask MiConnect: authentik 2026.8 honours `check_access?for_user` for a superuser only and silently",
     "answers for the caller otherwise - the reason the consent answer is also re-derived",
@@ -19,7 +19,7 @@
     "ignored, a boolean is no year), `promos` then being what they must read from it; `posts`;",
     "`alumni` the `attributes.alumni` read (null: never read); `accessGroup` membership of `acces-<app>`;",
     "`linked` an Alumni user-source connection exists. Expected: `link` the D44 page the person meets",
-    "(none / reminder / required), `gate` whether MiGallery and Le Cercle let them in."
+    "(none / reminder / required), `gate` whether MiGallery, Le Cercle and MinoWiki let them in."
   ],
   "constants": {
     "timeZone": "Europe/Paris",

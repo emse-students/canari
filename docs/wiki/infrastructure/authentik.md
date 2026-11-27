@@ -520,7 +520,7 @@ has taken it, and is deleted then - so the names older pages quote are kept here
 | policies | `Validate promo year`, `is-student`, `Merge attributes` | `miconnect-enrollment-validate-promo`, `-is-student`, `-merge-status` |
 | prompt stages | `Request School Status`, `Request Promo & Formation` | `miconnect-enrollment-ask-status`, `-ask-promo`, then (WP2, 2026-10-01) `-ask-affiliations`, `-ask-cursus` |
 | enrolment flows | `miconnect-enrollment-cas`, `miconnect-enrollment-alumni` | ONE flow, `miconnect-enrollment`, bound to both sources (WP2); the alumni flow and the prompt `-prompt-status` are deleted |
-| redirect stage | `Archives MINO logout redirect` | `miconnect-logout-redirect-archives` |
+| redirect stage | `Archives MINO logout redirect` | `miconnect-logout-redirect-archives`, then (2026-11-27, Archives MINO retired) `miconnect-logout-redirect-mino`, pointed at the wiki ([mino-access](mino-access.md#archives-mino-is-retired-2026-11-27)) |
 | flow (slug) | `mino-provider-invalidation-flow` | `miconnect-invalidation-mino` |
 | providers | `Archives MINO`, `Canari`, ..., `Provider for Sky` | `miconnect-<application slug>` |
 
@@ -681,7 +681,7 @@ listed at the end.
 | D43 the membership read | the same mapping, `miconnect-alumni-authentication` | the mapping carries `alumni_read = {cotisant, read_on}` (Paris date) under a key of its own, because the enrolment's cursus page REPLACES the prompt's `attributes`; the enrolment stores it as `attributes.alumni`; the Alumni source's OWN sign-in flow (`miconnect-alumni-authentication`: a user write, then the login) stores it at every later sign-in, its policy `miconnect-alumni-keep-only-the-read` reducing the prompt data to that one key IN PLACE, so a CAS account is never renamed. A `cotisant` other than `"1"`/`"0"` writes nothing and logs at warning: the last read keeps its date and expires with its year |
 | D47 routing page | `20-enrollment.yaml`, order 5-6 | `miconnect-enrollment-alumni-route`, bound on `miconnect-enrollment-from-alumni` (the plan's source is `alumni`): "I have a working School account" -> the redirect stage `miconnect-enrollment-alumni-to-cas` to the CAS-only sign-in `miconnect-auth-cas` (`40-authentication.yaml`), then the link flow `miconnect-alumni-link` with the authorization as `next`; the identity Alumnforce asserted is parked in the session and linked after the CAS with no second Alumnforce sign-in (owner, 2026-11-25, [sign-in paths](miconnect-sign-in-paths.md)); "I have none" -> the two usual pages. The CAS never sees it |
 | D44 link step | `45-consent.yaml`, `miconnect-authorization` order 30 and 40 | see below |
-| D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, `policy_engine_mode: any` - the shape WP5 describes (D15), for these two apps only; WP5 extends it, it does not replace it. Their providers offer no refresh grant, which would bypass it ([below](#the-refresh-grant-is-closed-on-gated-providers-181)) |
+| D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, and on `mino-wiki` since 2026-11-27 (owner: the SAME policy, its own group `acces-mino-wiki`, plus a third binding admitting the wiki's `mino-*` roles, [mino-access](mino-access.md#who-may-enter-the-same-cotisant-gate-as-migallery-and-le-cercle-owner-2026-11-27)), `policy_engine_mode: any` - the shape WP5 describes (D15), for these three apps only; WP5 extends it, it does not replace it. Their providers offer no refresh grant, which would bypass it ([below](#the-refresh-grant-is-closed-on-gated-providers-181)) |
 | claim `alumni_linked` | `10-mappings.yaml`, Canari's three providers | `miconnect-claim-alumni-linked`, scope `profile`: a boolean, true when the account holds a `UserSourceConnection` to `alumni`. Only Canari receives it (banner); the name is shared with core-service |
 | D49 link confirmation | `30-sources.yaml` | LIVE since the source is `POST_AUTO` (read 2026-11-23): see below |
 | D48 the merge, at sign-in | `30-sources.yaml`, `miconnect-alumni-authentication` order 1 | deny stage `miconnect-alumni-merge-refused` behind policy `miconnect-alumni-merge-or-refuse` (re-evaluated, `failure_result: true`): no mark on the pending user -> skipped; a mark Canari wrote (`attributes.alumni_merge_into`) that holds -> the Alumni connection moves onto the target and the duplicate is deleted in one transaction, the plan's pending user becomes the target, the person lands signed in as it; moved only if the target holds a CAS link, its name is the name Alumnforce asserts at THIS sign-in (folded as core-service's `normalizeName`), and the duplicate still carries the mark the sign-in began with (owner, 2026-11-24, D51), journalled as an Event `custom_alumni_merge` (as built, deleted with the duplicate by `gdpr_compliance`: [D57](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183), fixed in `1.8.3`); a mark that does not hold -> nothing changes, `[ALUMNI_MERGE]` at error, an Event `custom_alumni_merge_refused`, the deny page ("contacte un administrateur"); a mark whose target no longer exists -> cleared, an ordinary sign-in. What must hold is in the blueprint's comment; `test-enrollment-flow.py` step M drives the merge, a hyphenated name, eleven refusals, a changed mark (`mark_changed`), the orphan and an orphan whose mark changed (kept) |
@@ -762,8 +762,8 @@ line - would have opened it. Neither site refreshes: MiGallery, Le Cercle and Sk
 authorization code (`grant_type: 'authorization_code'`) and never send a refresh grant (read in their
 sources on 2026-11-25).
 
-**The rule: a provider whose application carries a policy binding offers no refresh.** `miconnect-migallery`
-and `miconnect-cercle` list `authorization_code` alone (`50-providers.yaml`), and carry no
+**The rule: a provider whose application carries a policy binding offers no refresh.** `miconnect-migallery`,
+`miconnect-cercle` and, since its gate (2026-11-27), `miconnect-mino-wiki` list `authorization_code` alone (`50-providers.yaml`), and carry no
 `offline_access` mapping. The grant type is refused first, at the parse, before the token is even looked
 up (`token/base.py:74-76`, `invalid_grant` with the cause `grant_type_not_configured`), so a refresh token
 that exists - planted, or minted under an older configuration - is refused too. A site that needs a
@@ -771,7 +771,7 @@ longer session signs in again through the authorization, where the gate decides.
 
 **Guarded by `test-refresh-gate.py`** (run by `test-blueprints.sh`, after the apply, on the instance
 itself): every application with a policy binding (expired ones included) has a provider with no
-`refresh_token` grant type and no `offline_access` mapping, MiGallery and Le Cercle among them (and the
+`refresh_token` grant type and no `offline_access` mapping, MiGallery, Le Cercle and MinoWiki among them (and the
 Reseau console, gated by its group since 2026-11-25); a refresh
 token planted on each is refused `400 invalid_grant` with nothing minted; and the control, the same token
 with the grant type put back for one request, refreshes - the hole the rule closes, since the planted
@@ -1003,14 +1003,15 @@ read from the host a client asks: the old name `auth.canari-emse.fr` still answe
 
 | Application (slug) | Provider | `client_id` | Who may enter | Refresh grant |
 |---|---|---|---|---|
-| Archives MINO (`archives`) | `miconnect-archives` | `SJ8aeGmN...` | anybody signed in | yes |
 | Canari (`canari`, `canari-dev`, `canari-local`) | `miconnect-canari`, `-canari-dev`, `-canari-local` | [below](#the-three-canari-providers-and-what-each-one-lets-a-client-come-back-to) | anybody signed in (dev and local: hidden tiles, not gated) | yes |
 | Cercle (`cercle`) | `miconnect-cercle` | `7s6QrKeD...` | the cotisant gate OR `acces-cercle` (D43) | no |
 | MiGallery (`migallery`) | `miconnect-migallery` | `GMU5F3Dn...` | the cotisant gate OR `acces-migallery` (D43) | no |
-| MinoWiki (`mino-wiki`) | `miconnect-mino-wiki` | `nep2XHic...` | anybody signed in | yes |
+| MinoWiki (`mino-wiki`) | `miconnect-mino-wiki` | `nep2XHic...` | the cotisant gate OR `acces-mino-wiki` OR a `mino-*` group (D43, since 2026-11-27) | no |
 | Réseau MDE (`reseau`) | `miconnect-reseau` | `muAU7MIl...` | the group `acces-reseau` ONLY | no |
 | Sky (`sky`) | `miconnect-sky` | `JJqZZbhI...` | anybody signed in | yes |
 
+Archives MINO (`archives`, `miconnect-archives`) is RETIRED (owner, 2026-11-27): `state: absent` entries
+delete its application and provider at the next stable ([mino-access](mino-access.md#archives-mino-is-retired-2026-11-27)).
 A `client_id` is not a secret (it travels in every authorization URL); the client SECRETS are in no
 file ([below](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
 
@@ -1488,7 +1489,8 @@ printed in full (the rollback):**
   flow all nine providers share. It now lives in `mino-provider-invalidation-flow`, set on
   `Archives MINO` and `MinoWiki` only; the default flow is stageless again, as its blueprint ships
   it. No application calls `end-session` today except, presumably, those two, so the reach of the
-  defect was the MINO pair's siblings.
+  defect was the MINO pair's siblings. (Since 2026-11-27 the stage is `miconnect-logout-redirect-mino`,
+  pointed at the wiki: the archives are retired, [mino-access](mino-access.md#archives-mino-is-retired-2026-11-27).)
 
 **Found and left, each with its reason:**
 
@@ -1602,7 +1604,7 @@ collection of name and first name, as one required tick, for new AND existing ac
 > **THE HOLD ON PRODUCTION WAS LIFTED ON 2026-11-20** (it was held 2026-10-17 to 2026-11-20, and per
 > provider since 2026-11-18). `blueprints/45-consent.yaml` builds the flow on every instance, and
 > `50-providers.yaml` names it as the authorization flow of **every provider** (eight then, nine with
-> `miconnect-reseau` since 2026-11-25: `miconnect-archives`, `-canari`, `-canari-dev`, `-canari-local`,
+> `miconnect-reseau` since 2026-11-25, eight again since `miconnect-archives` was retired on 2026-11-27: `-canari`, `-canari-dev`, `-canari-local`,
 > `-cercle`, `-migallery`, `-mino-wiki`, `-reseau`, `-sky`), so the next stable's `apply-blueprints.sh apply` makes production ask: **a
 > person sees the terms page ONCE, at their next MiConnect authorization, whichever service starts
 > it, and never again for that version.** The lift came after the web reading (2026-11-17), the
@@ -1668,11 +1670,14 @@ collection of name and first name, as one required tick, for new AND existing ac
   (prompt, then user write) are bound to the policy `miconnect-consent-needed`, which is true while
   the stored version differs from the current one - so each version is asked once, for all services.
 - **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
-  `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
-  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py` and
-  `CONSENT_VERSION` in core-service's `miconnect-reader.client.ts`.
+  `acceptedVersion` of `frontend/src/routes/legal/miconnect/+page.svelte`. A MATERIAL change of the
+  text => change all three, or the stage re-asks forever / never - plus `VERSION` in
+  `test-consent-flow.py` and `CONSENT_VERSION` in core-service's `miconnect-reader.client.ts`.
   `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the five
-  disagree.
+  disagree, or while the page's `updated` is earlier than the version. **A MINOR revision moves
+  `updated` alone and asks nobody** (owner, 2026-11-27, [decisions](../decisions/owner-decisions-of-2026-11-27.md));
+  the notice the stage shows is two sentences and the link, and changes with no version: it is read at
+  every display of the stage.
 - **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
   password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and
   link reach the challenge, a POST without the tick is refused and writes nothing, the tick writes

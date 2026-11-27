@@ -1,6 +1,8 @@
 ## Reading owed - the picked file's copy shows its progress, and a pick over the ceiling is said as too large (2026-11-26)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Built and unit-tested; the native half compiles and is read on the Mi 9T ([chat](../frontend/modules/chat.md#what-the-picked-files-copy-tells-the-page-2026-11-26)).
 

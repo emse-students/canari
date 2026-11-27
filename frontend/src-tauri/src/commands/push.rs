@@ -4568,8 +4568,8 @@ mod delete_user_push_files_tests {
         use crate::commands::conversation_nicknames::{
             merge_conversation_nicknames, NicknameChange, CONVERSATION_NICKNAMES_FILE,
         };
-        merge_display_names(&dir, "a", &names, &[]).unwrap();
-        merge_display_names(&group, "a", &names, &[]).unwrap();
+        merge_display_names(&dir, "a", &names, &std::collections::HashMap::new(), &[]).unwrap();
+        merge_display_names(&group, "a", &names, &std::collections::HashMap::new(), &[]).unwrap();
         let nick = [NicknameChange {
             scope: "g".into(),
             member_id: "1".repeat(64),

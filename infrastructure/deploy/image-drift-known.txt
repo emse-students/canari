@@ -7,4 +7,3 @@
 # the row holds only while nothing of it runs.
 miconnect-test postgresql postgres:16-alpine 2026-12-31 docs/wiki/backlog.d/miconnect-compose-file-is-not-deployed.md
 miconnect-test gate absent 2026-12-31 docs/wiki/backlog.d/p1-meta-in-app-browsers-are-left-not-used.md
-miconnect gate absent 2026-12-31 docs/wiki/backlog.d/p1-meta-in-app-browsers-are-left-not-used.md

@@ -507,6 +507,16 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       ],
       ['the policy alone', { appBindings: { migallery: [{ policy: GATE }] } }, 'migallery'],
       ['the gate on a site that is not gated', { appBindings: { sky: gate('sky') } }, 'sky'],
+      // MinoWiki's shape (60-applications.yaml, 2026-11-27): the gate plus the wiki's roles policy.
+      [
+        "MinoWiki's gate with its roles policy",
+        {
+          appBindings: {
+            'mino-wiki': [...gate('mino-wiki'), { policy: 'miconnect-mino-wiki-roles' }],
+          },
+        },
+        'mino-wiki',
+      ],
       [
         'another policy on a link stage',
         { consentFlow: linkFlow([{ target: 'pbm-remind', policy: 'a-new-policy' }]) },

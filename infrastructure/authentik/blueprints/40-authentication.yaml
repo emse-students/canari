@@ -1,4 +1,4 @@
-# Signing in (miconnect-auth: the CAS and the Alumni SSO), its failure page, the password flow the test campaign uses, Canari's sign-out flow and the MINO logout redirect.
+# Signing in (miconnect-auth: the CAS and the Alumni SSO), its failure page, the password flow the test campaign uses, Canari's sign-out flow and MinoWiki's.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -22,13 +22,17 @@ entries:
       pk: !Find [authentik_flows.flow, [slug, "mino-provider-invalidation-flow"]]
     attrs:
       slug: "miconnect-invalidation-mino"
+  # RENAME (2026-11-27), the same shape: Archives MINO is retired (owner), so MinoWiki's sign-out
+  # redirect no longer names it. Renamed IN PLACE, so its binding on miconnect-invalidation-mino is
+  # kept rather than a second stage bound beside it; its target is repointed below. Dead once
+  # production has taken it.
   - model: authentik_stages_redirect.redirectstage
     conditions:
-      - !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+      - !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-archives"]]
     identifiers:
-      pk: !Find [authentik_stages_redirect.redirectstage, [name, "Archives MINO logout redirect"]]
+      pk: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-archives"]]
     attrs:
-      name: "miconnect-logout-redirect-archives"
+      name: "miconnect-logout-redirect-mino"
   - model: authentik_flows.flow
     identifiers:
       slug: "miconnect-auth"
@@ -69,6 +73,8 @@ entries:
       name: "password-login"
       title: "Connexion par mot de passe"
       designation: "authentication"
+  # MinoWiki's sign-out: its one stage redirects to the wiki. Until Archives MINO was retired (owner,
+  # 2026-11-27) it redirected to the archives, so signing out of the WIKI ended on the archives.
   - model: authentik_flows.flow
     identifiers:
       slug: "miconnect-invalidation-mino"
@@ -115,10 +121,10 @@ entries:
       deny_message: "La connexion n'a pas abouti. Ce n'est pas ton compte : le service d'authentification de l'école (CAS) est revenu sans réponse valide. Retourne dans l'application et relance la connexion, elle aboutit généralement à la deuxième tentative."
   - model: authentik_stages_redirect.redirectstage
     identifiers:
-      name: "miconnect-logout-redirect-archives"
+      name: "miconnect-logout-redirect-mino"
     attrs:
       mode: "static"
-      target_static: "https://archives.canari-emse.fr/s/memoires-des-mines/"
+      target_static: "https://mino.emse.fr/"
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
@@ -234,7 +240,7 @@ entries:
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
-      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-archives"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-logout-redirect-mino"]]
       order: 10
     attrs:
       evaluate_on_plan: true

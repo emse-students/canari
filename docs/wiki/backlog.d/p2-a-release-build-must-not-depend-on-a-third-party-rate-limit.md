@@ -1,6 +1,8 @@
 ## P2 - read the next release's Android log: the Gradle cache restored from the new key, no Maven Central request (2026-11-25)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 **What is done.** The Android release build hit Maven Central `429 Too Many Requests` twice on
 2026-11-25 (the `1.8.1` stable and `1.8.2-alpha.1`) on `error_prone_annotations-2.26.0.jar`, with the

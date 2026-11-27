@@ -1,6 +1,8 @@
 ## The admin queue badges and notices, owed on both phones (a reading for 1.7.1; owner, 2026-11-18)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 

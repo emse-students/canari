@@ -96,13 +96,39 @@ if [ "$second" != "[miconnect-blueprints] 0 change(s)" ]; then
 fi
 echo "blueprints apply to a fresh instance and are idempotent"
 
+# ARCHIVES MINO IS RETIRED (owner, 2026-11-27), and an entry dropped from a file deletes nothing: the
+# `state: absent` entries must remove the application and its provider, and MinoWiki's sign-out
+# redirect, renamed in place, must point at the wiki and be the flow's ONE stage. Proven on the
+# UPGRADE leg, whose previous tree still built them (a fresh instance never had them, so there it only
+# shows nothing brings them back and the redirect is built under its new name).
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=ak-shell.sh
+. "$here/ak-shell.sh"
+echo "archives retired: the application and its provider are gone, MinoWiki's sign-out returns to the wiki"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'ARCHIVES-RETIRED-OK' >/dev/null; then
+from authentik.core.models import Application
+from authentik.flows.models import FlowStageBinding
+from authentik.providers.oauth2.models import OAuth2Provider
+from authentik.stages.redirect.models import RedirectStage
+
+assert not Application.objects.filter(slug="archives").exists(), "the archives application is still there"
+assert not OAuth2Provider.objects.filter(name="miconnect-archives").exists(), "the archives provider is still there"
+assert not RedirectStage.objects.filter(name="miconnect-logout-redirect-archives").exists(), "the redirect still carries the archives name"
+bound = [(b.order, b.stage.name) for b in FlowStageBinding.objects.filter(target__slug="miconnect-invalidation-mino")]
+assert bound == [(10, "miconnect-logout-redirect-mino")], f"MinoWiki's sign-out runs {bound}"
+stage = RedirectStage.objects.get(name="miconnect-logout-redirect-mino")
+assert (stage.mode, stage.target_static) == ("static", "https://mino.emse.fr/"), (stage.mode, stage.target_static)
+print("ARCHIVES-RETIRED-OK")
+PY
+  echo "::error::Archives MINO is not fully retired by the blueprints - read the assertion above"
+  exit 1
+fi
+echo "nothing of Archives MINO is left${PREVIOUS_REF:+ after the upgrade from $PREVIOUS_REF}"
+
 # THE ENROLMENT FLOW, DRIVEN. Applying its blueprint proves the objects exist; only the flow
 # executor shows what a person gets - the pages, the refusals, the profile written. The script
 # prints ENROLLMENT-OK or raises (infrastructure/authentik/test-enrollment-flow.py).
 echo "enrolment flow: driving it through the executor"
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=ak-shell.sh
-. "$here/ak-shell.sh"
 if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&2) | grep -x 'ENROLLMENT-OK' >/dev/null; then
   echo "::error::the enrolment flow did not behave - read the assertion above"
   exit 1
@@ -282,8 +308,8 @@ fi
 echo "no gated provider refreshes a token, and the probe is seen red with the grant put back"
 
 # THE TERMS OF USE, DRIVEN. 45-consent.yaml builds the flow on every instance; which providers ask
-# for it is declared in 50-providers.yaml: all nine since the hold on production was lifted
-# (2026-11-20). The driven test asserts that exact set, walks the page on a bound provider, and
+# for it is declared in 50-providers.yaml: all of them since the hold on production was lifted
+# (2026-11-20), eight since Archives MINO was retired (2026-11-27). The driven test asserts that exact set, walks the page on a bound provider, and
 # proves production's provider stops a person who never accepted on it (test-consent-flow.py).
 echo "terms of use: driving the stage, and asserting which providers ask for it"
 # It also runs every case of libs/contracts/alumni-access.json, the table core-service's handoff gate
@@ -363,7 +389,7 @@ for slug in ("canari-dev", "canari-local"):
     app = Application.objects.get(slug=slug)
     assert app.meta_hide is True, f"{slug} is listed on the dashboard"
     assert not PolicyBinding.objects.filter(target=app).exists(), f"{slug} is gated by a binding"
-for slug in ("canari", "archives", "sky"):
+for slug in ("canari", "mino-wiki", "sky"):
     assert Application.objects.get(slug=slug).meta_hide is False, f"{slug} must stay listed"
 
 # BEHAVIOUR, NOT THE FIELD: as an ordinary signed-in person, the library the dashboard lists omits the

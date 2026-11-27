@@ -1,6 +1,8 @@
 ## P2 - after a 30-55 s ring, does the caller still send ICE candidates? Read on the bench phones, fixed if not
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 

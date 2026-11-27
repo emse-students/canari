@@ -208,7 +208,7 @@ slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md
 
 **[plan](docs/wiki/plan.md) is the order** - every open entry under its version, P1 first then the oldest, generated
 (`bun tools/backlog-plan/plan.mjs`, run before reading it) from the `target:` line of each [backlog.d/](docs/wiki/backlog.d/README.md) file (owner, 2026-11-13). Nothing is
-listed here a second time. `1.8.2` is the next tier (`1.8.1` shipped 2026-11-25): every entry owed only a reading sits in it, as
-the [checklist](docs/wiki/plan.md#readings-owed), to be taken on its pre-releases; `1.8.2` and the blocks after it follow
+listed here a second time. `1.8.3` is the next tier (`1.8.2` shipped 2026-11-26): every entry owed only a reading sits in it, as
+the [checklist](docs/wiki/plan.md#readings-owed), to be taken on its pre-releases; `1.8.3` and the blocks after it follow
 the owner's order of 2026-11-19 (reliability first, [decisions](docs/wiki/decisions/owner-decisions-of-2026-11-19.md)),
 no new feature unless asked.

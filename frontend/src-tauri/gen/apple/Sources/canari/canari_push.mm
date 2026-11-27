@@ -227,6 +227,12 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy, nullable) NSString *callId;
 @property(nonatomic, assign) BOOL callEnded;
 @property(nonatomic, assign) BOOL hasVideo;
+// The people in the group's current tree after the push catch-up, as Rust read them after its commit
+// catch-up (`treeMembers`, re-serialised as a JSON array of user ids): what an UNNAMED group's
+// banner is titled by (CanariUnnamedGroupTitle). nil when the answer carried none, with Rust's
+// reason in `treeMembersError` when it could not read the tree.
+@property(nonatomic, copy, nullable) NSString *treeMembersJson;
+@property(nonatomic, copy, nullable) NSString *treeMembersError;
 @end
 
 @implementation CanariDecryptedMessage
@@ -283,6 +289,15 @@ static CanariDecryptedMessage *_Nullable CanariParseDecryptedJson(NSString *json
   msg.callId = [dict[@"callId"] isKindOfClass:[NSString class]] ? dict[@"callId"] : nil;
   msg.callEnded = [dict[@"callEnded"] boolValue];
   msg.hasVideo = [dict[@"hasVideo"] boolValue];
+  id members = dict[@"treeMembers"];
+  if ([members isKindOfClass:[NSArray class]]) {
+    NSData *membersData = [NSJSONSerialization dataWithJSONObject:members options:0 error:nil];
+    msg.treeMembersJson =
+        membersData == nil ? nil
+                           : [[NSString alloc] initWithData:membersData encoding:NSUTF8StringEncoding];
+  }
+  id membersError = dict[@"treeMembersError"];
+  msg.treeMembersError = [membersError isKindOfClass:[NSString class]] ? membersError : nil;
   CanariPopulateMediaFields(msg, dict);
   return msg;
 }
@@ -4723,6 +4738,71 @@ static void CanariCallKitSetup(void) {
   NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }
 
+// The title of a push for an UNNAMED group - its other members' first names, the app's label - or
+// nil, when the banner keeps "Conversation de groupe". Composed by Rust
+// (`canari_native_unnamed_group_title`, the one native copy of the app's rule, the extension's too)
+// from the current tree the decrypt of `decrypted` caught up to and the name copies in the app's data directory, the ones
+// CanariReadDisplayNames and CanariReadConversationNicknames read; nothing about it rode the push.
+// Every reason there is none is said here: Rust's own log reaches no logger on this path. Twin of
+// the extension's `unnamedGroupTitle` and Android's `CanariFirebaseMessagingService.unnamedGroupTitle`.
+static NSString *_Nullable CanariUnnamedGroupTitle(NSString *groupId,
+                                                   CanariDecryptedMessage *_Nullable decrypted) {
+  if (decrypted == nil) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ unreadable message - no tree to name, the generic title",
+          groupId);
+    return nil;
+  }
+  if (decrypted.treeMembersJson == nil) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ ERROR the decrypt answer named no tree members (%@) - the generic title",
+          groupId, decrypted.treeMembersError ?: @"absent"); // log-safe: Rust's MlsError text for an unreadable tree, no message content or name
+    return nil;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ WARN no push context - the generic title", groupId);
+    return nil;
+  }
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ ERROR no data directory - the generic title", groupId);
+    return nil;
+  }
+  char *raw = canari_native_unnamed_group_title(dir.UTF8String, ctx.userId.UTF8String,
+                                                groupId.UTF8String,
+                                                decrypted.treeMembersJson.UTF8String,
+                                                (ctx.locale ?: @"").UTF8String);
+  if (raw == NULL) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ ERROR the title call returned nothing - the generic title",
+          groupId);
+    return nil;
+  }
+  NSString *json = [NSString stringWithUTF8String:raw];
+  canari_free_string(raw);
+  NSData *jsonData = [json dataUsingEncoding:NSUTF8StringEncoding];
+  id parsed = jsonData == nil ? nil : [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+  NSDictionary *answer = [parsed isKindOfClass:[NSDictionary class]] ? parsed : @{};
+  id label = answer[@"label"];
+  if ([label isKindOfClass:[NSString class]] && [(NSString *)label length] > 0) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ titled by its members' first names", groupId);
+    return label;
+  }
+  NSString *reason = [answer[@"reason"] isKindOfClass:[NSString class]] ? answer[@"reason"]
+                                                                        : @"unreadable-answer";
+  long unknown = [answer[@"unknown"] respondsToSelector:@selector(longValue)]
+                     ? [answer[@"unknown"] longValue]
+                     : 0;
+  // A group of one, a member the phone has never named (added while the app was away), or a phone
+  // that never resolved a name: ordinary states. Anything else is a fault.
+  if ([@[ @"alone", @"name-unknown", @"no-name-file", @"other-account" ] containsObject:reason]) {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ no label (%@ unknown=%ld) - the generic title",
+          groupId, reason, unknown);
+  } else {
+    NSLog(@"[CanariPush] [GROUP_LABEL] group=%@ ERROR no label (%@) - the generic title", groupId,
+          reason);
+  }
+  return nil;
+}
+
 static void CanariHandleMlsMessage(NSDictionary *data) {
   NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
   NSString *groupName = [data[@"groupName"] isKindOfClass:[NSString class]] ? data[@"groupName"] : @"";
@@ -4789,10 +4869,18 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
       CanariWriteFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted);
     }
 
+    // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
+    // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up; nothing
+    // about it rode the push. The cache row above keeps the push's empty name.
+    NSString *titleName = groupName;
+    if (groupName.length == 0 && isGroup != nil && isGroup.boolValue) {
+      titleName = CanariUnnamedGroupTitle(groupId, decrypted) ?: groupName;
+    }
+
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides. The
       // payload's `isGroup` decides the shape: an unnamed group is still a group.
-      CanariShowMessageNotification(shownName, groupName, body, groupId, senderId, decrypted, NO,
+      CanariShowMessageNotification(shownName, titleName, body, groupId, senderId, decrypted, NO,
                                     shownName, NO, YES, nil, isGroup);
     });
 

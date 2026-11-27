@@ -12,7 +12,7 @@ they implement (D42-D51) are on [profiles-and-access](../profiles-and-access.md)
 
 ## The diagram
 
-Every application (Canari web and native, MiGallery, Le Cercle, Sky, the wiki, the archives) starts
+Every application (Canari web and native, MiGallery, Le Cercle, Sky, the wiki) starts
 the same way: an OIDC authorization at `/application/o/authorize/`. The Canari sign-in handoff to
 Sky, MiGallery and Le Cercle, when core-service refuses it (`alumni_link_required`,
 `alumni_cotisant_required`), opens the site through that same authorization. The diagram shows the

@@ -90,6 +90,9 @@ export const CONSENT_FLOW_ALLOWLIST: ReadonlyMap<
  * THE ALUMNI GATE (D42-D43, 60-applications.yaml), recognised on these applications only, and only
  * in its exact shape: engine mode `any`, the policy {@link ALUMNI_GATE_POLICY} and the group
  * `acces-<application>`, both not negated, and nothing else bound. Answered by alumni-access.ts.
+ * NOT MinoWiki (gated since 2026-11-27): it carries a THIRD binding, the wiki's own roles
+ * (`miconnect-mino-wiki-roles`), whose rule this side does not re-derive, and it is in no handoff
+ * registry - were it ever asked, it would be refused `policy_bound`, the safe direction.
  */
 export const ALUMNI_GATED_APPLICATIONS: ReadonlySet<string> = new Set(['migallery', 'cercle']);
 export const ALUMNI_GATE_POLICY = 'miconnect-access-window-post-or-cotisant';

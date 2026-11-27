@@ -1,6 +1,8 @@
 ## Reading owed - the Minesweeper pages, levels, bulb and tutorial read well on a phone (2026-11-25)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 _The bulb and the levels ship in 1.8.2 (owner, 2026-11-25); moved to 1.8.2 when 1.8.1 shipped. The same day the owner moved the levels from sizes to generations, made the game and its replay full-screen pages, and asked for a tutorial: their readings are items 9 to 12._
 
