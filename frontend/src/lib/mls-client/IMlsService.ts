@@ -63,7 +63,7 @@ export interface OneDeviceAddResult {
 }
 import type { ForkFinding } from './integrityFindings';
 import type { CommitInvitation } from './commitSubmission';
-import { KeystoreKeyUnavailableError } from './mlsStateLoadError';
+import { KeystoreKeyUnavailableError, KeystorePromptDismissedError } from './mlsStateLoadError';
 import type { OwedInvitationReplanner, UnrecordedInvitationTeller } from './owedInvitations';
 
 export type { FrameDelivery };
@@ -575,6 +575,15 @@ export class SavedStateOfAnotherAccountError extends Error {
  */
 export function isKeystoreKeyUnavailable(error: unknown): boolean {
   return error instanceof KeystoreKeyUnavailableError;
+}
+
+/**
+ * True when an MLS init failed because the user dismissed the biometric sheet: the key is in the
+ * keystore, it was not read. Read from the TYPE {@link KeystorePromptDismissedError} (the
+ * `KEYSTORE_PROMPT_DISMISSED` code field), like {@link isKeystoreKeyUnavailable}.
+ */
+export function isKeystorePromptDismissed(error: unknown): boolean {
+  return error instanceof KeystorePromptDismissedError;
 }
 
 /**

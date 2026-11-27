@@ -26,13 +26,15 @@ import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay, sameShownName } from './gr
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
 import { isRawId } from './rawId';
+import { parseHistoryGrant } from './historyGrant';
 
 /** The visible events whose notice every member's device draws, the actor's included. */
 export type VisibleNoticeEvent =
   | 'memberAdded'
   | 'memberRemoved'
   | 'groupRenamed'
-  | 'groupImageChanged';
+  | 'groupImageChanged'
+  | 'historyGranted';
 
 /** Writes a row into a conversation - `addMessageToChat`, as every caller already holds it. */
 export type NoticeWriter = (
@@ -78,6 +80,14 @@ export function visibleNoticeSpec(
     case 'memberAdded': {
       const users = addedUsersOf(data);
       return users.length ? { event, actor, targets: users } : null;
+    }
+    case 'historyGranted': {
+      // Drawn only when the grant is the SENDER's own (`parseHistoryGrant`): a member naming another
+      // member as the granter draws nothing, so no notice can put a grant in someone else's name.
+      const read = parseHistoryGrant(data, actor);
+      return 'grant' in read
+        ? { event, actor, targets: [read.grant.newcomer], since: read.grant.since }
+        : null;
     }
   }
 }

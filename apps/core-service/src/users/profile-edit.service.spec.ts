@@ -26,7 +26,7 @@ const EDIT = {
 
 describe('validateProfileEdit', () => {
   it('accepts every formation the enrolment offers, PDIS included', () => {
-    for (const formation of ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre']) {
+    for (const formation of ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre']) {
       const r = validateProfileEdit({ ...EDIT, cursus: [{ formation, promo: 2024 }] });
       expect(r.ok).toBe(true);
     }

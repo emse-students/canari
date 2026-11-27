@@ -72,6 +72,7 @@ import {
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
   isKeystoreKeyUnavailable,
+  isKeystorePromptDismissed,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   type IMlsService,
@@ -1965,6 +1966,11 @@ export async function loginImpl(
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.
+      // A dismissed sheet is NOT an empty keystore: the key is there, the reader of the log must not
+      // go looking for a wiped one. Same keypad.
+      if (isBiometric && isKeystorePromptDismissed(reason)) {
+        throw new LoginFailure('biometric_dismissed', m.auth_keystore_empty_enter_pin());
+      }
       if (isBiometric && isKeystoreKeyUnavailable(reason)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }

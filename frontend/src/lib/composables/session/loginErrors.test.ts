@@ -33,6 +33,7 @@ const EVERY_CODE: LoginErrorCode[] = [
   'local_state_unopenable',
   'local_state_sealed_under_old_pin',
   'keystore_empty',
+  'biometric_dismissed',
   'device_revoked',
   'server_unreachable',
   'state_written_by_another_tab',
@@ -81,6 +82,10 @@ describe('isExpectedLoginOutcome', () => {
     expect(isExpectedLoginOutcome('keystore_empty')).toBe(true);
   });
 
+  it('and a dismissed biometric sheet, which is a user choosing the keypad', () => {
+    expect(isExpectedLoginOutcome('biometric_dismissed')).toBe(true);
+  });
+
   it('and a server nobody could reach - a train tunnel is not a defect', () => {
     expect(isExpectedLoginOutcome('server_unreachable')).toBe(true);
   });
@@ -107,6 +112,7 @@ describe('isExpectedLoginOutcome', () => {
       'local_state_unopenable',
       'local_state_sealed_under_old_pin',
       'keystore_empty',
+      'biometric_dismissed',
       'server_unreachable',
       'state_written_by_another_tab',
     ]);

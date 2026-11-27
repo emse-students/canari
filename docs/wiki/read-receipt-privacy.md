@@ -30,7 +30,8 @@ a badge is not reading and moves only the private mark.
 
 1. **the receipt effect in `MainChatPage.svelte`** - `selectedContact` set, `isWindowFocused`,
    `isTabVisible`, `isAppInForeground()`, conversation `active`, and `windowAttention.attentive`
-   (2026-11-11); it writes the owed mark
+   (2026-11-11) - on a phone the shell's foreground ALONE replaces the focus and visibility terms, since the
+   iPhone's WebView answers `hasFocus()` false until a touch (`windowReadVerdict`, 2026-11-26); it writes the owed mark
    (`recordSalonReadMark`) and the flushes in `useChannelWorkspaces` / `useConversations` only
    DELIVER what that effect recorded (`salonReadMarkQueue.ts`);
 2. **the Android shade's "Marquer comme lu"** - `CanariNotificationActionReceiver.handleMarkRead` ->

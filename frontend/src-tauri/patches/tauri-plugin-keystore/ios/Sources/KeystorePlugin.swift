@@ -202,10 +202,16 @@ class KeystorePlugin: Plugin {
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
 
+    // A dismissed sheet is a typed answer, never "not found": the key is in the Keychain, the user
+    // chose not to open it. The code is read by `keystore_bridge::read_device_key`, never a message.
+    if status == errSecUserCanceled {
+      invoke.reject("Authentication dismissed (OSStatus \(status))", code: "PROMPT_DISMISSED")
+      return
+    }
     guard status == errSecSuccess,
       let data = item as? Data
     else {
-      // Key not found or user cancelled — return null, don't error.
+      // Key not found (or another refusal) - return null, don't error.
       invoke.resolve(["keyBytes": NSNull()])
       return
     }

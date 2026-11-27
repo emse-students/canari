@@ -18,6 +18,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { applyFormationFisa } from './formation-fisa.it-fixture';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
@@ -48,7 +49,7 @@ const A = {
   clubBoth: '00000000-0000-4000-8000-0000000000c3', // two rules: one per BDE
   clubNone: '00000000-0000-4000-8000-0000000000c4', // no rule: reaches no space
   clubAll: '00000000-0000-4000-8000-0000000000c5', // rule (NULL, NULL): everyone
-  clubFsssSe: '00000000-0000-4000-8000-0000000000c6', // (FSSS, saint-etienne): a space with no BDE
+  clubFisaSe: '00000000-0000-4000-8000-0000000000c6', // (FISA, saint-etienne): a space with no BDE
   // An INSTITUTION reaching both BDEs' spaces: no BDE manages it (owner, 2026-11-02), but its
   // events are on the agenda of the BDEs of the spaces they target (owner, 2026-11-03).
   school: '00000000-0000-4000-8000-0000000000c7',
@@ -76,7 +77,7 @@ const RULES: Record<AssoKey, [string | null, string | null][]> = {
   ],
   clubNone: [],
   clubAll: [[null, null]],
-  clubFsssSe: [['FSSS', 'saint-etienne']],
+  clubFisaSe: [['FISA', 'saint-etienne']],
   school: [
     ['ICM', 'saint-etienne'],
     ['ISMIN', 'gardanne'],
@@ -87,7 +88,7 @@ const RULES: Record<AssoKey, [string | null, string | null][]> = {
 
 /**
  * THE GOVERNING PARENTS (WP-D2). Chosen so that the audience never decides: clubBoth reaches both
- * BDEs and depends on bdeSe alone; clubFsssSe reaches only a saint-etienne space and depends on the
+ * BDEs and depends on bdeSe alone; clubFisaSe reaches only a saint-etienne space and depends on the
  * gardanne BDE; clubAll reaches everyone and depends on nobody; clubOrphan depends on a mere club.
  * The BDEs and the institutions depend on nobody (D2).
  */
@@ -95,7 +96,7 @@ const PARENT: Partial<Record<AssoKey, AssoKey>> = {
   clubSe: 'bdeSe',
   clubGa: 'bdeGa',
   clubBoth: 'bdeSe',
-  clubFsssSe: 'bdeGa',
+  clubFisaSe: 'bdeGa',
   clubOrphan: 'clubSe',
 };
 
@@ -124,7 +125,7 @@ const VALIDATORS: Record<AssoKey, string[]> = {
   clubBoth: ['bothVal', 'gaVal', 'seVal'],
   clubNone: [],
   clubAll: ['bothVal', 'gaVal', 'seVal'],
-  clubFsssSe: [],
+  clubFisaSe: [],
   school: ['bothVal', 'gaVal', 'seVal'],
   schoolGa: ['bothVal', 'gaVal'],
   clubOrphan: ['bothVal', 'seVal'],
@@ -139,7 +140,7 @@ const MANAGERS: Record<AssoKey, string[]> = {
   clubBoth: ['seManage'],
   clubNone: [],
   clubAll: [],
-  clubFsssSe: ['gaManage'],
+  clubFisaSe: ['gaManage'],
   school: [],
   schoolGa: [],
   clubOrphan: [],
@@ -178,6 +179,7 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     }
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
+    await applyFormationFisa((sql) => client.query(sql));
     // The grid as an admin would set it.
     await client.query(`DELETE FROM association_audiences`);
     for (const [key, rules] of Object.entries(RULES)) {
@@ -267,12 +269,12 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
         .map((r) => NAME[r.id as string])
         .sort();
     // clubBoth reaches both BDEs' spaces and is bdeSe's alone; clubAll reaches everyone and is
-    // nobody's; clubFsssSe reaches a saint-etienne space and is the gardanne BDE's.
+    // nobody's; clubFisaSe reaches a saint-etienne space and is the gardanne BDE's.
     expect(await reach('seManage', MANAGE_ASSO)).toEqual(['bdeSe', 'clubBoth', 'clubSe']);
-    expect(await reach('gaManage', MANAGE_ASSO)).toEqual(['bdeGa', 'clubFsssSe', 'clubGa']);
+    expect(await reach('gaManage', MANAGE_ASSO)).toEqual(['bdeGa', 'clubFisaSe', 'clubGa']);
     // MANAGE_ASSO is not VALIDATE_EVENTS: each flag is its own question.
     expect(await reach('seManage', VALIDATE_EVENTS)).toEqual([]);
-    expect(await reach('gaVal', VALIDATE_EVENTS)).toEqual(['bdeGa', 'clubFsssSe', 'clubGa']);
+    expect(await reach('gaVal', VALIDATE_EVENTS)).toEqual(['bdeGa', 'clubFisaSe', 'clubGa']);
     expect(await reach('clubVal', VALIDATE_EVENTS)).toEqual([]);
     expect(await reach('clubVal', MANAGE_ASSO)).toEqual([]);
     expect(await reach('plain', VALIDATE_EVENTS)).toEqual([]);
@@ -380,12 +382,12 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
   });
 
   it('closes the shared campus: a whole-campus rule over two BDEs makes only the PARENT govern (P1)', async () => {
-    // saint-etienne split between two BDEs - bdeSe (ICM) and bdeGa (FSSS) - and a club addressing
+    // saint-etienne split between two BDEs - bdeSe (ICM) and bdeGa (FISA) - and a club addressing
     // the whole campus, child of bdeSe. Read from reach, BOTH BDEs were its uncapped super-admins.
     await client.query('BEGIN');
     try {
       await client.query(
-        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FSSS'`,
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FISA'`,
         [A.bdeGa]
       );
       await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [
@@ -437,10 +439,10 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
       const { rows } = await client.query(TARGETS_AN_UNGOVERNED_SPACE_SQL, [A[asso]]);
       if (rows[0].ungoverned === true) ungoverned.push(asso);
     }
-    // No rule (clubNone), a space with no BDE (FSSS x saint-etienne, and the rest of gardanne for
+    // No rule (clubNone), a space with no BDE (FISA x saint-etienne, and the rest of gardanne for
     // the whole-campus clubGa), or everyone (clubAll). An institution targeting only governed spaces
     // is told to its BDEs alone.
-    expect(ungoverned.sort()).toEqual(['clubAll', 'clubFsssSe', 'clubGa', 'clubNone']);
+    expect(ungoverned.sort()).toEqual(['clubAll', 'clubFisaSe', 'clubGa', 'clubNone']);
   });
 
   it('filters a list of events by their association, as the pending queue splices it', async () => {
@@ -463,7 +465,7 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     await client.query('BEGIN');
     try {
       await client.query(
-        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FSSS'`,
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FISA'`,
         [A.school]
       );
       await client.query(
@@ -472,36 +474,36 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
       );
       const holds = async (sql: string, params: unknown[]) =>
         (await client.query(sql, params)).rows[0].holds as boolean;
-      const fsssGoverned = async () =>
+      const fisaGoverned = async () =>
         (
           (await client.query(BDE_SPACE_STANDINGS_SQL, ['schoolStaff', MANAGE_ASSO])).rows as {
             formation: string;
             campus: string;
             governed: boolean;
           }[]
-        ).find((r) => r.formation === 'FSSS' && r.campus === 'saint-etienne')?.governed;
+        ).find((r) => r.formation === 'FISA' && r.campus === 'saint-etienne')?.governed;
 
-      expect(await holds(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['schoolStaff', A.clubFsssSe])).toBe(
+      expect(await holds(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['schoolStaff', A.clubFisaSe])).toBe(
         true
       );
       // Even named as the club's PARENT by a hand-written row (131's trigger refuses one), an
       // institution governs nothing.
       await client.query(`UPDATE associations SET "parentAssociationId" = $2 WHERE id = $1`, [
-        A.clubFsssSe,
+        A.clubFisaSe,
         A.school,
       ]);
-      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFsssSe, MANAGE_ASSO])).toBe(
+      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFisaSe, MANAGE_ASSO])).toBe(
         false
       );
-      expect(await fsssGoverned()).toBe(false);
+      expect(await fisaGoverned()).toBe(false);
 
       // The control: the SAME parent typed as an association governs it - the exclusion is the
       // governor's type and nothing else.
       await client.query(`UPDATE associations SET type = 'association' WHERE id = $1`, [A.school]);
-      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFsssSe, MANAGE_ASSO])).toBe(
+      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFisaSe, MANAGE_ASSO])).toBe(
         true
       );
-      expect(await fsssGoverned()).toBe(true);
+      expect(await fisaGoverned()).toBe(true);
     } finally {
       await client.query('ROLLBACK');
     }

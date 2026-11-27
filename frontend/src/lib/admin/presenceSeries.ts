@@ -68,6 +68,30 @@ export function compareVersionsDesc(a: string, b: string): number {
 }
 
 /**
+ * The line of a version: its slot is its place counted from the OLDEST version shown (`oldestFirst`,
+ * without the two unnamed words), so a release newer than every one on screen repaints nothing.
+ * Shared by the status page's devices and the usage page's people.
+ */
+export function versionLine(
+  key: string,
+  oldestFirst: readonly string[],
+  values: (number | null)[]
+): Series {
+  if (key === 'unknown' || key === 'other') {
+    return { key, color: 'var(--text-muted)', dash: key === 'other' ? '2 3' : undefined, values };
+  }
+  const rank = oldestFirst.indexOf(key);
+  const slot = rank % SERIES_SLOTS;
+  const lap = Math.floor(rank / SERIES_SLOTS);
+  return {
+    key,
+    color: `var(--chart-series-${slot + 1})`,
+    dash: lap === 0 ? undefined : OVERFLOW_DASHES[(lap - 1) % OVERFLOW_DASHES.length],
+    values,
+  };
+}
+
+/**
  * One series per platform or version found in the buckets, drawn newest-first for versions and in
  * the platforms' fixed order for platforms. The colour of a platform is its own forever. A
  * version's slot is its place counted from the OLDEST version still shown (the eight categorical
@@ -98,18 +122,7 @@ export function buildSeries(buckets: readonly Bucket[], axis: Axis): Series[] {
     if (axis === 'platform') {
       return { key, color: platformColor(key), dash: platformDash(key), values };
     }
-    if (key === 'unknown' || key === 'other') {
-      return { key, color: 'var(--text-muted)', dash: key === 'other' ? '2 3' : undefined, values };
-    }
-    const rank = oldestFirst.indexOf(key);
-    const slot = rank % SERIES_SLOTS;
-    const lap = Math.floor(rank / SERIES_SLOTS);
-    return {
-      key,
-      color: `var(--chart-series-${slot + 1})`,
-      dash: lap === 0 ? undefined : OVERFLOW_DASHES[(lap - 1) % OVERFLOW_DASHES.length],
-      values,
-    };
+    return versionLine(key, oldestFirst, values);
   });
 }
 

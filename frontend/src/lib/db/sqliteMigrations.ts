@@ -15,7 +15,11 @@
  *    has, so dropping a column can never again break the migration that mentions it.
  */
 
-import { retainedName, retainTableStatements } from './sqliteRetained';
+import {
+  retainedFollowsDeletesStatement,
+  retainedName,
+  retainTableStatements,
+} from './sqliteRetained';
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
 export const SCHEMA_VERSION = 23;
@@ -345,6 +349,17 @@ export const PENDING_MUTATIONS_ORDER_INDEX_STATEMENT =
   'CREATE INDEX IF NOT EXISTS idx_pending_mutations_sender_tier_at ON pending_mutations(conversation_id, sender_tag, tier, at)';
 
 /**
+ * The conversations this device deleted, by id (`wasConversationDeleted`). No foreign key and no
+ * content: an id is all the fact needs, and it is cleared when the member is in the conversation
+ * again. Created by every open, fresh or not.
+ */
+export const DELETED_CONVERSATIONS_TABLE_STATEMENT = `
+            CREATE TABLE IF NOT EXISTS deleted_conversations (
+                conversation_id TEXT PRIMARY KEY
+            )
+        `;
+
+/**
  * The v18 column of `messages`: `rev`, the row's revision, raised by EVERY write - the compare half
  * of the compare-and-set every rewrite goes through (`messageCas.ts`). An existing row starts at 0.
  * Returns `null` when the column is there (a fresh file has it from `CREATE TABLE`), so the step is a
@@ -499,7 +514,9 @@ const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
  * back on its own, and sqlx never checks a pooled connection for a transaction raw SQL opened: such a
  * failure leaves the transaction open, uncommitted, on one pooled connection - nothing committed, so
  * nothing lost - until the failed open's retry calls `Database.load`, whose new pool replaces the old
- * one (read in the plugin's source, not measured), or the app restarts.
+ * one (read in the plugin's source, not measured), or the app restarts. THE CALLER THEREFORE RUNS IT
+ * THROUGH `executeOwnTransaction` (`sqliteRetained.ts`), which recycles the pool on any failure, so no
+ * transaction stays open on a connection the session keeps using.
  */
 export function messageRekeySteps(state: MessageRekeyState): {
   copy: string[];
@@ -541,6 +558,7 @@ function messagesRekeySwapStatement(indexes: readonly string[]): string {
     MESSAGE_ORDER_INDEX_STATEMENT,
     MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
     MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
+    retainedFollowsDeletesStatement('messages', ['conversation_id', 'id']),
     `DELETE FROM temp.${MESSAGES_REKEY_GUARD}`,
     'COMMIT',
   ].join(';\n');

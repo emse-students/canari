@@ -26,6 +26,7 @@
   import { holdRestoredText } from '$lib/utils/chat/editSession.svelte';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppActive, onAppActiveChange, onAppScreenChange } from '$lib/utils/appForeground';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     ATTENTION_WINDOW_MS,
@@ -105,6 +106,8 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
+  import HistoryGrantDialog from './chat/HistoryGrantDialog.svelte';
+  import { peekUserDisplayName } from '$lib/utils/users/displayName';
   import {
     callsAvailable,
     callVideoAvailable,
@@ -374,6 +377,23 @@
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
+
+  /**
+   * The newcomer "Envoyer l'historique des messages" was pressed for (opens `HistoryGrantDialog` when
+   * non-null) - owner, 2026-11-25, `historyGrant.ts`.
+   */
+  let historyGrantTarget = $state<string | null>(null);
+
+  /** Sends the grant the dialog confirmed; throws to the dialog when it could not be sent. */
+  async function sendHistoryGrant(target: string, since: number) {
+    log(`[HISTORY_GRANT] grant to ${target.slice(0, 8)} confirmed`);
+    await convs.handleSendHistory(target, since, convCtx());
+    historyGrantTarget = null;
+    showToast(
+      m.chat_history_grant_sent({ name: peekUserDisplayName(target) ?? target.slice(0, 8) }),
+      'info'
+    );
+  }
   // READ FROM THE DOCUMENT, NOT ASSUMED: the receipt effect is declared above the `onMount` that
   // listens, so its first run saw `true`/`true` and a page mounted in a hidden or unfocused window
   // with a conversation already selected could mark it (read-receipt-privacy, 2026-11-11).
@@ -832,7 +852,9 @@
     // the app coming back to the foreground on an open conversation runs this effect again and marks
     // what landed while it was away - read as a bare global, nothing re-ran it (owner, 2026-11-02).
     // AND A PERSON AT THE WINDOW (owner, 2026-11-11): see `windowReadVerdict` and the `idle` branch
-    // below, where a withheld mark is reported.
+    // below, where a withheld mark is reported. On a phone the two document terms are not asked at
+    // all: the iPhone's WebView answers `hasFocus()` false until a touch, which withheld the read of
+    // a conversation landed from a banner tap (`windowReadVerdict`).
     const verdict = windowReadVerdict({
       focused: isWindowFocused,
       visible: isTabVisible,
@@ -840,6 +862,7 @@
       // re-runs this effect - the global read would leave it stale until something else ran it.
       foreground: appForeground.current && appActive,
       attentive: windowAttention.attentive,
+      nativeMobile: isMobileTauriRuntime(),
     });
     if (verdict === 'away') {
       openedDismissal.reset();
@@ -1799,6 +1822,8 @@
           onCallBack={canStartAudioCall
             ? () => void startCallForCurrentConversation(false)
             : undefined}
+          offerHistoryTo={(userId) => convs.canSendHistoryTo(userId, session.userId ?? '')}
+          onSendHistory={(userId) => (historyGrantTarget = userId)}
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}
@@ -1992,6 +2017,15 @@
         onClose={() => (forwardingMessage = null)}
         onSelect={doForward}
       />
+
+      {#if historyGrantTarget}
+        {@const target = historyGrantTarget}
+        <HistoryGrantDialog
+          name={peekUserDisplayName(target) ?? target.slice(0, 8)}
+          onClose={() => (historyGrantTarget = null)}
+          onSend={(since) => sendHistoryGrant(target, since)}
+        />
+      {/if}
     </main>
   {:else}
     <main class="main-content" aria-hidden="true"></main>

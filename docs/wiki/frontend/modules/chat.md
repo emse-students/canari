@@ -3279,6 +3279,16 @@ lose the conversation anyway, because leaving de-registers the USER and `verifyM
 retires the row on every device. Telling that device "you left the group" first would write a notice
 into a conversation about to disappear.
 
+### "Envoyer l'historique des messages" under a member's addition (owner, 2026-11-25)
+
+Under a `memberAdded` notice of a ready private group, `MessageBubble` draws one button per added user
+the caller offers (`offerHistoryTo` = `useConversations.canSendHistoryTo` = `canOfferHistoryTo`: still
+on the roster, not the viewer, and the served `minClientVersion` at or above
+`HISTORY_GRANT_NOTICE_FIRST_VERSION` - every admitted build draws the notice, principle 1). It opens `HistoryGrantDialog` (24 h, 7 days, 30 days, everything, or
+a past date), whose send is `grantHistoryToNewcomer`; a `historyGranted` notice carries an "En savoir
+plus" disclosure. The mechanism, its checks and its settled design points:
+[history-reconciliation](../../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25).
+
 ### A visible system notice needs an identity the SENDER minted
 
 A notice the members are meant to SEE - a member added or removed, a rename, a new photo, a deleted
@@ -4099,7 +4109,7 @@ and 12-line texts 0 of 3 each). The glide and an image row are both necessary; w
 `scrollTop` is not known: (a) WebKit's native anchoring on the transform cancel, (b) a clamp against a
 transient content size, (c) a stale `held.px` replayed. Code reading does not prove (c): the replay is
 a transform and writes no `scrollTop`. Backlog:
-[the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md).
+[the reading that closed it](../../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch).
 
 **What is written** (`GlideTrace` in `threadGrowthObserver.ts`): **INFO only with the fall line, nothing at
 pass time** - every ordinary message makes a glide, so a line per pass would be noise forever. The
@@ -4161,8 +4171,8 @@ instead fails four of them) and `ChatArea.scrollAnchor.svelte.test.ts` (an arriv
 end writes only the layout end and logs no `left the bottom`; with an older page pending it still
 reaches the end; the reader's own message sent from history still pins once). No
 real-layout bench exists in the repository for this (the media-frame bench of 2026-10-02 was not
-committed), so the overflow is the measured model above. **Owed:** the iPhone reading on the next
-alpha ([the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md)).
+committed), so the overflow is the measured model above. **Read on the iPhone 12, `1.8.2`:** three
+image arrivals, no fall ([the reading that closed it](../../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)).
 
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
