@@ -1,6 +1,6 @@
 ## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22, re-decided 2026-10-23)
 
-target: 1.9.0
+target: 1.8.5
 
 Conversations refresh their leaves and drop revoked devices
 ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). Two halves are deferred for

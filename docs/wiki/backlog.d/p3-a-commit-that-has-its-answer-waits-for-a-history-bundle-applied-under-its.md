@@ -1,6 +1,6 @@
 ## P3 - A commit that has its answer waits for a history bundle applied under its loan (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
-target: 1.9.0
+target: 1.9.2
 
 The cause is to be read. On the second minted device (W6), two stray-leaf removals of the revoked
 first device each got the server's answer while a frame of ANOTHER group held the loan of the MLS

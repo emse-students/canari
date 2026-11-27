@@ -1,6 +1,6 @@
 ## P2 - a missing seed minted by our own other device is asked of it whether or not it is online
 
-target: 1.10.0
+target: 1.9.1
 
 Found reading an Android `1.6.10` log (2026-11-11): the phone asked the owner's own browser for the
 seed of a row that browser had minted - the designed choice, `resolveAnswerer` in

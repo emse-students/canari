@@ -1,6 +1,6 @@
 ## P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)
 
-target: 1.9.0
+target: 1.8.6
 
 **What it changes.** On a phone, the visible app and the background engines share one process and one
 state file. Today a heartbeat deadline decides who may write that file, and on Android the page's

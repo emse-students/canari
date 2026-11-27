@@ -1,6 +1,6 @@
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
-target: 1.9.0
+target: 1.9.1
 
 - Audited after the revoked-leaves 400 ([durable-rules](../durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
   every other `sanitizeQueryValue` field in chat-delivery fits its generator today (UUIDs, 64-hex

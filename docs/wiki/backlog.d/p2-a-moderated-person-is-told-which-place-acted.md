@@ -1,6 +1,6 @@
 ## P2 - a person whose content was hidden or deleted is never told
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#the-journal-and-the-notice),
 decision 14, *"Savoir seulement"*): the person whose content was hidden or deleted sees WHICH PLACE

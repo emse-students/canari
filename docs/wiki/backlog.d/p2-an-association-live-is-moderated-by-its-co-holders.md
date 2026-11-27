@@ -1,6 +1,6 @@
 ## P2 - an association's live is ended and moderated by its broadcaster alone, and no chat line is hidden after the end
 
-target: 1.9.0
+target: 1.8.6
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md), decision 7): an
 association's live can be ended and moderated (chat lines, viewers) by the association's other

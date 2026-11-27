@@ -1,6 +1,6 @@
 ## P2 - A browser-wide worker holds the MLS state, instead of a leader tab
 
-target: 1.9.0
+target: 1.8.7
 
 **Decided by the owner on 2026-11-24** ([decisions](../decisions/owner-decisions-of-2026-11-24.md)):
 the leader-tab symptom is fixed in `1.8.0`

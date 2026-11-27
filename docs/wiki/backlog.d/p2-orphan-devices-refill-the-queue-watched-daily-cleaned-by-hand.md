@@ -1,6 +1,6 @@
 ## P2 - about six devices a day become orphans, nearly all of them browsers
 
-target: 1.9.0
+target: 1.8.6
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

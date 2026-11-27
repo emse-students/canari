@@ -1,6 +1,6 @@
 ## P3 - SvelteKit 3: what the audit of #2613 left open (2026-10-28)
 
-target: 1.10.0
+target: 1.9.2
 
 An audit of the SvelteKit 3 upgrade (#2613) read kit 3.1.0 against 2.70.3. Its two P2s are fixed (a page crash: #2656; a `goto` to a path with no route: [architecture](../frontend/architecture.md#a-path-no-route-matches---apppath-for-code-gotoapppath-for-the-rest)). What it found and nothing has fixed, each with what would close it:
 

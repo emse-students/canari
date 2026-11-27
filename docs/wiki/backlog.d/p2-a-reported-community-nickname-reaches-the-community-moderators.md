@@ -1,6 +1,6 @@
 ## P2 - a reported community nickname reaches a queue that cannot clear it, and a muted moderator still renames
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md), decision 6): a reported
 community nickname goes to THAT community's moderators, the platform admin as recourse; a muted person

@@ -1,6 +1,6 @@
 ## An institution's "Personnel" calendar event reaches the staff of its ticked campuses (owner, 2026-11-19)
 
-target: 1.9.0
+target: 1.9.1
 
 **Decided by the owner on 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)): the door built on
 2026-11-14 for an institution's POSTS ("Oui, par campus") opens on its CALENDAR EVENTS too. An event

@@ -1,6 +1,6 @@
 ## P3 - the history stream's arrival filter reads more than it serves (review of #2800, 2026-10-31)
 
-target: 1.10.0
+target: 1.9.1
 
 Since #2800 every member of a group conversation but its creator holds a `withheld` window (the span
 before their arrival), so `readHistoryStreamPage` filters on EVERY such read: it reads in chunks of

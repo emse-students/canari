@@ -1,6 +1,6 @@
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 
-target: 1.9.0
+target: 1.8.7
 
 The settlement of an unresolved commit classifies a refusal from its body once, and treats it as
 final even when the reason is a state that can change later (a seat, a block). Owed: name which

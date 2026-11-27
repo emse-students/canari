@@ -1,6 +1,6 @@
 ## P3 - on iOS the launch's native push refresh races `/register`, which mints a new secret every call: 13 `[PUSH_SECRET] rejected reason=mismatch` a day (production sweep, 2026-11-13)
 
-target: 1.10.0
+target: 1.9.1
 
 **What the sweep read.** 13 `[PUSH_SECRET] rejected ... reason=mismatch` a day, from 10 iOS devices
 and no Android one (`guards/push-secret.guard.ts`). Each is a native call made at launch with the
