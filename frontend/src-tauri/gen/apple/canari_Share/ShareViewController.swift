@@ -89,9 +89,40 @@ final class ShareViewController: UIViewController {
     /// from the app row, or when the identifier is not of the suggestion shape (said, not used).
     private func suggestedTarget() -> String? {
         guard let intent = extensionContext?.intent as? INSendMessageIntent else { return nil }
-        if let target = ShareRules.suggestedTarget(intent.conversationIdentifier) { return target }
-        log.warning("[CanariShare] a suggestion whose conversation identifier is not of the suggestion shape was ignored (identifier present: \(intent.conversationIdentifier != nil), \(intent.conversationIdentifier?.count ?? 0) characters)")
-        return nil
+        guard let target = ShareRules.suggestedTarget(intent.conversationIdentifier) else {
+            log.warning("[CanariShare] a suggestion whose conversation identifier is not of the suggestion shape was ignored (identifier present: \(intent.conversationIdentifier != nil), \(intent.conversationIdentifier?.count ?? 0) characters)")
+            return nil
+        }
+        // A pick made while nobody is signed in has no account to land in. A leftover sender of a
+        // PREVIOUS account (the notification extension erases its donations on its next run) is
+        // not decided here: the page preselects a hint only when the signed-in account holds that
+        // conversation (`suggestionIfHeld`), and refusing here on the donations' owner would also
+        // drop the new account's own suggestions until that run.
+        guard let store = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: ShareCapture.appGroupId)?
+            .appendingPathComponent(ShareCapture.storeDirName, isDirectory: true)
+        else {
+            log.error("[CanariShare] the App Group container is unavailable - the suggestion is not used")
+            return nil
+        }
+        guard ShareRules.suggestionUsable(signedInUserId: signedInUserId(store)) else {
+            log.notice("[CanariShare] a suggestion was not used: no account is signed in")
+            return nil
+        }
+        return target
+    }
+
+    /// The account `push_context.json` says is signed in, nil when none is (absent, unreadable, or
+    /// stripped of `baseUrl` by a sign-out) - `NotificationService.signedInUserId`, the same rule.
+    private func signedInUserId(_ store: URL) -> String? {
+        guard let data = try? Data(contentsOf: store.appendingPathComponent("push_context.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let userId = json["userId"] as? String ?? ""
+        let deviceId = json["deviceId"] as? String ?? ""
+        let baseUrl = json["baseUrl"] as? String ?? ""
+        guard !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
+        return userId
     }
 
     private func show(_ outcome: ShareCaptureOutcome) {

@@ -175,18 +175,28 @@ entries:
   # it was made) is an ORPHAN: it is cleared (only if the duplicate, read under its row lock, still
   # carries that same mark), logged at warning, and the sign-in goes on as an ordinary one. Otherwise the policy re-reads both accounts under a row lock and, if ALL of these
   # hold, moves the Alumni connection onto the target, deletes the duplicate (its mark with it) - the
-  # two in ONE transaction - records an authentik Event `custom_alumni_merge` (both pks, who marked,
-  # the af_id), and switches the plan's pending user to the target, so the write below records the
-  # membership read on the target and the login signs the TARGET in:
+  # two in ONE transaction - records an authentik Event `custom_alumni_merge` (both pks, uuids and
+  # OIDC subjects, who marked, the af_id, the mode and Canari's merge id), saved once that transaction
+  # COMMITTED (`transaction.on_commit`: its save is what dispatches the push), whose USER IS THE TARGET (D57: an Event of the
+  # duplicate is deleted with it by the tenant's `gdpr_compliance` cleanup, the merge's own trace
+  # included), and switches the plan's pending user to the target, so the write below records the
+  # membership read on the target and the login signs the TARGET in. That Event is what
+  # 85-alumni-merge-push.yaml pushes to Canari (D54):
   #   - the duplicate's username starts with `alumni-` and its links are exactly ['alumni'];
   #   - exactly one account carries the target uuid; it is another account, not `alumni-`, active,
   #     a person (internal or external), not a superuser (no superuser group);
   #   - the target holds a CAS link (`cas-emse`) and no Alumni link yet;
-  #   - the target's name is the name Alumnforce asserts AT THIS SIGN-IN (`firstname` `lastname` of
+  #   - an AUTOMATIC mark (`alumni_merge_mode` = `auto`, or absent on a mark written before 1.8.3):
+  #     the target's name is the name Alumnforce asserts AT THIS SIGN-IN (`firstname` `lastname` of
   #     the assertion, in the plan's prompt data - never the name stored on the duplicate), both
   #     FOLDED as core-service's `normalizeName`: ligatures, accents and case, the typographic
   #     apostrophe, and hyphens, dots, apostrophes and spaces to one space (`name_mismatch`);
-  #   - the duplicate still carries THE mark this sign-in began with (`mark_changed`).
+  #   - a MANUAL mark (D55: an admin decided identity, with a written reason Canari keeps): the name
+  #     Alumnforce asserts now is the Alumni name the admin SAW (`alumni_name_changed`) and the
+  #     target's name now is the name the admin saw (`target_changed`), both folded the same way; a
+  #     manual mark missing either name or its merge id is refused (`manual_mark_incomplete`), and a
+  #     mode that is neither is refused (`mark_mode_unknown`);
+  #   - the duplicate still carries THE mark this sign-in began with, every key of it (`mark_changed`).
   # If any fails, nothing is changed, the mark is kept, the refusal is logged at error with
   # `[ALUMNI_MERGE]` and journalled as an Event `custom_alumni_merge_refused` (with the client's
   # address, as the merge's own Event), and the deny stage tells the person to contact an admin; a
@@ -237,20 +247,32 @@ entries:
         from authentik.core.sources.stage import PLAN_CONTEXT_SOURCES_CONNECTION
         from authentik.events.models import Event
         from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.root.middleware import ClientIPMiddleware
 
-        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at")
+        # The mark's keys, a contract with core-service (alumni-merge.service.ts, MERGE_MARK) and with
+        # the write flow's allowlist (80-profile-editor.yaml): change the three together.
+        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at", "alumni_merge_mode", "alumni_merge_id", "alumni_merge_seen_alumni_name", "alumni_merge_seen_target_name")
         pending = request.context.get(PLAN_CONTEXT_PENDING_USER)
         attributes = (pending.attributes or {}) if pending else {}
         into = str(attributes.get("alumni_merge_into") or "")
         if not into:
             return False
         marked_by = str(attributes.get("alumni_merge_marked_by") or "")
+        # A mark written before 1.8.3 names no mode: it was an automatic one.
+        mode = str(attributes.get("alumni_merge_mode") or "auto")
+        merge_id = str(attributes.get("alumni_merge_id") or "")
+        seen_alumni = str(attributes.get("alumni_merge_seen_alumni_name") or "")
+        seen_target = str(attributes.get("alumni_merge_seen_target_name") or "")
+        mark_of = lambda attrs: tuple(str((attrs or {}).get(key) or "") for key in MARK)
+        began_with = mark_of(attributes)
         plan = request.context.get("flow_plan")
         prompt = request.context.get("prompt_data") or {}
         asserted = f"{prompt.get('firstname') or ''} {prompt.get('lastname') or ''}"
         connection = request.context.get(PLAN_CONTEXT_SOURCES_CONNECTION)
         af_id = getattr(connection, "identifier", None)
-        # The Events carry the client's address and the request's context (`from_http` saves them).
+        agree = lambda a, b: ak_call_policy("miconnect-alumni-names-agree", names=[a, b]).passing
+        # A REFUSAL's Event carries the client's address and the request's context (`from_http`, its
+        # user the duplicate: nothing is deleted then).
         journal = lambda event: event.from_http(request.http_request) if request.http_request is not None else event.save()
         try:
             target_uuid = uuid.UUID(into)
@@ -273,6 +295,10 @@ entries:
             refused.append("no flow plan to sign the target in")
         elif target_uuid is None:
             refused.append("the mark is not a uuid")
+        elif mode not in ("auto", "manual"):
+            refused.append("mark_mode_unknown")
+        elif mode == "manual" and not (merge_id and seen_alumni.strip() and seen_target.strip()):
+            refused.append("manual_mark_incomplete")
         else:
             with transaction.atomic():
                 duplicate = User.objects.select_for_update().filter(pk=pending.pk).first()
@@ -303,23 +329,42 @@ entries:
                         refused.append("the target holds no CAS link")
                     if "alumni" in target_slugs:
                         refused.append("the target already holds an Alumni link")
-                    if not ak_call_policy("miconnect-alumni-names-agree", names=[asserted, target.name]).passing:
+                    if mode == "auto" and not agree(asserted, target.name):
                         refused.append("name_mismatch")
-                if duplicate is not None and str(duplicate.attributes.get("alumni_merge_into") or "") != into:
+                    if mode == "manual" and not agree(asserted, seen_alumni):
+                        refused.append("alumni_name_changed")
+                    if mode == "manual" and not agree(target.name, seen_target):
+                        refused.append("target_changed")
+                if duplicate is not None and mark_of(duplicate.attributes) != began_with:
                     refused.append("mark_changed")
                 if not refused:
                     UserSourceConnection.objects.filter(pk=links[0].pk).update(user=target)
                     duplicate_pk = duplicate.pk
+                    duplicate_uuid = str(duplicate.uuid)
+                    # Both OIDC subjects (`uid`, the `hashed_user_id` every provider issues), read BEFORE the
+                    # delete: the duplicate's is derived from its pk, gone with it. Canari's sibling-site
+                    # jobs find the duplicate's accounts by it (D54).
+                    duplicate_subject = duplicate.uid
                     duplicate.delete()
-                    journal(Event.new("alumni_merge", app="miconnect", duplicate_pk=duplicate_pk, duplicate_username=pending.username, target_pk=target.pk, target_username=target.username, marked_by=marked_by, af_id=af_id))
+                    # D57: the merge's Event is the TARGET's, never built with `from_http`, which makes it
+                    # the flow's pending user's - the duplicate's, deleted just above, and with it, under
+                    # `gdpr_compliance`, every Event of its own. ONE save: one dispatch, one push.
+                    merged = Event.new("alumni_merge", app="miconnect", duplicate_pk=duplicate_pk, duplicate_username=pending.username, duplicate_uuid=duplicate_uuid, duplicate_subject=duplicate_subject, target_pk=target.pk, target_username=target.username, target_uuid=str(target.uuid), target_subject=target.uid, marked_by=marked_by, af_id=af_id, mode=mode, merge_id=merge_id)
+                    merged.set_user(target)
+                    if request.http_request is not None:
+                        merged.client_ip = ClientIPMiddleware.get_client_ip(request.http_request)
+                    # SAVED ONCE THE MERGE IS COMMITTED: saving an Event dispatches it to every Notification
+                    # Rule, and the push it triggers must never announce a merge this transaction could
+                    # still roll back. Outside an outer atomic block, the commit is this block's exit.
+                    transaction.on_commit(merged.save)
         if refused:
-            ak_logger.error("[ALUMNI_MERGE] refused at sign-in, nothing changed and the mark is kept", duplicate=pending.username, into=into, reasons=refused)
-            journal(Event.new("alumni_merge_refused", app="miconnect", duplicate_pk=pending.pk, duplicate_username=pending.username, into=into, marked_by=marked_by, af_id=af_id, reasons=refused))
+            ak_logger.error("[ALUMNI_MERGE] refused at sign-in, nothing changed and the mark is kept", duplicate=pending.username, into=into, mode=mode, reasons=refused)
+            journal(Event.new("alumni_merge_refused", app="miconnect", duplicate_pk=pending.pk, duplicate_username=pending.username, into=into, marked_by=marked_by, af_id=af_id, mode=mode, merge_id=merge_id, reasons=refused))
             return True
         plan.context[PLAN_CONTEXT_PENDING_USER] = target
         if connection is not None:
             connection.user = target
-        ak_logger.info("[ALUMNI_MERGE] merged at sign-in: the Alumni link moved, the duplicate deleted", duplicate=pending.username, target=target.username)
+        ak_logger.info("[ALUMNI_MERGE] merged at sign-in: the Alumni link moved, the duplicate deleted", duplicate=pending.username, target=target.username, mode=mode)
         return False
   - model: authentik_flows.flowstagebinding
     identifiers:

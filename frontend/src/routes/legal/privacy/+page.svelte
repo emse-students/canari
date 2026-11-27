@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="24/11/2026"
+  updated="27/11/2026"
   {sections}
 >
   <!-- 1 -->

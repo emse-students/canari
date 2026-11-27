@@ -153,9 +153,10 @@ guards: a malformed path is refused whoever asks.
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
 | GET | `/api/users/:id/avatar` | avatar token (`?t=`) or internal secret ([sessions](../sessions.md#the-avatar-token)) | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
 | POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
-| GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
-| PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
-| GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
+| GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption); `410 NOTEPAD_MOVED` when none is held |
+| PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext over a notepad still held; clears the legacy plaintext; `410 NOTEPAD_MOVED` otherwise |
+| GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use; `410 NOTEPAD_MOVED` when no notepad is held |
+| POST | `/api/users/me/notes/moved` | JWT | Delete the notepad of `{ digest }` once moved into "Mes notes" (`410 NOTEPAD_MOVED` none held, `409 NOTEPAD_CHANGED` another one held) |
 | GET | `/api/users/:id` | JWT | Get public profile (`me` resolves to caller) |
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
 | DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
@@ -679,6 +680,12 @@ announcement to test it would show a modal to every real member. Unit tests and 
 only.
 
 ### Personal notepad
+
+**RETIRED INTO "MES NOTES" (2026-11-26, `1.8.2`).** Each client moves its account's notepad into the
+end-to-end conversation with itself and then deletes it here (`users/notepad.ts`, `moveNotes`); no
+notepad is created any more. The order, the idempotence and the routes' `410` are in
+[chat](../frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22); what
+follows describes the storage while a notepad has not moved yet.
 
 Stored as opaque AES-256-GCM ciphertext (base64) under a per-user key, the same envelope an
 association's `notesCiphertext` uses — `encryptVaultNote`/`decryptVaultNote` are shared, not copied.

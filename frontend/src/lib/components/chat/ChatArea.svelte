@@ -208,6 +208,8 @@
     onGroupSetImage?: (mediaId: string) => void;
     /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
+    /** Deletes "Mes notes" after a confirmation (its header's one action besides search and media). */
+    onDeleteSelfConversation?: () => void;
     /** Callback to remove the conversation locally when it was deleted by another participant. */
     onGroupDeleteLocally?: () => void;
     /** A conversation this device can no longer open (D5): a new group with the same people. */
@@ -371,6 +373,7 @@
     onGroupRename,
     onGroupSetImage,
     onGroupDelete,
+    onDeleteSelfConversation,
     onGroupDeleteLocally,
     onStartAgainWithSamePeople,
     onHideUnopenable,
@@ -2234,6 +2237,7 @@
         {onGroupRename}
         {onGroupSetImage}
         {onGroupDelete}
+        {onDeleteSelfConversation}
         {onGroupLeave}
         {onGroupRemoveMember}
         {onStartAudioCall}

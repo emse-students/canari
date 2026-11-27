@@ -23,7 +23,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { HANDOFF_VENDORED, LEAVE_IAB_VENDORED } from './vendored.mjs';
+import { ALUMNI_MERGE_VENDORED, HANDOFF_VENDORED, LEAVE_IAB_VENDORED } from './vendored.mjs';
 
 /** The parent directory holding all four checkouts. Two levels up from this file by default. */
 const ROOT = process.env.CANARI_ECOSYSTEM_ROOT
@@ -359,6 +359,7 @@ for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Ca
 // its own vector test.
 for (const [note, table] of [
   ['the sign-in handoff, vendored', HANDOFF_VENDORED],
+  ['the Alumni merge call verifier, vendored', ALUMNI_MERGE_VENDORED],
   ['the Meta in-app browser gate, vendored', LEAVE_IAB_VENDORED],
 ]) {
   for (const [source, sites] of table) {

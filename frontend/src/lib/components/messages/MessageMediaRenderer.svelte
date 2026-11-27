@@ -61,6 +61,8 @@
      * amber one - its navy ink and `black/10` wash vanished on the dark page (Mi 9T, alpha.3).
      */
     onBubble?: boolean;
+    /** See `MessageInlineText`'s `everyoneHonoured`. */
+    everyoneHonoured?: boolean;
     /**
      * The message carries a media reference that no upload is advancing and that never got a
      * `mediaId` (`isOrphanMediaRef`): nothing will ever arrive, so the row says so and offers the
@@ -138,6 +140,7 @@
     textContent = '',
     isOwn = false,
     onBubble = true,
+    everyoneHonoured = true,
     orphan = false,
     textSegments = [],
     onNavigateLink: _onNavigateLink,
@@ -734,7 +737,7 @@
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
         {:else}
-          <MessageInlineText text={segment.value} onOwnBubble={onAmber} />
+          <MessageInlineText text={segment.value} onOwnBubble={onAmber} {everyoneHonoured} />
         {/if}
       {/each}
     </p>

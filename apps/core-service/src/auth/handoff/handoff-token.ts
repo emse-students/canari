@@ -129,7 +129,68 @@ export function signHandoffToken(
   claims: HandoffClaims | Record<string, unknown>,
   header: Record<string, unknown> = {}
 ): string {
-  const input = `${b64url({ alg: HANDOFF_TOKEN_ALG, typ: HANDOFF_TOKEN_TYPE, kid, ...header })}.${b64url(claims)}`;
+  return signCompactEs256(privateKey, { typ: HANDOFF_TOKEN_TYPE, kid, ...header }, claims);
+}
+
+/**
+ * The `typ` of the token core-service signs for one sibling-site call of an Alumni merge (D54,
+ * `POST <site>/api/internal/alumni-merge`). Same key and same JWKS as the handoff, its OWN type, so a
+ * site's verifier never takes one for the other (RFC 8725).
+ */
+export const ALUMNI_MERGE_TOKEN_TYPE = 'canari-merge+jwt';
+
+/**
+ * THE ONE BOUND OF AN ALUMNI MERGE SUBJECT (a MiConnect `hashed_user_id`: 64 hex), and its shape: the
+ * hook's validation, the subject columns of migration 030 and the sites' verifier
+ * (`libs/handoff/alumni-merge-verify.ts`, `ALUMNI_MERGE_SUBJECT_MAX_LENGTH`) all read this number;
+ * `alumni-merge-verify.test.ts` asserts the three agree.
+ */
+export const ALUMNI_MERGE_SUBJECT_MAX_LENGTH = 128;
+export const ALUMNI_MERGE_SUBJECT_RE = new RegExp(
+  `^[A-Za-z0-9._-]{1,${ALUMNI_MERGE_SUBJECT_MAX_LENGTH}}$`
+);
+
+/** The claims of an Alumni merge call token. */
+export interface AlumniMergeCallClaims {
+  iss: string;
+  /** The site's id in `libs/contracts/ecosystem-sites.json`. */
+  aud: string;
+  /**
+   * `transfer`: move what the duplicate's account owns onto `target`'s. `erase`: erase the duplicate's
+   * account - the target was erased before the site answered (D54, migration 030), and no `target`
+   * is sent.
+   */
+  mode: 'transfer' | 'erase';
+  /** The duplicate's subject on that site. */
+  dup: string;
+  /** The target's subject, onto which the site moves what the duplicate owns; a `transfer` only. */
+  target?: string;
+  /** The job's id: the site's idempotence key. */
+  jti: string;
+  iat: number;
+  /** `iat` + {@link HANDOFF_TOKEN_LIFETIME_SECONDS}. */
+  exp: number;
+}
+
+/** Signs an Alumni merge call token ({@link ALUMNI_MERGE_TOKEN_TYPE}) with the handoff key. */
+export function signAlumniMergeCallToken(
+  privateKey: KeyObject,
+  kid: string,
+  claims: AlumniMergeCallClaims
+): string {
+  return signCompactEs256(privateKey, { typ: ALUMNI_MERGE_TOKEN_TYPE, kid }, claims);
+}
+
+/**
+ * Signs `claims` as a compact JWS under `header` (`alg` is always ES256). The signature is the raw
+ * `r || s` pair (IEEE P1363) that JWS ES256 requires, not DER.
+ */
+function signCompactEs256(
+  privateKey: KeyObject,
+  header: Record<string, unknown>,
+  claims: object
+): string {
+  const input = `${b64url({ alg: HANDOFF_TOKEN_ALG, ...header })}.${b64url(claims)}`;
   const signature = sign('sha256', Buffer.from(input, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',

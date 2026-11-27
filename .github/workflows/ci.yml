@@ -505,6 +505,16 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- help-seen.integration
 
+      # A DUPLICATE WAITING FOR ITS MERGE IS IN NO PICKER (D56, profiles-and-access.md): the
+      # `NOT EXISTS` names the query builder's alias, which only a real query can judge. Its own
+      # tables, in a throwaway schema (added by #4170, wired here: it ran in no step until then).
+      - name: Picker leaves out a duplicate awaiting its merge against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- picker-merging-duplicate.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================

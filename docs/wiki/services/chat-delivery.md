@@ -3557,6 +3557,8 @@ nobody for it - the same as it never rang for the typed word. It is text, never 
 | Private conversation (MLS group or DM) | every member - everyone in a group is equal | nobody needs to: there is no role to check | the device reads the decrypted text: a picked `@tous` (`@[everyone]`) counts as a mention of the reader (`mentionsUser(..., 'honoured')`, `NotificationLevelGate.EVERYONE`, `everyoneMention`) |
 | Community salon | holders of the moderation grant (`channel.moderate`: admins and moderators by default) | **the server**, `ChannelService.sendMessage` (`vouchedEveryoneMention`) | the server says so: the row's `metadata.mentionsEveryone`, the live frame's `mentionsEveryone`, and the push's per-recipient `mentioned` |
 
+**The bubble follows the same word (2026-11-27).** The salon history row (`listMessages`) carries `mentionsEveryone`, the decode keeps it as `ChatMessage.everyoneVouched`, and `ChatMessageGroups` hands each bubble `everyoneHonoured` (`everyoneMentionOf`): an unvouched `@tous` is drawn as the plain word, never as the accent chip.
+
 A private conversation needs no authority, so a device decides from the plaintext alone, exactly as
 it does for `@[<own id>]`. A SALON is different, and that is what makes this sound: a salon message
 already carries its mentions IN CLEAR beside the ciphertext (`mentionedUserIds`) and the server

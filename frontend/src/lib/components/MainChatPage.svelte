@@ -1836,6 +1836,7 @@
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
           onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
+          onDeleteSelfConversation={() => void convs.handleDeleteSelfConversation(convCtx())}
           onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
           onStartAgainWithSamePeople={() => void convs.handleStartAgainWithSamePeople(convCtx())}
           onHideUnopenable={() => convs.handleHideUnopenable(convCtx())}

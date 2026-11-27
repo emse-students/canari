@@ -8477,13 +8477,71 @@ that knows "Mes notes" (`selfConversationVersion >= SELF_CONVERSATION_VERSION`, 
 a peek that claims nothing) AND seated in the group (`getGroupMembers`): a second device that merely
 exists is no copy. Either read failing says nothing - `readSelfConversationDeviceCover`.
 
-**Not yet here** ([the entry](../../backlog.d/mes-notes-notepad-migration-and-retention.md)):
-the move of existing notepads and the `410` on the old routes, the 90-day retention line, the removal
-of the notepad entry point, and a way to delete the conversation.
+**The notepad moves in (owner, 2026-11-22 items 12-14, moved to `1.8.2` on 2026-11-25).** The
+personal notepad sat in `users.notesCiphertext` under a key core-service held (`users.notesKey`),
+which charter principle 1 refuses; principle 2 says nothing may be lost on the way
+([principes](../../../principes.md)). `notepadMigration.ts`, run by `ChatBackgroundService` once per
+signed-in account whose conversations are all drawn (leader tab only, again when "Mes notes" appears):
+reads the notepad (`GET /users/me/notes`, decrypted under `GET /users/me/notes-key`, or the legacy
+plaintext), creates or finds "Mes notes" WITHOUT selecting it (`openSelfConversation(ctx, { silent })`),
+posts the notepad as a message under a heading (`notepad_moved_heading`), and only once the outbox says
+the message is SENT asks `POST /users/me/notes/moved { digest }`, which deletes the notepad, its
+plaintext and its key in one conditional statement (`apps/core-service/src/users/notepad.ts`).
+
+*Why it can neither post twice nor lose anything* - idempotence from durable state, termination from
+the server's answer, no clock anywhere:
+
+- **The message id is derived, not minted** (`notepadMessageId`: SHA-256 of the account and the
+  notepad's digest, shaped as a v8 UUID). A kill after the post replays under the SAME id: the device
+  asks its own store first (`heldAs`) and queues nothing new. Two devices of the account moving the
+  same notepad post the same id; each receiver keeps one row ("all already held").
+- **The server's notepad is the "still owed" bit.** It is deleted only after the post is sent, and
+  only if the digest named is the notepad held NOW: a save an older build made between the read and
+  the delete changes it, the conditional `UPDATE` matches nothing, the answer is `409
+  NOTEPAD_CHANGED`, and the next run moves the newer notepad as a second message (another digest,
+  another id). A kill between the send and the delete leaves the notepad owed and the message held:
+  the replay finds both and only deletes.
+- **No notepad is ever created again**, so "none held" is final: every old route answers `410
+  NOTEPAD_MOVED` to an account holding none - the read, the key (never minted) and the save, which
+  writes only over a notepad still held, in the same statement as its condition. That finality is
+  what lets the device keep a local mark (`notepadDoneMark`) once the server has said it, and ask
+  nothing in later sessions.
+- **What waits:** a message only queued, or parked failed for the member's Retry, keeps the notepad
+  on the server; "Mes notes" arriving from another device (`self-conversation-arriving`) posts nothing
+  until its Welcome lands; a read with no answer changes nothing. Every branch logs `[NOTEPAD]`.
+
+*The entry point is removed in the same build* (the entry's ordering rule: never before the
+migration ships). The profile's notepad section is gone (`profileSections.ts`; an old
+`/profile/me/notepad` link lands on the hub through `+page.ts`'s unknown-segment redirect), and the
+build that removes it is the build that moves the notepad, at the first signed-in session; until that
+session the notepad stays on the server, unread but whole. An older build keeps its page and may edit a
+notepad not moved yet; once moved, its read answers `410` (its load error is shown) and nothing it
+saves is accepted - the notes are in "Mes notes" on the moving device. Recorded in
+[legacy-compatibility](../../legacy-compatibility.md). The three emptied columns are dropped by a later
+held migration ([the entry](../../backlog.d/p3-drop-the-notepad-columns-once-every-notepad-moved.md)).
+
+**The retention line** (item 13). Below the loss notice, always: the photos, files and voice notes of
+"Mes notes" follow the ordinary conversation retention - the server deletes them after 90 days
+unopened, by default (`conversation_self_retention`, `SelfConversationLossNotice.svelte`).
+
+**The delete.** A self row has no settings, so the header offers "Supprimer mes notes" in their place
+(the desktop icon, the phone menu entry; `onDeleteSelfConversation`). It asks first, `danger` (nothing
+can bring the notes back), then runs the ordinary exit (`exitGroupAndCleanup`: retired first, owed
+durably, answer classified) with the kind stated: `deleteGroupAndBroadcast({ kind: 'self' })` sends
+`?kind=self`, and the owed row is the verb `delete-self`, which the replay
+(`drainPendingGroupExits`) sends the same way - the row that knew the kind is gone by then. Both stores
+narrow the verb through `isPendingGroupExitKind`, so a build that does not know `delete-self` keeps the
+row unrun. Tests: `useConversations.exitGroup.svelte.test.ts`, `pendingGroupExits.test.ts`,
+`pendingGroupExitsStore.test.ts`, `groupActions.exitPropagation.test.ts`,
+`ChatHeader.selfConversation.svelte.test.ts`, `notepadMigration.test.ts`, and core-service's
+`users.service.spec.ts` and `user-write-gone.integration.spec.ts` (the conditional statements against
+PostgreSQL).
 
 Tests: `selfConversation.test.ts`, `mlsDeliveryApi.selfKind.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
 `tabCommitDelegation.test.ts`. **Owed: a reading on both phones** - open "Mes notes" on one device,
-write, add a photo and a voice note, then read them on the account's second device.
+write, add a photo and a voice note, then read them on the account's second device; and an account
+holding a profile notepad sees it arrive in "Mes notes" once
+([the reading](../../backlog.d/reading-owed-mes-notes-on-both-phones-and-the-notepad-move.md)).
 
 ### The jump outline follows the bubble (2026-11-26)
 
