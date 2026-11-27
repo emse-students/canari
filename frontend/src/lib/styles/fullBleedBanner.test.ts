@@ -9,15 +9,16 @@
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { withoutComments } from './markupSources';
 
-const APP_CSS = readFileSync('src/app.css', 'utf8');
+const APP_CSS = withoutComments(readFileSync('src/app.css', 'utf8'));
 const LAYOUT = readFileSync('src/routes/+layout.svelte', 'utf8');
 
 /** Every `selector { body }` rule of app.css whose selector mentions the banner column or the row. */
 function rules(): { selector: string; body: string }[] {
   const out: { selector: string; body: string }[] = [];
   for (const m of APP_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim();
+    const selector = m[1].trim();
     if (selector.includes('.fullscreen-place-open') && selector.includes('app-')) {
       out.push({ selector, body: m[2] });
     }
