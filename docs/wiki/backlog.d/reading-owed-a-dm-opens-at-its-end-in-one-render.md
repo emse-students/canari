@@ -1,6 +1,8 @@
 ## Reading owed - a DM opens at its end in one render: no yank, no arrow at the end, one day pill
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Built 2026-11-25 (`fix/thread-open-lands-once`): the entry's widen no longer glides nor writes
 `scrollTop`, only an arrival glides, and a glide's end re-measures the pane

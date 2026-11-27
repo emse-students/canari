@@ -1347,13 +1347,69 @@ class NotificationService: UNNotificationServiceExtension {
     if let msg = decrypted {
       noteAnnouncement(conversation: groupId, senderId: senderId, at: msg.sentAt)
     }
+    // AN UNNAMED GROUP IS TITLED BY ITS MEMBERS' FIRST NAMES, as the app's list draws it (owner,
+    // 2026-11-17) - composed here, on the phone, from the group's current tree after the push catch-up; nothing
+    // about it rode the push. The cache row above keeps the push's empty name. Android twin:
+    // `titleName` in `presentFrame`.
+    let titleName =
+      groupName.isEmpty && isGroup == true
+      ? (Self.unnamedGroupTitle(groupId: groupId, decrypted: decrypted, ctx: ctx) ?? groupName)
+      : groupName
     applyMessageContent(
-      content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
+      content: content, senderName: shownName, groupName: titleName, declaredGroup: isGroup,
       body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
       level: Self.levelDecision(
         level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
         groupId: groupId))
+  }
+
+  /// The title of a push for an UNNAMED group - its other members' first names, the app's label - or
+  /// nil, when the banner keeps "Conversation de groupe".
+  ///
+  /// Composed by Rust (`canari_native_unnamed_group_title`, the one native copy of the app's rule)
+  /// from the current tree the decrypt of `decrypted` caught up to and the App Group's name copies; nothing about it rode the
+  /// push. A message this extension could not open has no tree to read. Every reason there is none is
+  /// said here: Rust's own log reaches no logger in the extension. Android twin:
+  /// `CanariFirebaseMessagingService.unnamedGroupTitle`.
+  private static func unnamedGroupTitle(
+    groupId: String, decrypted: DecryptResult?, ctx: PushContext
+  ) -> String? {
+    guard let decrypted = decrypted else {
+      NseLog.log.debug("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) unreadable message - no tree to name, the generic title")
+      return nil
+    }
+    guard let members = decrypted.treeMembersJson else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR the decrypt answer named no tree members (\(decrypted.treeMembersError ?? "absent", privacy: .public)) - the generic title")  // log-safe: Rust's MlsError text for an unreadable tree, no message content or name
+      return nil
+    }
+    guard let dir = appGroupDir() else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR no App Group container - the generic title")
+      return nil
+    }
+    guard let raw = canari_native_unnamed_group_title(dir.path, ctx.userId, groupId, members, ctx.locale)
+    else {
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR the title call returned nothing - the generic title")
+      return nil
+    }
+    let json = String(cString: raw)
+    canari_free_string(raw)
+    let answer = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+    if let label = answer["label"] as? String, !label.isEmpty {
+      NseLog.log.debug("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) titled by its members' first names (chars=\(label.count, privacy: .public))")
+      return label
+    }
+    let reason = answer["reason"] as? String ?? "unreadable-answer"
+    let unknown = answer["unknown"] as? Int ?? 0
+    switch reason {
+    // A group of one, a member the phone has never named (added while the app was away), or a phone
+    // that never resolved a name: ordinary states.
+    case "alone", "name-unknown", "no-name-file", "other-account":
+      NseLog.log.notice("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) no label (\(reason, privacy: .public) unknown=\(unknown, privacy: .public)) - the generic title")
+    default:
+      NseLog.log.error("[CanariNSE] [GROUP_LABEL] group=\(groupId.prefix(8), privacy: .public) ERROR no label (\(reason, privacy: .public)) - the generic title")
+    }
+    return nil
   }
 
   /// Notes the message this run draws - `conversation`, its sender, its instant - for the claim
@@ -1661,6 +1717,12 @@ class NotificationService: UNNotificationServiceExtension {
     /// Every user id the WHOLE plaintext mentions (`@[<64 hex>]`), lower-cased, read before `text`
     /// is clamped - a mention past the preview is still a mention.
     let mentionedUserIds: Set<String>
+    /// The people in the group's current tree after the push catch-up, as Rust read them after its
+    /// commit catch-up (`treeMembers`, re-serialised as a JSON array of user ids): what an UNNAMED
+    /// group's banner is titled by (`unnamedGroupTitle`). nil when the answer carried none, with
+    /// Rust's reason in `treeMembersError` when it could not read the tree.
+    let treeMembersJson: String?
+    let treeMembersError: String?
     /// True for an image/GIF message that carries everything needed to fetch + decrypt a thumbnail.
     var isImageMedia: Bool {
       mediaKind == "image" && !(mediaId ?? "").isEmpty && !(mediaKey ?? "").isEmpty
@@ -3672,7 +3734,11 @@ class NotificationService: UNNotificationServiceExtension {
       sentAt: sentAt, replyTo: nonEmpty("replyTo"), mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
       mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"),
       type: type, callId: nonEmpty("callId"), callEnded: (dict["callEnded"] as? Bool) ?? false,
-      hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned)
+      hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned,
+      treeMembersJson: (dict["treeMembers"] as? [String]).flatMap {
+        (try? JSONSerialization.data(withJSONObject: $0)).flatMap { String(data: $0, encoding: .utf8) }
+      },
+      treeMembersError: nonEmpty("treeMembersError"))
   }
 
   /// What `mentionedUserIds(in:)` holds for a call to every member - never a user id (64 hex).

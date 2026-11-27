@@ -1,6 +1,8 @@
 ## Reading owed - a verdict the plugin earned is lifted by the plugin alone, and a salon of the history flap is counted once
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 Built and unit-tested, never run on a device ([offline-and-weak-network](../frontend/offline-and-weak-network.md#two-stacks-one-verdict-183)).
 
