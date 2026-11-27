@@ -1,6 +1,8 @@
 ## P2 - "Mes notes": move the old notepads in, state the retention, offer a delete
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
 *2026-11-25: moved forward from `1.9.0` to `1.8.2` by the owner ([decisions](../decisions/owner-decisions-of-2026-11-25.md), item 3).*
 
