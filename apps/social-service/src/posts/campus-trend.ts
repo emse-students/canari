@@ -17,7 +17,11 @@ import {
 } from './engagement-sql';
 import { suggestionsOnSql } from '../push/notification-category';
 import { CAMPUS_TREND_NOTIFICATION } from './engagement-push-cap';
-import type { PostNotificationsService } from './post-notifications.service';
+import type {
+  NotificationRowsInput,
+  PostNotificationsService,
+  SharedNoticeFields,
+} from './post-notifications.service';
 import { SYSTEM_ACTOR_ID } from './post-notifications.service';
 import { trendThreshold } from './trend-threshold';
 
@@ -302,12 +306,14 @@ export async function announceCampusTrend(
   );
   if (told.length === 0) return 0;
   const text = previewOf(result.markdown ?? '');
+  // SHARED BY THE ROWS AND THE PUSH, so typed as what BOTH read: a row-only field here (`postId`)
+  // would be dropped by the push without a word, and is a compile error instead.
   const common = {
     type: CAMPUS_TREND_NOTIFICATION,
     actorId: SYSTEM_ACTOR_ID,
     actorName: '',
     text,
-  } as const;
+  } as const satisfies SharedNoticeFields<NotificationRowsInput>;
   // EVERY ROW FIRST, in one insert: a push failing below can never cost a reader their bell row.
   const written = await deps.notifications.createNotificationRows({
     ...common,
@@ -330,11 +336,9 @@ export async function announceCampusTrend(
     try {
       await deps.notifications.pushNotice({
         ...common,
-        // THE POST IS NAMED IN THE PUSH'S DATA, where the devices read it: `pushNotice` writes no
-        // row and takes no `postId` of its own, so a `postId` spread in beside the others was dropped
-        // without a word (1.8.3-alpha.1, Mi 9T): the device could not tell a displayed post's trend
-        // from any other (`SeenTrends`, `seenTrendWithheld`) and the banner opened the feed, not the
-        // post. The rule is `libs/contracts/notification-seen-trend.cases.json`.
+        // THE POST IS NAMED IN THE PUSH'S DATA, where the devices read it (`PushNoticeInput`): the
+        // device tells a displayed post's trend by it (`SeenTrends`, `seenTrendWithheld`) and the
+        // banner opens the post. The rule is `libs/contracts/notification-seen-trend.cases.json`.
         pushData: { postId },
         recipientIds: recipients,
         ...(Object.keys(meta).length ? { meta } : {}),

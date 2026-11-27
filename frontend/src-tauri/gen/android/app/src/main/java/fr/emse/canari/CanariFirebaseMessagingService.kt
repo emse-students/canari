@@ -2070,7 +2070,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun readSeenPosts(context: Context, label: String): SeenTrends.Book? {
             val file = File(MlsContextLoader.tauriDataDir(context), "seen_posts.json")
             if (!file.exists()) {
-                Log.d(TAG, "$label no seen_posts.json yet - no trend is withheld")
+                // RECORDED: the one line a trend shown for want of a record leaves ([isSeenTrend] adds none).
+                Log.iRecorded(TAG, "$label no seen_posts.json yet - no trend is withheld")
                 return null
             }
             return try {
@@ -2091,7 +2092,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * nothing (owner, 2026-11-24, "Verif sur l'appareil"). The file is read only for a trend, so
          * every other push pays nothing and says nothing (it is not a trend: no decision is taken).
          *
-         * EVERY END OF A TREND'S DECISION IS A RECORDED LINE ([SeenTrends.Verdict]), with no post id:
+         * EVERY END OF A TREND'S DECISION IS ONE RECORDED LINE ([SeenTrends.Verdict]), with no post id:
          * a trend shown because its post was never displayed is the ordinary case, but the reading of
          * 1.8.3-alpha.1 showed a bare `false` hides a server push that named no post - so the shown
          * cases say which they are, and that one ACCUSES at WARN.
@@ -2111,6 +2112,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
                 SeenTrends.Verdict.NO_POST_ID ->
                     Log.w(TAG, "[SEEN_TREND] a campus trend names no postId - shown, the device cannot tell a displayed post (server payload)")
+                // Said once, by [readSeenPosts] (absent, unreadable): one line, not two.
+                SeenTrends.Verdict.NO_RECORD -> Unit
                 else -> Log.iRecorded(TAG, "[SEEN_TREND] a campus trend shown: ${verdict.reason}")
             }
             return verdict.withheld

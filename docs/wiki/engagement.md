@@ -1251,8 +1251,15 @@ server.** The accepted limit: a post seen on another device is not recognised th
   without the post id: Android the withheld one as the RECORDED `[PUSH_SHOW] outcome=suppressed-seen-trend`,
   each shown one as a recorded `[SEEN_TREND] a campus trend shown: <reason>`, and `no-post-id` as a WARN
   that accuses the server's payload; iOS the same words as `[CanariNSE] [SEEN_TREND]` notices (and the
-  `seen-trend` outcome of `[NSE_OUTCOME]`), ObjC as `NSLog`. A push that is not a trend says nothing: no
-  decision is taken. The bell logs `[SEEN_TREND] bell: a campus trend row withheld` once per row
+  `seen-trend` outcome of `[NSE_OUTCOME]`), `no-post-id` at `.error` with `ERROR ... (server defect)`,
+  the NSE's level for a line accusing the server (there is no warning level in `os.Logger` the NSE
+  uses), ObjC as `NSLog` with the same `ERROR`. ONE line per decision: `no-record` is said by the
+  file's reader (absent, unreadable, no App Group) and not again. A push that is not a trend says
+  nothing: no decision is taken.
+- **The rows and the push share fields only through `SharedNoticeFields`** (`post-notifications.service.ts`):
+  an object built for both a row call and `pushNotice` is declared `satisfies` it, so a field only the
+  row reads (`postId`, `associationLogoUrl`) is a compile error there, not a field the push drops. The
+  campus trend and the booking notices use it. The bell logs `[SEEN_TREND] bell: a campus trend row withheld` once per row
   (`console.log`). `seenTrendBlankRow.test.ts` pins every reason to both iOS spellings (nothing compiles
   them on Windows, and the Swift contract test is not wired to a target).
 - **Proof**: `seenPosts.test.ts` (noting, pruning by age and by cap, the sealed body, and the shared

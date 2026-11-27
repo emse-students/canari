@@ -1688,8 +1688,9 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Whether this push is a campus trend for a post the app already displayed. The file is read only
   /// for a trend that names a post, so every other push pays nothing and says nothing. EVERY END OF A
-  /// TREND'S DECISION IS LOGGED, with no post id: the withheld one, each shown one by its reason, and
-  /// a trend naming no post as a WARN (the server's payload is at fault).
+  /// TREND'S DECISION IS LOGGED ONCE, with no post id: the withheld one, each shown one by its reason
+  /// (`no-record` by `readSeenPosts`, which says why), and a trend naming no post at `.error` - the
+  /// NSE's level for a line that accuses the server (`[PUSH_WAKE] ERROR ... (server defect)`).
   static func withholdsSeenTrend(userInfo: [AnyHashable: Any]) -> Bool {
     guard let key = nonEmpty(string(userInfo["contentKey"])), trendContentKeys.contains(key) else {
       return false
@@ -1704,8 +1705,10 @@ class NotificationService: UNNotificationServiceExtension {
       NseLog.log.notice(
         "[CanariNSE] [SEEN_TREND] a campus trend withheld - its post was already displayed on this device")
     case .noPostId:
-      NseLog.log.notice(
-        "[CanariNSE] [SEEN_TREND] WARN a campus trend names no postId - shown, the device cannot tell a displayed post (server payload)")
+      NseLog.log.error(
+        "[CanariNSE] [SEEN_TREND] ERROR a campus trend names no postId - shown, the device cannot tell a displayed post (server defect)")
+    case .noRecord:
+      break  // `readSeenPosts` already said why (absent, unreadable, no App Group): one line, not two.
     default:
       NseLog.log.notice(
         "[CanariNSE] [SEEN_TREND] a campus trend shown: \(verdict.rawValue, privacy: .public)")  // log-safe: an enum's fixed reason word, never a post id or text

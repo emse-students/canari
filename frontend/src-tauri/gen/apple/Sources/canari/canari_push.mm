@@ -3496,8 +3496,9 @@ static NSString *CanariSeenTrendVerdict(NSDictionary *_Nullable root, NSString *
 }
 
 // Whether this push is withheld on this device. The file is read only for a trend that names a post.
-// EVERY END OF A TREND'S DECISION IS LOGGED, with no post id: the withheld one, each shown one by its
-// reason, and a trend naming no post as a WARN (the server's payload is at fault).
+// EVERY END OF A TREND'S DECISION IS LOGGED ONCE, with no post id: the withheld one, each shown one by
+// its reason (no record by the read below, which says why), and a trend naming no post as an ERROR
+// that accuses the server, as this file's other server-defect lines do.
 static BOOL CanariWithholdsSeenTrend(NSDictionary *data) {
   NSString *key = [data[@"contentKey"] isKindOfClass:[NSString class]] ? data[@"contentKey"] : nil;
   if (!CanariIsTrendKey(key)) return NO;
@@ -3527,8 +3528,8 @@ static BOOL CanariWithholdsSeenTrend(NSDictionary *data) {
     return YES;
   }
   if ([verdict isEqualToString:@"no-post-id"]) {
-    NSLog(@"[CanariPush] [SEEN_TREND] WARN a campus trend names no postId - shown, the device cannot tell a displayed post (server payload)");
-  } else {
+    NSLog(@"[CanariPush] [SEEN_TREND] ERROR a campus trend names no postId - shown, the device cannot tell a displayed post (server defect)");
+  } else if (![verdict isEqualToString:@"no-record"]) {  // no record: said once, by the read above
     NSLog(@"[CanariPush] [SEEN_TREND] a campus trend shown: %@", verdict);
   }
   return NO;
