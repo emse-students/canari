@@ -58,7 +58,7 @@ export function loadTutorialProgress(): TutorialProgress {
 }
 
 /** Persists the progress; a storage that refuses (private mode, quota) is logged, never fatal. */
-export function saveTutorialProgress(progress: TutorialProgress): void {
+function saveTutorialProgress(progress: TutorialProgress): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(TUTORIAL_PROGRESS_KEY, JSON.stringify(progress));
