@@ -111,7 +111,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(57);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(58);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];
@@ -138,6 +138,9 @@ describe('notificationHref', () => {
       '/admin/profile-corrections'
     );
     expect(notificationHref({ type: 'admin_report', postId: 'rep-1' })).toBe('/admin/moderation');
+    expect(notificationHref({ type: 'admin_alumni_duplicate', postId: 'dup-1' })).toBe(
+      '/admin/alumni-duplicates'
+    );
   });
 
   // Owner review of #2967: a delegate (a list) paused or resumed opens its DELEGATION section,

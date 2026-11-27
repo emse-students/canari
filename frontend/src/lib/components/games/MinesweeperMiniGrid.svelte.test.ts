@@ -18,23 +18,32 @@ const mounted: Array<() => void> = [];
 beforeEach(() => {
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
-afterEach(() => {
+const unmountAll = () => {
   while (mounted.length) mounted.pop()!();
+};
+afterEach(() => {
+  unmountAll();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });
 
-function open(id: string, hintStep: number | null = null) {
+function open(id: string, hintStep: number | null = null, flagPrimary = false, touch = false) {
   const onSolved = vi.fn();
   const onLost = vi.fn();
+  const onInvert = vi.fn();
   const app = mount(MinesweeperMiniGrid, {
     target: document.body,
-    props: { lesson: lessonOf(id), hintStep, onSolved, onLost },
+    props: { lesson: lessonOf(id), hintStep, onSolved, onLost, flagPrimary, touch, onInvert },
   });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
-  return { onSolved, onLost };
+  return { onSolved, onLost, onInvert };
 }
+
+const rightClick = (i: number) => {
+  cell(i).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  flushSync();
+};
 
 const cell = (i: number) => document.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)!;
 const marks = (kind?: string) => [
@@ -42,10 +51,6 @@ const marks = (kind?: string) => [
 ];
 const counter = () =>
   document.querySelector('[data-testid="tutorial-counter"]')!.textContent?.trim();
-const byText = (text: string) =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-    b.textContent?.trim().startsWith(text)
-  )!;
 
 describe('MinesweeperMiniGrid', () => {
   it('draws the lesson picture: 9 cells for the flag lesson, the numbers open', () => {
@@ -54,10 +59,8 @@ describe('MinesweeperMiniGrid', () => {
     expect(cell(4).textContent?.trim()).toBe('1');
   });
 
-  it('flags on a tap in Drapeau mode, and solves the lesson once', () => {
-    const { onSolved, onLost } = open('flag');
-    byText('Drapeau').click();
-    flushSync();
+  it('flags on a short press when the player chose the flag first, and solves the lesson once', () => {
+    const { onSolved, onLost } = open('flag', null, true);
     cell(8).click();
     flushSync();
     expect(onSolved).toHaveBeenCalledOnce();
@@ -68,7 +71,7 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('flags on a right-click whatever the mode', () => {
+  it('flags on a right-click (a long press) when the short press digs', () => {
     const { onSolved } = open('flag');
     cell(8).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     flushSync();
@@ -83,10 +86,8 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).not.toHaveBeenCalled();
   });
 
-  it('chords a number: a tap on the 2 opens what its flags make safe, in either mode', () => {
-    const { onSolved } = open('chord');
-    byText('Drapeau').click();
-    flushSync();
+  it('chords a number: a tap on the 2 opens what its flags make safe, whatever the gestures', () => {
+    const { onSolved } = open('chord', null, true);
     cell(4).click();
     flushSync();
     expect(onSolved).toHaveBeenCalledOnce();
@@ -96,10 +97,10 @@ describe('MinesweeperMiniGrid', () => {
     open('one_two_one', 0);
     await tick();
     // The 1 and the 2 the step reads are ringed; the 1 on the right is not read.
-    expect(cell(11).getAttribute('data-hint')).toBe('read');
-    expect(cell(12).getAttribute('data-hint')).toBe('read');
-    expect(cell(12).getAttribute('aria-label')).toBe('Chiffre lu : 2');
-    expect(cell(13).getAttribute('data-hint')).toBeNull();
+    expect(cell(6).getAttribute('data-hint')).toBe('read');
+    expect(cell(7).getAttribute('data-hint')).toBe('read');
+    expect(cell(7).getAttribute('aria-label')).toBe('Chiffre lu : 2');
+    expect(cell(8).getAttribute('data-hint')).toBeNull();
     // The pair of cells is ONE yellow outline, not two rings; the mine it forces is red.
     expect(marks()).toHaveLength(2);
     expect(marks('group')).toHaveLength(1);
@@ -138,10 +139,7 @@ describe('MinesweeperMiniGrid', () => {
   it('shows the mines counter and lowers it by one per flag, raising it back when a flag is lifted', async () => {
     open('flag');
     expect(counter()).toBe('1');
-    byText('Drapeau').click();
-    flushSync();
-    cell(8).click();
-    flushSync();
+    rightClick(8);
     expect(counter()).toBe('0');
   });
 
@@ -157,13 +155,8 @@ describe('MinesweeperMiniGrid', () => {
   it('teaches the counter: flag the mine, and the rest opens with a single tap on a zero', () => {
     const { onSolved } = open('counter');
     expect(counter()).toBe('1');
-    byText('Drapeau').click();
-    flushSync();
-    cell(5).click(); // (1,1), the mine
-    flushSync();
+    rightClick(5); // (1,1), the mine
     expect(counter()).toBe('0');
-    byText('Miner').click();
-    flushSync();
     cell(7).click(); // (3,1): a zero, the two right columns open
     cell(1).click(); // (1,0)
     cell(9).click(); // (1,2)
@@ -177,24 +170,33 @@ describe('MinesweeperMiniGrid', () => {
     expect(
       document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
     ).toBe('Nombre de mines inconnu');
-    // The top row and the end of the hidden row are the picture's continuation; (3,1) is a mine beside fog.
-    for (const i of [0, 1, 2, 3, 4, 9]) expect(cell(i).getAttribute('data-hint')).toBe('far');
-    cell(0).click();
+    // The end of the hidden row is the picture's continuation, and hides a mine.
+    expect(cell(4).getAttribute('data-hint')).toBe('far');
+    cell(4).click();
     flushSync();
     expect(onLost).not.toHaveBeenCalled();
-    expect(cell(0).getAttribute('data-hint')).toBe('far');
+    expect(cell(4).getAttribute('data-hint')).toBe('far');
     // The cells next to a number are the pattern, and stay playable.
-    expect(cell(6).getAttribute('data-hint')).toBeNull();
+    expect(cell(2).getAttribute('data-hint')).toBeNull();
   });
 
   it('draws an open cell whose number is hidden as "?", and ignores a tap on it', () => {
     open('one_two');
-    expect(cell(5).getAttribute('data-hint')).toBe('unknown');
-    expect(cell(5).textContent?.trim()).toBe('?');
-    expect(cell(5).getAttribute('aria-label')).toBe('Chiffre caché : seul le motif compte');
-    cell(5).click();
+    expect(cell(0).getAttribute('data-hint')).toBe('unknown');
+    expect(cell(0).textContent?.trim()).toBe('?');
+    expect(cell(0).getAttribute('aria-label')).toBe('Chiffre caché : seul le motif compte');
+    cell(0).click();
     flushSync();
-    expect(cell(5).textContent?.trim()).toBe('?');
+    expect(cell(0).textContent?.trim()).toBe('?');
+  });
+
+  it('shows "?" on a cell the player opens in an open picture: its number would count the fog', () => {
+    open('one_one');
+    const target = 1 * 5 + 3; // (3,1), the cell the 1-1 makes safe
+    cell(target).click();
+    flushSync();
+    expect(cell(target).getAttribute('data-hint')).toBe('unknown');
+    expect(cell(target).textContent?.trim()).toBe('?');
   });
 
   it('keeps a closed lesson closed: its counter is a number and every cell is playable', () => {
@@ -221,5 +223,37 @@ describe('MinesweeperMiniGrid', () => {
     open('reveal');
     expect(marks('safe')).toHaveLength(1);
     expect(cell(0).getAttribute('data-hint')).toBeNull();
+  });
+
+  it('says the two gestures under the grid, for a mouse or a finger, and offers to swap them', () => {
+    const { onInvert } = open('flag');
+    const said = () =>
+      document
+        .querySelector('[data-testid="tutorial-gestures"]')
+        ?.textContent?.replace(/\s+/g, ' ');
+    expect(said()).toContain('Clic gauche : creuser · clic droit : drapeau');
+    document.querySelector<HTMLButtonElement>('[data-testid="tutorial-invert"]')!.click();
+    expect(onInvert).toHaveBeenCalledOnce();
+    unmountAll();
+    open('flag', null, true, true);
+    expect(said()).toContain('Appui court : drapeau · appui long : creuser');
+  });
+
+  it('flags on a long press of a finger, and does not dig on the click that ends it', () => {
+    vi.useFakeTimers();
+    try {
+      const { onSolved, onLost } = open('flag', null, false, true);
+      cell(8).dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' })
+      );
+      vi.advanceTimersByTime(1000);
+      flushSync();
+      cell(8).click();
+      flushSync();
+      expect(onSolved).toHaveBeenCalledOnce();
+      expect(onLost).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
