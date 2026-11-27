@@ -168,55 +168,89 @@ export class AdminQueuesService {
    * keyed on the batch's first duplicate, lists the batch in its `meta` and stays while ANY of them
    * still waits (`BELL_ROW_GATE`); the live count carries the rest.
    *
-   * ONCE PER DUPLICATE, whatever the caller does (`alumni_duplicate_announcements`, ONE ROW PER
-   * DUPLICATE): the duplicates are CLAIMED before anything is told - one INSERT ... ON CONFLICT DO
-   * NOTHING RETURNING - and ONLY the newly claimed are announced. A lost answer replayed, a set that
-   * grew, two flushes at once: a duplicate already claimed is never told again. A notice that throws
-   * RELEASES exactly the rows this call claimed (so a retry tells them) and is logged at error. The
-   * ledger is swept of the duplicates whose flag is gone, in the same transaction as the claim.
-   * Throws on a failed write: the internal caller keeps the notice owed. Answers how many admins have
-   * the bell row, and how many duplicates were claimed here or already told.
+   * ONCE PER DUPLICATE, whatever the caller does, and NEVER LOST: the CLAIM and the BELL ROWS are ONE
+   * transaction (`alumni_duplicate_announcements`, one row per duplicate and per flag incarnation).
+   * The duplicates are claimed - one INSERT ... ON CONFLICT DO NOTHING/UPDATE RETURNING - and ONLY the
+   * newly claimed get rows; a failure while the rows are written rolls the claim back with them, so a
+   * crash or an error leaves nothing claimed and the retry tells. The PUSH follows the commit (a push
+   * sent from inside a transaction would announce rows that may still roll back); a push that fails
+   * leaves the rows and the claim - the bell has it - and is logged at error. A lost answer replayed,
+   * a set that grew and two flushes at once never tell a duplicate twice. The ledger is swept of the
+   * duplicates whose flag is gone, in the same transaction as the claim. Throws on a failed write:
+   * the internal caller keeps the notice owed. Answers how many admins have the bell row, and how
+   * many duplicates were claimed here or already told.
    */
   async announceAlumniDuplicates(
     duplicateUuids: readonly string[]
   ): Promise<{ told: number; claimed: number; skipped: number }> {
-    this.logger.log(`[ADMIN_QUEUES] ${duplicateUuids.length} Alumni duplicate(s) to announce`);
+    const { type, target } = ANNOUNCED['alumni-duplicates'];
+    const distinct = [...new Set(duplicateUuids)];
+    this.logger.log(`[ADMIN_QUEUES] ${distinct.length} Alumni duplicate(s) to announce`);
     try {
-      const claimed = await this.reports.manager.transaction(async (tx) => {
+      const admins: { id: string }[] = await this.reports.manager.query(
+        `SELECT id FROM users WHERE admin = true`
+      );
+      if (admins.length === 0) {
+        this.logger.warn(`[ADMIN_QUEUES] ${type}: no global admin to tell`);
+        return { told: 0, claimed: 0, skipped: distinct.length };
+      }
+      const { claimed, told } = await this.reports.manager.transaction(async (tx) => {
         await tx.query(
           `DELETE FROM alumni_duplicate_announcements a
             WHERE NOT EXISTS (SELECT 1 FROM alumni_duplicate_flags f WHERE f."duplicateUuid" = a."duplicateUuid")`
         );
-        return (
-          (await tx.query(
-            `INSERT INTO alumni_duplicate_announcements ("duplicateUuid")
-             SELECT unnest($1::uuid[]) ON CONFLICT DO NOTHING RETURNING "duplicateUuid"::text AS uuid`,
-            [[...duplicateUuids]]
-          )) as { uuid: string }[]
-        ).map((r) => r.uuid);
+        // A uuid is claimed once per INCARNATION of its flag (its `flaggedAt`): the same flag never
+        // twice, a duplicate erased and flagged again is told anew. ORDER BY keeps two flushes that
+        // overlap from taking the rows in opposite orders.
+        const rows = (await tx.query(
+          `INSERT INTO alumni_duplicate_announcements ("duplicateUuid", "flaggedAt")
+           SELECT f."duplicateUuid", f."flaggedAt" FROM alumni_duplicate_flags f
+            WHERE f."duplicateUuid" = ANY($1::uuid[]) ORDER BY 1
+           ON CONFLICT ("duplicateUuid") DO UPDATE
+             SET "flaggedAt" = EXCLUDED."flaggedAt", "announcedAt" = clock_timestamp()
+             WHERE alumni_duplicate_announcements."flaggedAt" IS DISTINCT FROM EXCLUDED."flaggedAt"
+           RETURNING "duplicateUuid"::text AS uuid`,
+          [distinct]
+        )) as { uuid: string }[];
+        const uuids = rows.map((r) => r.uuid);
+        if (uuids.length === 0) return { claimed: uuids, told: 0 };
+        const written = await this.notifications.createNotificationRows({
+          manager: tx,
+          type,
+          postId: uuids[0],
+          actorId: SYSTEM_ACTOR_ID,
+          actorName: SYSTEM_ACTOR_NAME,
+          text: '',
+          rows: admins.map((a) => ({ recipientId: a.id, meta: { duplicateUuids: uuids } })),
+        });
+        return { claimed: uuids, told: written };
       });
-      const skipped = new Set(duplicateUuids).size - claimed.length;
+      const skipped = distinct.length - claimed.length;
       if (skipped > 0) {
         this.logger.debug(
-          `[ADMIN_QUEUES] ${skipped} Alumni duplicate(s) were already told: not told again`
+          `[ADMIN_QUEUES] ${skipped} Alumni duplicate(s) were already told, or have no flag: not told again`
         );
       }
-      if (claimed.length === 0) return { told: 0, claimed: 0, skipped };
-      try {
-        const told = await this.announce('alumni-duplicates', claimed[0], null, {
-          duplicateUuids: claimed,
-        });
-        return { told, claimed: claimed.length, skipped };
-      } catch (err) {
-        this.logger.error(
-          `[ADMIN_QUEUES] the notice of ${claimed.length} Alumni duplicate(s) FAILED, their claim is released so the retry tells them: ${String(err)}`
+      if (claimed.length > 0 && told > 0) {
+        try {
+          await this.notifications.pushNotice({
+            recipientIds: admins.map((a) => a.id),
+            type,
+            actorId: SYSTEM_ACTOR_ID,
+            actorName: SYSTEM_ACTOR_NAME,
+            text: '',
+            pushData: { target },
+          });
+        } catch (err) {
+          this.logger.error(
+            `[ADMIN_QUEUES] ${type}: bell rows written for ${told} admin(s), their PUSH failed: ${String(err)}`
+          );
+        }
+        this.logger.log(
+          `[ADMIN_QUEUES] ${type} ${claimed.length} duplicate(s) told to ${told} of ${admins.length} admin(s)`
         );
-        await this.reports.manager.query(
-          `DELETE FROM alumni_duplicate_announcements WHERE "duplicateUuid" = ANY($1::uuid[])`,
-          [claimed]
-        );
-        throw err;
       }
+      return { told, claimed: claimed.length, skipped };
     } finally {
       await this.signal.changed({ queue: 'alumni-duplicates' });
     }

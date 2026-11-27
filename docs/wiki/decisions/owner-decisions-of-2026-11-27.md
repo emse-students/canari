@@ -75,10 +75,13 @@ the charter principle that bounds it is the third, "your attention is not for sa
    A backlog found at once is ONE push and ONE bell row per batch, never one row per duplicate. The
    bell row lists its batch in `meta.duplicateUuids` and stays while ANY of them still waits. The
    guarantee is a PER-DUPLICATE ledger in social (`alumni_duplicate_announcements`, migration 188):
-   a call CLAIMS its duplicates (one `INSERT ... ON CONFLICT DO NOTHING RETURNING`) BEFORE it notifies
-   and announces ONLY the newly claimed. A lost answer replayed, a set that grew ({A} lost, then
-   {A,B} tells B alone) and two flushes at once never tell a duplicate twice; a notice that throws
-   releases exactly the rows it claimed, so the retry tells. A ledger row is swept by the next announce
+   a call CLAIMS its duplicates (one `INSERT ... ON CONFLICT ... RETURNING`, keyed on the duplicate and the
+   INCARNATION of its flag, `flaggedAt`, so a flag that was erased and comes back is told anew) in the
+   SAME transaction as the admins' bell rows, and writes rows only for the newly claimed; the push
+   follows the commit. A lost answer replayed, a set that grew ({A} lost, then
+   {A,B} tells B alone) and two flushes at once never tell a duplicate twice; a failure while the rows are
+   written rolls the claim back with them, so a crash or an error leaves nothing claimed and the retry
+   tells (a push that fails after the commit keeps the rows and is logged at error). A ledger row is swept by the next announce
    once its flag is gone (a completed merge, an erased account), so it never outgrows the flags.
 4. **What the badge counts.** The flags still waiting (found, not dismissed, no merge marked or
    completed), which is what the page lists as duplicates, PLUS a merge only requested whose mark was
@@ -89,7 +92,8 @@ the charter principle that bounds it is the third, "your attention is not for sa
    409 `ALUMNI_MERGE_NOT_DUPLICATE`) for an account MiConnect lacks or that is not duplicate-shaped; each
    refusal is logged. The check and the write are ONE step: under the duplicate's advisory lock, the
    one a mark takes before it writes its row, so a mark and a dismissal of the same duplicate never
-   both land. A DISMISSED flag is not deleted by an erasure (it holds a MiConnect uuid and a time;
+   both land - and a mark REFUSES (409, `ALUMNI_MERGE_DISMISSED`, read inside that lock) a duplicate that was
+   dismissed, so a stale "Rattacher" never lands on an account the admins closed. A DISMISSED flag is not deleted by an erasure (it holds a MiConnect uuid and a time;
    deleting it would put the account back in the queue), [register M1](../compliance/register-of-processing.md).
 
 ## A reading the lead can take is taken, not left owed (owner, 2026-11-27)

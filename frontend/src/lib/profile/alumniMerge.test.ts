@@ -173,6 +173,7 @@ describe('the Alumni merge client', () => {
     ['ALUMNI_MERGE_ALREADY_MERGED', () => m.alumni_merge_error_already_merged()],
     ['ALUMNI_MERGE_NO_MATCH', () => m.alumni_merge_error_no_match()],
     ['ALUMNI_MERGE_TARGET_BUSY', () => m.alumni_merge_error_target_busy()],
+    ['ALUMNI_MERGE_DISMISSED', () => m.alumni_merge_error_dismissed()],
     [
       'ALUMNI_MERGE_REASON_REQUIRED',
       () => m.alumni_merge_error_reason_required({ min: 20, max: 1000 }),

@@ -7328,6 +7328,7 @@
   "alumni_merge_error_reason_required": "Un rattachement à la main demande une raison écrite de {min} à {max} caractères : rien n'a été modifié.",
   "alumni_merge_error_target_busy": "Un autre rattachement en cours vise déjà ce compte : termine-le ou annule-le d'abord. Rien n'a été modifié.",
   "alumni_merge_error_not_merged": "MiConnect n'a pas encore fusionné ce compte.",
+  "alumni_merge_error_dismissed": "Un admin a répondu « Pas un doublon » pour ce compte : rien n'a été modifié.",
   "admin_alumni_manual_open": "Rattacher à un autre compte",
   "alumni_duplicates_not_duplicate": "Pas un doublon",
   "alumni_duplicates_not_duplicate_hint": "Écarter ce compte : ce n'est pas un doublon. Il ne sera plus signalé à personne, définitivement.",

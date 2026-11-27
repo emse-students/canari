@@ -36,21 +36,17 @@ describe('AdminQueuesService', () => {
     told?: string[];
   }) {
     const ledger = new Set(opts.told ?? []);
-    const query = jest.fn(async (sql: string, params: unknown[]) => {
+    const query = jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql === LOCK_REPORT_SUBJECT_SQL) return [{}];
       if (sql === REPORT_ALREADY_ANNOUNCED_SQL) return [{ covered: opts.covered ?? false }];
       if (sql.includes('DELETE FROM alumni_duplicate_announcements a')) return [];
       if (sql.includes('INSERT INTO alumni_duplicate_announcements')) {
-        const fresh = [...new Set(params[0] as string[])].filter((u) => !ledger.has(u));
+        const fresh = [...new Set(params?.[0] as string[])].filter((u) => !ledger.has(u));
         fresh.forEach((u) => ledger.add(u));
         return fresh.map((uuid) => ({ uuid }));
       }
-      if (sql.includes('DELETE FROM alumni_duplicate_announcements WHERE')) {
-        (params[0] as string[]).forEach((u) => ledger.delete(u));
-        return [];
-      }
       if (sql.includes('FROM users WHERE admin = true')) {
-        return (opts.admins ?? []).filter((id) => id !== params[0]).map((id) => ({ id }));
+        return (opts.admins ?? []).filter((id) => id !== params?.[0]).map((id) => ({ id }));
       }
       return [opts.row ?? {}];
     });
@@ -60,11 +56,29 @@ describe('AdminQueuesService', () => {
     };
     const notifications = {
       createNotifications: jest.fn(async (d: { recipientIds: string[] }) => d.recipientIds.length),
+      // The Alumni duplicates' rows are written ON the claim's transaction, the push follows its commit.
+      createNotificationRows: jest.fn(
+        async (d: { rows: unknown[]; postId?: string }) => d.rows.length
+      ),
+      pushNotice: jest.fn(async () => 1),
     };
     const signal = { changed: jest.fn(async () => undefined) };
     const service = new AdminQueuesService(
       {
-        manager: { query, transaction: async (fn: (tx: unknown) => unknown) => fn({ query }) },
+        manager: {
+          query,
+          // A transaction that fails rolls the claim back, as PostgreSQL does.
+          transaction: async (fn: (tx: unknown) => unknown) => {
+            const before = [...ledger];
+            try {
+              return await fn({ query });
+            } catch (err) {
+              ledger.clear();
+              before.forEach((u) => ledger.add(u));
+              throw err;
+            }
+          },
+        },
       } as never,
       associations as never,
       notifications as never,
@@ -142,7 +156,7 @@ describe('AdminQueuesService', () => {
       );
     });
 
-    it('tells EVERY global admin of a found Alumni duplicate - once, as the platform, with no name', async () => {
+    it('tells EVERY global admin of a found Alumni duplicate - rows on the claim transaction, then ONE push, as the platform, with no name', async () => {
       const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const duplicate = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
       expect(await service.announceAlumniDuplicates([duplicate])).toEqual({
@@ -150,16 +164,27 @@ describe('AdminQueuesService', () => {
         claimed: 1,
         skipped: 0,
       });
-      expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
-      expect(notifications.createNotifications).toHaveBeenCalledWith({
-        recipientIds: ['a1', 'a2'],
+      expect(notifications.createNotificationRows).toHaveBeenCalledTimes(1);
+      expect(notifications.createNotificationRows).toHaveBeenCalledWith({
+        manager: expect.objectContaining({ query: expect.any(Function) }),
         type: 'admin_alumni_duplicate',
         postId: duplicate,
         actorId: 'system',
         actorName: 'Canari',
         text: '',
+        rows: [
+          { recipientId: 'a1', meta: { duplicateUuids: [duplicate] } },
+          { recipientId: 'a2', meta: { duplicateUuids: [duplicate] } },
+        ],
+      });
+      expect(notifications.pushNotice).toHaveBeenCalledTimes(1);
+      expect(notifications.pushNotice).toHaveBeenCalledWith({
+        recipientIds: ['a1', 'a2'],
+        type: 'admin_alumni_duplicate',
+        actorId: 'system',
+        actorName: 'Canari',
+        text: '',
         pushData: { target: 'admin-alumni-duplicates' },
-        meta: { duplicateUuids: [duplicate] },
       });
       expect(socialDeepLink({ target: 'admin-alumni-duplicates' })).toBe(
         'fr.emse.canari://admin-alumni-duplicates'
@@ -168,7 +193,7 @@ describe('AdminQueuesService', () => {
       expect(signal.changed).toHaveBeenCalledWith({ queue: 'alumni-duplicates' });
     });
 
-    it('a batch is ONE push and ONE bell row, keyed on its first duplicate: a backlog is no flood in every bell', async () => {
+    it('a batch is ONE push and ONE bell row per admin, keyed on its first duplicate: a backlog is no flood in every bell', async () => {
       const { service, notifications, signal } = make({ admins: ['a1', 'a2'] });
       const ids = [
         '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10',
@@ -176,13 +201,16 @@ describe('AdminQueuesService', () => {
         '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12',
       ];
       await service.announceAlumniDuplicates(ids);
-      expect(notifications.createNotifications).toHaveBeenCalledTimes(1);
-      expect(notifications.createNotifications.mock.calls[0][0]).toMatchObject({
+      expect(notifications.createNotificationRows).toHaveBeenCalledTimes(1);
+      expect(notifications.createNotificationRows.mock.calls[0][0]).toMatchObject({
         postId: ids[0],
-        recipientIds: ['a1', 'a2'],
         // The row names the WHOLE batch: its bell gate keeps it while any of them waits.
-        meta: { duplicateUuids: ids },
+        rows: [
+          { recipientId: 'a1', meta: { duplicateUuids: ids } },
+          { recipientId: 'a2', meta: { duplicateUuids: ids } },
+        ],
       });
+      expect(notifications.pushNotice).toHaveBeenCalledTimes(1);
       expect(signal.changed).toHaveBeenCalledTimes(1);
     });
 
@@ -197,42 +225,70 @@ describe('AdminQueuesService', () => {
         claimed: 1,
         skipped: 1,
       });
-      expect(notifications.createNotifications.mock.calls.map((c) => c[0])).toEqual([
-        expect.objectContaining({ postId: A, meta: { duplicateUuids: [A] } }),
-        expect.objectContaining({ postId: B, meta: { duplicateUuids: [B] } }),
+      expect(notifications.createNotificationRows.mock.calls.map((c) => c[0].postId)).toEqual([
+        A,
+        B,
       ]);
       expect([...ledger]).toEqual([A, B]);
       // A set that holds nothing new rings nothing at all, and the badges still recount.
-      notifications.createNotifications.mockClear();
+      notifications.createNotificationRows.mockClear();
+      notifications.pushNotice.mockClear();
       expect(await service.announceAlumniDuplicates([B, A])).toEqual({
         told: 0,
         claimed: 0,
         skipped: 2,
       });
-      expect(notifications.createNotifications).not.toHaveBeenCalled();
+      expect(notifications.createNotificationRows).not.toHaveBeenCalled();
+      expect(notifications.pushNotice).not.toHaveBeenCalled();
     });
 
-    it('a failed notice RELEASES exactly the rows it claimed, says it at error, and the retry tells', async () => {
+    it('the claim and the rows are ONE transaction: a failed write rolls the claim back with them, nothing is pushed, and the retry tells', async () => {
       const A = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
       const B = '1c9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f11';
       const { service, notifications, ledger } = make({ admins: ['a1'], told: [A] });
-      notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
+      notifications.createNotificationRows.mockRejectedValueOnce(new Error('db down'));
       await expect(service.announceAlumniDuplicates([A, B])).rejects.toThrow('db down');
-      // B was claimed by this call and is released; A was claimed by an earlier call and stays.
+      // B was claimed by this call and rolled back with its rows; A, claimed earlier, stays.
       expect([...ledger]).toEqual([A]);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('FAILED'));
+      expect(notifications.pushNotice).not.toHaveBeenCalled();
       await service.announceAlumniDuplicates([A, B]);
-      expect(notifications.createNotifications).toHaveBeenCalledTimes(2);
+      expect(notifications.createNotificationRows).toHaveBeenCalledTimes(2);
       expect([...ledger].sort()).toEqual([A, B]);
+    });
+
+    it('a push that fails AFTER the commit leaves the rows and the claim (the bell has it) and is said at error', async () => {
+      const A = '0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10';
+      const { service, notifications, ledger } = make({ admins: ['a1'] });
+      notifications.pushNotice.mockRejectedValueOnce(new Error('fcm down'));
+      expect(await service.announceAlumniDuplicates([A])).toEqual({
+        told: 1,
+        claimed: 1,
+        skipped: 0,
+      });
+      expect([...ledger]).toEqual([A]);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('PUSH failed'));
     });
 
     it('a failed write still tells the badges, and the failure reaches the caller to retry', async () => {
       const { service, notifications, signal } = make({ admins: ['a1'] });
-      notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
+      notifications.createNotificationRows.mockRejectedValueOnce(new Error('db down'));
       await expect(
         service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
       ).rejects.toThrow('db down');
       expect(signal.changed).toHaveBeenCalledTimes(1);
+    });
+
+    it('with no global admin nothing is claimed: the notice is not lost to a ledger row nobody was told by', async () => {
+      const { service, notifications, ledger } = make({ admins: [] });
+      expect(
+        await service.announceAlumniDuplicates(['0b9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f10'])
+      ).toEqual({
+        told: 0,
+        claimed: 0,
+        skipped: 1,
+      });
+      expect([...ledger]).toEqual([]);
+      expect(notifications.createNotificationRows).not.toHaveBeenCalled();
     });
 
     it('never tells the person who asked, even an admin', async () => {

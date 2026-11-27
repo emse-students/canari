@@ -281,6 +281,34 @@ describe('AlumniMergeService and the admin queue', () => {
       expect(queue.changed).toHaveBeenCalledTimes(1);
     });
 
+    it('a mark REFUSES (409, dismissed) a duplicate the admins answered "Pas un doublon" for, inside the lock, writing nothing', async () => {
+      const query = jest.fn(async (sql: string) =>
+        sql.includes('FROM alumni_duplicate_flags') && sql.includes('"dismissedAt" IS NOT NULL')
+          ? [{}]
+          : []
+      );
+      const { service } = make([DUP, TARGET], query);
+      await expect(
+        (service as unknown as { openMerge: (t: string, m: unknown) => Promise<string> }).openMerge(
+          't',
+          {
+            actorId: 'a',
+            dup: DUP,
+            target: TARGET,
+            targetUserId: null,
+            held: {},
+            mode: 'auto',
+            reason: null,
+          }
+        )
+      ).rejects.toMatchObject({ status: 409, response: { code: 'ALUMNI_MERGE_DISMISSED' } });
+      const sqls = query.mock.calls.map((c) => String((c as unknown[])[0]));
+      expect(sqls.some((q) => q.includes('INSERT INTO alumni_merges'))).toBe(false);
+      // Read AFTER the duplicate lock, which a dismissal takes too.
+      const lock = sqls.findIndex((q) => q.includes('pg_advisory_xact_lock'));
+      expect(sqls.findIndex((q) => q.includes('"dismissedAt" IS NOT NULL'))).toBeGreaterThan(lock);
+    });
+
     it('a mark takes the SAME advisory lock before it writes its row', async () => {
       const query = jest.fn(async (sql: string) =>
         sql.includes('INSERT INTO alumni_merges') ? [{ id: 'row-1' }] : []

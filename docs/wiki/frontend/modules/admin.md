@@ -136,9 +136,9 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   `AlumniDuplicateQueue.flag` writes the `alumni_duplicate_flags` row and tells social-service through
   ONE door, `POST /internal/notifications/alumni-duplicates-found` (1 to 200 uuids): ONE push and ONE
   bell row for the whole batch, keyed on its first duplicate and listing every one in `meta.duplicateUuids`
-  (it stays while ANY of them waits; `BELL_ROW_GATE`), ONCE PER DUPLICATE through a per-duplicate ledger, `alumni_duplicate_announcements` (claimed
-  BEFORE the notice, only the newly claimed told, released if the notice fails, swept once the flag is
-  gone): a lost answer replayed, a grown set or two flushes at once ring nothing twice - a backlog found by a first reading is a
+  (it stays while ANY of them waits; `BELL_ROW_GATE`), ONCE PER DUPLICATE through a per-duplicate ledger, `alumni_duplicate_announcements` (claimed in the SAME transaction as
+  the bell rows, keyed on the flag's incarnation, only the newly claimed told, the push after the
+  commit, swept once the flag is gone): a lost answer replayed, a grown set or two flushes at once ring nothing twice - a backlog found by a first reading is a
   push and a badge, never one row per duplicate in every admin's bell. A row that exists is never
   announced again, however often the page is read or a mark is cancelled (charter principle 3, "your
   attention is not for sale"); the notice is DURABLE: `announcedAt` is written only after social

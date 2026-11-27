@@ -127,6 +127,7 @@ const ALUMNI_MERGE_CODES = [
   'ALUMNI_MERGE_REASON_REQUIRED',
   'ALUMNI_MERGE_TARGET_BUSY',
   'ALUMNI_MERGE_NOT_MERGED',
+  'ALUMNI_MERGE_DISMISSED',
 ] as const;
 type AlumniMergeCode = (typeof ALUMNI_MERGE_CODES)[number];
 
@@ -176,6 +177,8 @@ export function alumniMergeErrorMessage(err: unknown): string {
       return m.alumni_merge_error_target_busy();
     case 'ALUMNI_MERGE_NOT_MERGED':
       return m.alumni_merge_error_not_merged();
+    case 'ALUMNI_MERGE_DISMISSED':
+      return m.alumni_merge_error_dismissed();
   }
 }
 

@@ -16,6 +16,7 @@ import {
   ALUMNI_MERGE_REASON_MIN,
   AlumniMergeAlreadyMergedError,
   AlumniMergeHoldingsUnavailableError,
+  AlumniMergeDismissedError,
   AlumniMergeInProgressError,
   AlumniMergeNoMatchError,
   AlumniMergeNotDuplicateError,
@@ -1028,11 +1029,23 @@ export class AlumniMergeService {
       await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `alumni-merge-target:${m.target.uuid}`,
       ]);
-      // The duplicate's own lock: a dismissal of it ("Pas un doublon") takes the same one, so the two
-      // never both land (`dismiss`).
+      // The duplicate's own lock, the one a dismissal ("Pas un doublon") takes too (`dismiss`): under
+      // it the two never both land. A dismissal that committed first is READ here and refuses the
+      // mark - a stale "Rattacher" must not land on an account the admins closed for good.
       await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `alumni-merge-duplicate:${m.dup.uuid}`,
       ]);
+      const dismissed = (await manager.query(
+        `SELECT 1 FROM alumni_duplicate_flags
+          WHERE "duplicateUuid"::text = $1 AND "dismissedAt" IS NOT NULL LIMIT 1`,
+        [m.dup.uuid]
+      )) as unknown[];
+      if (dismissed.length > 0) {
+        this.logger.warn(
+          `[ALUMNI_MERGE] refused ${tag}: the duplicate was answered "not a duplicate"`
+        );
+        throw new AlumniMergeDismissedError();
+      }
       const busy = (await manager.query(
         `SELECT 1 FROM alumni_merges
           WHERE "targetUuid" = $1 AND "completedAt" IS NULL AND "duplicateUuid" <> $2 LIMIT 1`,

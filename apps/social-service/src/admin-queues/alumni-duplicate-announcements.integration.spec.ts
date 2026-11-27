@@ -10,7 +10,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { DataSource } from 'typeorm';
-import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 import { AdminQueuesService } from './admin-queues.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -23,7 +22,8 @@ const C = '2d9b4b8e-6c1e-4a54-9f2e-3c2d1a7e9f12';
 maybe('the Alumni duplicates ledger (PostgreSQL)', () => {
   const schema = `alumni_ledger_it_${process.pid}`;
   let ds: DataSource;
-  let createNotifications: jest.Mock;
+  let createNotificationRows: jest.Mock;
+  let pushNotice: jest.Mock;
   let service: AdminQueuesService;
 
   beforeAll(async () => {
@@ -41,7 +41,9 @@ maybe('the Alumni duplicates ledger (PostgreSQL)', () => {
       `CREATE TABLE users (id varchar PRIMARY KEY, admin boolean NOT NULL DEFAULT false)`
     );
     await ds.query(`INSERT INTO users (id, admin) VALUES ('adm', true)`);
-    await ds.query(`CREATE TABLE alumni_duplicate_flags ("duplicateUuid" uuid PRIMARY KEY)`);
+    await ds.query(
+      `CREATE TABLE alumni_duplicate_flags ("duplicateUuid" uuid PRIMARY KEY, "flaggedAt" timestamptz NOT NULL DEFAULT clock_timestamp())`
+    );
     await ds.query(
       readFileSync(
         join(__dirname, '..', 'migrations', '188_alumni_duplicate_announcements.sql'),
@@ -56,11 +58,14 @@ maybe('the Alumni duplicates ledger (PostgreSQL)', () => {
     for (const u of [A, B, C]) {
       await ds.query(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [u]);
     }
-    createNotifications = jest.fn(async (d: { recipientIds: string[] }) => d.recipientIds.length);
+    // The rows are written ON the claim's transaction (here a stand-in that writes none), the push
+    // follows its commit.
+    createNotificationRows = jest.fn(async (d: { rows: unknown[] }) => d.rows.length);
+    pushNotice = jest.fn(async () => 1);
     service = new AdminQueuesService(
       { manager: ds.manager } as never,
       {} as never,
-      { createNotifications } as never,
+      { createNotificationRows, pushNotice } as never,
       { changed: jest.fn(async () => undefined) } as never
     );
   });
@@ -70,10 +75,18 @@ maybe('the Alumni duplicates ledger (PostgreSQL)', () => {
     await ds?.destroy();
   }, 60_000);
 
+  /** What the admins' rows named, in order, for the calls that did not roll back. */
   const told = (): string[] =>
-    createNotifications.mock.calls.flatMap(
-      (c) => (c[0] as { meta: { duplicateUuids: string[] } }).meta.duplicateUuids
+    createNotificationRows.mock.calls.flatMap(
+      (c) =>
+        (c[0] as { rows: { meta: { duplicateUuids: string[] } }[] }).rows[0].meta.duplicateUuids
     );
+  const ledger = async (): Promise<string[]> =>
+    (
+      (await ds.query(
+        `SELECT "duplicateUuid"::text AS u FROM alumni_duplicate_announcements ORDER BY 1`
+      )) as { u: string }[]
+    ).map((r) => r.u);
 
   it('two flushes of the SAME set at once tell each duplicate exactly once', async () => {
     const results = await Promise.all([
@@ -99,29 +112,50 @@ maybe('the Alumni duplicates ledger (PostgreSQL)', () => {
     expect(told()).toEqual([A, B]);
   });
 
-  it('a failed notice releases its claim, so the retry tells', async () => {
-    createNotifications.mockRejectedValueOnce(new Error('db down'));
-    await expect(service.announceAlumniDuplicates([A, B])).rejects.toThrow('db down');
-    expect(await ds.query(`SELECT 1 FROM alumni_duplicate_announcements`)).toHaveLength(0);
-    takeLogged('error', /FAILED, their claim is released/);
-    // The failed call's own arguments are not a notice that landed.
-    createNotifications.mockClear();
-    await service.announceAlumniDuplicates([A, B]);
-    expect(told().sort()).toEqual([A, B]);
+  it('opposite-order overlapping sets at once neither deadlock nor tell twice (the claim takes rows in a fixed order)', async () => {
+    for (let round = 0; round < 5; round += 1) {
+      await ds.query(`DELETE FROM alumni_duplicate_announcements`);
+      createNotificationRows.mockClear();
+      await Promise.all([
+        service.announceAlumniDuplicates([A, B, C]),
+        service.announceAlumniDuplicates([C, B, A]),
+        service.announceAlumniDuplicates([B, A]),
+      ]);
+      expect(told().sort()).toEqual([A, B, C]);
+    }
   });
 
-  it('the next announce sweeps the rows whose flag is gone, and a re-flagged duplicate is told anew', async () => {
+  it('the claim and the rows are ONE transaction: a failure while the rows are written rolls the claim back, nothing is pushed, and the retry tells', async () => {
+    createNotificationRows.mockRejectedValueOnce(new Error('db down'));
+    await expect(service.announceAlumniDuplicates([A, B])).rejects.toThrow('db down');
+    expect(await ledger()).toEqual([]);
+    expect(pushNotice).not.toHaveBeenCalled();
+    // The failed call's own arguments are not a notice that landed.
+    createNotificationRows.mockClear();
+    await service.announceAlumniDuplicates([A, B]);
+    expect(told().sort()).toEqual([A, B]);
+    expect(pushNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it('the next announce sweeps the rows whose flag is gone', async () => {
     await service.announceAlumniDuplicates([A, B]);
     // A's merge completed: its flag is dropped (`DROP_DUPLICATE_FLAG_SQL`).
     await ds.query(`DELETE FROM alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [A]);
     await service.announceAlumniDuplicates([C]);
-    const left = (await ds.query(
-      `SELECT "duplicateUuid"::text AS u FROM alumni_duplicate_announcements ORDER BY 1`
-    )) as { u: string }[];
-    expect(left.map((r) => r.u)).toEqual([B, C]);
-    // A is flagged again later (a new life): told again.
-    await ds.query(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [A]);
+    expect(await ledger()).toEqual([B, C]);
+  });
+
+  it('a duplicate whose flag was deleted and flagged AGAIN is told anew by the very next announce, with no sweep in between to lean on', async () => {
     await service.announceAlumniDuplicates([A]);
-    expect(told().filter((u) => u === A)).toHaveLength(2);
+    createNotificationRows.mockClear();
+    // Erased, then found again: a new flag, a new incarnation (`flaggedAt`).
+    await ds.query(`DELETE FROM alumni_duplicate_flags WHERE "duplicateUuid" = $1`, [A]);
+    await ds.query(`INSERT INTO alumni_duplicate_flags ("duplicateUuid") VALUES ($1)`, [A]);
+    expect(await ledger()).toEqual([A]); // the old incarnation's row is still there
+    await service.announceAlumniDuplicates([A]);
+    expect(told()).toEqual([A]);
+    // ...and the same incarnation is never told twice.
+    await service.announceAlumniDuplicates([A]);
+    expect(told()).toEqual([A]);
   });
 });

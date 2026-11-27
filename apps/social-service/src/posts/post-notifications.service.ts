@@ -461,6 +461,11 @@ export type NotificationRowsInput = {
   associationId?: string;
   associationLogoUrl?: string | null;
   rows: { recipientId: string; meta: Record<string, unknown> | null }[];
+  /**
+   * The caller's transaction: the category gate is read and the rows written ON it, so they commit or
+   * roll back with the caller's own writes (the Alumni duplicates' claim, `AdminQueuesService`).
+   */
+  manager?: EntityManager;
 };
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
@@ -1064,7 +1069,7 @@ export class PostNotificationsService {
     const addressed = data.rows.filter((r) => r.recipientId !== data.actorId);
     const on = new Set(
       await recipientsWithCategoryOn(
-        this.notifRepo.manager,
+        data.manager ?? this.notifRepo.manager,
         data.type,
         addressed.map((r) => r.recipientId)
       )
@@ -1079,9 +1084,10 @@ export class PostNotificationsService {
   private async saveNotificationRows(data: NotificationRowsInput): Promise<number> {
     const rows = data.rows.filter((r) => r.recipientId !== data.actorId);
     if (rows.length === 0) return 0;
-    await this.notifRepo.save(
+    const repo = data.manager ? data.manager.getRepository(PostNotification) : this.notifRepo;
+    await repo.save(
       rows.map(({ recipientId, meta }) =>
-        this.notifRepo.create({
+        repo.create({
           recipientId,
           type: data.type,
           postId: data.postId,

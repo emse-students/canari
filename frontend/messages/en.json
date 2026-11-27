@@ -7319,6 +7319,7 @@
   "alumni_merge_error_reason_required": "A manual merge needs a written reason of {min} to {max} characters: nothing was changed.",
   "alumni_merge_error_target_busy": "Another open merge already names this account: finish or cancel it first. Nothing was changed.",
   "alumni_merge_error_not_merged": "MiConnect has not merged this account yet.",
+  "alumni_merge_error_dismissed": "An admin answered \"Not a duplicate\" for this account: nothing was changed.",
   "admin_alumni_manual_open": "Merge into another account",
   "alumni_duplicates_not_duplicate": "Not a duplicate",
   "alumni_duplicates_not_duplicate_hint": "Set this account aside: it is not a duplicate. It will never be flagged to anyone again.",
