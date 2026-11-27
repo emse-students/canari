@@ -8559,10 +8559,12 @@ class itself. The old `isHighlighted` ring prop of `MessageBubble` has no caller
 
 ## A quoted photo is drawn, not named (2026-11-27)
 
-Owner's two minifixes. **No frame:** an own photo or video with no caption that answers a message
-sets `isMediaOnly` like a plain one (`MessageBubble`, `isVisualReply`): no padded `bg-bubble-out`
-around it, the quote stays stacked above. A reel, a voice note or a file keeps its framing; a caption
-keeps the bubble (principle 7, simplicity: the owner asked only about the bare image).
+Owner's two minifixes. **No frame:** a message that answers another keeps the render it would have without the reply
+(`MessageBubble`; superseded the same day by the owner's general rule, *"c'est pas parce que c'est une
+reponse qu'il faut mettre un contour"*): a captionless attachment of ANY kind, a link, a GIF, a lone
+emoji (jumbomoji) and a poll stay naked, and a photo with a caption keeps its bleeding layout (the
+bubble's corner facing the quote is flattened by `stackedQuotePosition`). The quote is a separate
+block stacked above; only a plain text reply keeps its bubble.
 
 **Thumbnail in the quote:** a stored quote carries only a text preview, so `ChatMessageGroups` looks
 the original up in an id map of the messages it already renders (`quotedVisualMedia`, never a fetch; the same original answers with the same object) and hands
