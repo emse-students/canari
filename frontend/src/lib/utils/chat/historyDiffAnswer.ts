@@ -121,6 +121,11 @@ export async function answerHistoryDigest(params: {
   incomplete?: boolean;
   /** The asker is owed the conversation's state - see `registerOwed.ts`. */
   register?: boolean;
+  /**
+   * The start date of the HISTORY GRANT this digest was asked under (`historyGrant.ts`): the asker's
+   * arrival span is lifted from it in the answer's filter, and nothing else changes.
+   */
+  grantSince?: number;
   deps: HistoryAnswerDeps;
 }): Promise<void> {
   const { groupId, requesterIdentity, selfIdentity, digest, since, requestId, answerKey, deps } =
@@ -162,6 +167,7 @@ export async function answerHistoryDigest(params: {
     seal: { answerKey, answerer: selfIdentity },
     // The digest names ids, the state key that asked for it counts deletions as well.
     withTombstones: true,
+    ...(params.grantSince !== undefined ? { grantSince: params.grantSince } : {}),
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterIdentity}: ${String(e)}`));
 
   // The requester listed messages we do not have, so we ask for them on the same exchange.

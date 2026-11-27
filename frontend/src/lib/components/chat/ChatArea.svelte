@@ -269,6 +269,13 @@
      * call to place again, in this conversation. Absent where no call can be placed from here.
      */
     onCallBack?: () => void;
+    /**
+     * Whether a `memberAdded` notice offers "Envoyer l'historique des messages" for this added user
+     * (`canOfferHistoryTo`, the newcomer predicate). Absent where no grant can be made from here.
+     */
+    offerHistoryTo?: (userId: string) => boolean;
+    /** Opens the history grant for `userId` (`HistoryGrantDialog`). */
+    onSendHistory?: (userId: string) => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     mentionRoster?: MentionRosterMember[];
     /**
@@ -387,6 +394,8 @@
     authToken = '',
     onJoinChannel,
     onCallBack,
+    offerHistoryTo,
+    onSendHistory,
     onFilesSelected,
     onSendVoiceNote,
     pendingFiles = [],
@@ -2521,6 +2530,8 @@
             {onForward}
             {onJoinChannel}
             {onCallBack}
+            {offerHistoryTo}
+            {onSendHistory}
             onNavigateToMessage={navigateToMessage}
             {onReact}
             {onVotePoll}
