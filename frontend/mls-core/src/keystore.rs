@@ -36,14 +36,36 @@ pub trait DeviceKeyStore: Send + Sync {
     /// triggers biometric authentication before writing.
     fn store_device_key(&self, key: &[u8; 32], alias: &str) -> Result<(), String>;
 
-    /// Retrieve a 32-byte key by alias, or `None` if not found.
+    /// Read a 32-byte key by alias, saying WHY there is none when there is none.
     ///
     /// On platforms with biometric protection, this triggers a biometric
     /// prompt (Face ID / fingerprint) before returning the key.
-    fn retrieve_device_key(&self, alias: &str) -> Option<[u8; 32]>;
+    fn read_device_key(&self, alias: &str) -> DeviceKeyRead;
+
+    /// Retrieve a 32-byte key by alias, or `None` for any reason there is none - for a caller with
+    /// no use for the reason. {@link read_device_key} is the one implementation.
+    fn retrieve_device_key(&self, alias: &str) -> Option<[u8; 32]> {
+        match self.read_device_key(alias) {
+            DeviceKeyRead::Found(key) => Some(key),
+            DeviceKeyRead::Absent | DeviceKeyRead::PromptDismissed => None,
+        }
+    }
 
     /// Delete a key by alias.
     fn delete_device_key(&self, alias: &str) -> Result<(), String>;
+}
+
+/// What reading a device key found. A dismissed biometric sheet is NOT an empty keystore: the key is
+/// there and the user chose not to open it, so the two are told apart at the source, as a type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceKeyRead {
+    /// The key, read.
+    Found([u8; 32]),
+    /// Nothing readable under the alias: never written, wiped, or refused for a reason that is not a
+    /// dismissal.
+    Absent,
+    /// The user cancelled the biometric sheet (or the system or the app did): the key was not read.
+    PromptDismissed,
 }
 
 /// No-op implementation for desktop/web platforms.
@@ -58,8 +80,8 @@ impl DeviceKeyStore for NoopDeviceKeyStore {
         Ok(())
     }
 
-    fn retrieve_device_key(&self, _alias: &str) -> Option<[u8; 32]> {
-        None
+    fn read_device_key(&self, _alias: &str) -> DeviceKeyRead {
+        DeviceKeyRead::Absent
     }
 
     fn delete_device_key(&self, _alias: &str) -> Result<(), String> {
@@ -74,7 +96,7 @@ impl DeviceKeyStore for NoopDeviceKeyStore {
 /// without depending on a real platform keystore.
 #[cfg(feature = "test-keystore")]
 pub mod testing {
-    use super::DeviceKeyStore;
+    use super::{DeviceKeyRead, DeviceKeyStore};
     use std::sync::Mutex;
 
     pub struct MemoryDeviceKeyStore {
@@ -103,9 +125,14 @@ pub mod testing {
             Ok(())
         }
 
-        fn retrieve_device_key(&self, alias: &str) -> Option<[u8; 32]> {
-            let entries = self.entries.lock().ok()?;
-            entries.iter().find(|(a, _)| a == alias).map(|(_, k)| *k)
+        fn read_device_key(&self, alias: &str) -> DeviceKeyRead {
+            let Ok(entries) = self.entries.lock() else {
+                return DeviceKeyRead::Absent;
+            };
+            entries
+                .iter()
+                .find(|(a, _)| a == alias)
+                .map_or(DeviceKeyRead::Absent, |(_, k)| DeviceKeyRead::Found(*k))
         }
 
         fn delete_device_key(&self, alias: &str) -> Result<(), String> {

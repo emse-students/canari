@@ -28,6 +28,7 @@ import {
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
+  isKeystorePromptDismissed,
   isMlsManagerAbsent,
   resolveMlsPublicUrls,
 } from '$lib/mls-client';
@@ -1115,7 +1116,9 @@ export abstract class BaseMlsService implements IMlsService {
     // `mls-core` through the WASM constructor or `initialiser_mls` - each verdict crossed its
     // boundary as a CODE field and was typed there (`mlsStateLoadErrorOf`), never read from prose.
     if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
-    if (isKeystoreKeyUnavailable(error)) return 'keystore_unavailable';
+    if (isKeystoreKeyUnavailable(error) || isKeystorePromptDismissed(error)) {
+      return 'keystore_unavailable';
+    }
     // Untyped AT A BOUNDARY, which already accused it (`mlsStateLoadErrorOf` logs every untyped
     // answer once, because not every caller of a boundary classifies). A second line here would be
     // the same failure logged twice.
