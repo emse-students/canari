@@ -54,7 +54,7 @@ entries:
       order: 1
       # THE MINIMUM (owner, 2026-11-27): two sentences and the link. The detail lives in ONE place, the
       # page it links to; this notice changes with no version (the version is what asks again).
-      initial_value: "<p>MiConnect te connecte aux services des associations de l'École. Il enregistre ton <strong>nom</strong>, ton prénom et le profil que tu déclares, et les transmet aux services auxquels tu te connectes : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École. Il enregistre ton <strong>nom</strong>, ton prénom, ton identifiant du CAS ou des Alumni et le profil que tu déclares, et, par les Alumni, ta qualité de cotisant et ton adresse e-mail ; il transmet ton nom et ton profil aux services auxquels tu te connectes, sans quoi la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-accept"

@@ -212,8 +212,7 @@ entries:
     attrs:
       execution_logging: false
       expression: |-
-        rel = getattr(request.user, "ak_groups", None) or request.user.groups
-        return any(g.name.startswith("mino-") for g in rel.all())
+        return any(g.name.startswith("mino-") for g in request.user.groups.all())
   - model: authentik_policies.policybinding
     identifiers:
       target: !Find [authentik_policies.policybindingmodel, [application__slug, "mino-wiki"]]

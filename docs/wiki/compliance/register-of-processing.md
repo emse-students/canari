@@ -95,8 +95,10 @@ the wiki Mino (Wiki.js - [mino-access](../infrastructure/mino-access.md); the Om
 the Rootz association's MDE network console, for the members of `acces-reseau` only; the school's CAS
 is the source. **The public face is `/legal/miconnect`, the ONE detailed copy** (the notice of
 `45-consent.yaml` is two sentences and its link since 2026-11-27). Its revision of 2026-11-27 names
-every recipient above, the console and what it receives included, drops the archives, and says the
-cotisant rule opens MiGallery, Le Cercle and MinoWiki. **Only a MATERIAL change asks every account
+every recipient above - the console and what it receives, and the two OIDC subjects Sky, MiGallery and
+Le Cercle receive in a signed token at an Alumni merge - describes the manual merge (D55: the e-mail
+and last sign-in of every eligible account a name search finds, read and not kept; the names re-checked
+at the sign-in), drops the archives, and says the cotisant rule opens MiGallery, Le Cercle and MinoWiki. **Only a MATERIAL change asks every account
 again** (owner, 2026-11-27, [decisions](../decisions/owner-decisions-of-2026-11-27.md)): a minor revision
 moves the page's `updated` date and not `acceptedVersion`, which stays `2026-11-24` for this one. Backups: `authentik_db.sql.gz`, 14 days (section 7); the release's rollback copies, 3 copies
 and 30 days at most (M3). The public face is the MiConnect terms (`/legal/miconnect`, section 5),

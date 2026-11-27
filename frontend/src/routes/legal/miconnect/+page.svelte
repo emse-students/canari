@@ -90,19 +90,22 @@
     </p>
     <p>
       Ta qualité de cotisant et ton adresse e-mail ne sont transmises à aucun service, à une
-      exception près : si ton compte a été créé par les Alumni et que son nom et sa promo
-      correspondent à un seul compte existant, les administrateurs de Canari voient l'adresse e-mail
-      et la dernière connexion à MiConnect des deux comptes, lues chez MiConnect sans être
-      conservées, pour décider de les rattacher. Ce rattachement ne se fait qu'à ta connexion Alumni
-      suivante, et seulement si le compte existant est lié au CAS et porte le nom que les Alumni
-      transmettent ; chaque rattachement, ou son refus, est journalisé avec l'adresse IP de la
-      connexion. MiConnect se sert de ta qualité de cotisant : après tes cinq premières années à
-      l'École (jusqu'au 31 août de ton année d'entrée plus cinq), MiGallery, Le Cercle et le wiki
-      Mino sont réservés aux cotisants de l'année en cours, aux personnels et aux personnes que les
-      administrateurs y autorisent. Canari reçoit le fait que ton compte Alumni est lié, pour te
-      rappeler de le lier ; et quand tu ouvres MiGallery ou Le Cercle depuis Canari, son serveur lit
-      cette même règle chez MiConnect, sans la conserver, pour ne t'y ouvrir déjà connecté que si
-      MiConnect t'y laisserait entrer.
+      exception près : si ton compte a été créé par les Alumni, les administrateurs de Canari
+      peuvent le rattacher à ton compte existant. Pour en décider, ils voient l'adresse e-mail et la
+      dernière connexion à MiConnect des deux comptes quand ton nom et ta promo n'en désignent
+      qu'un, ou, s'ils le rattachent à la main, de chaque compte qu'une recherche par nom leur
+      propose ; ces informations sont lues chez MiConnect sans être conservées. Le rattachement ne
+      se fait qu'à ta connexion Alumni suivante, et seulement si le compte existant est lié au CAS
+      et que les noms vus par l'administrateur sont toujours ceux des deux comptes ; chaque
+      rattachement, ou son refus, est journalisé avec l'adresse IP de la connexion. Sky, MiGallery
+      et Le Cercle reçoivent alors, dans un jeton signé, les identifiants techniques des deux
+      comptes, pour y rattacher ou effacer le compte en double. MiConnect se sert de ta qualité de
+      cotisant : après tes cinq premières années à l'École (jusqu'au 31 août de ton année d'entrée
+      plus cinq), MiGallery, Le Cercle et le wiki Mino sont réservés aux cotisants de l'année en
+      cours, aux personnels et aux personnes que les administrateurs y autorisent. Canari reçoit le
+      fait que ton compte Alumni est lié, pour te rappeler de le lier ; et quand tu ouvres MiGallery
+      ou Le Cercle depuis Canari, son serveur lit cette même règle chez MiConnect, sans la
+      conserver, pour ne t'y ouvrir déjà connecté que si MiConnect t'y laisserait entrer.
     </p>
   </section>
 
@@ -130,8 +133,10 @@
     </p>
     <p>
       La console de supervision du réseau de la Maison des Élèves, outil de l'association Rootz, ne
-      reçoit que les personnes que ses administrateurs y autorisent, et d'elles seulement leur nom,
-      leur prénom, leur identifiant et un identifiant technique, rien de leur profil.
+      reçoit que les personnes que ses administrateurs y autorisent, et d'elles seulement leur nom
+      complet, leur identifiant, un identifiant technique et le nom de son groupe d'accès (<code
+        >acces-reseau</code
+      >), rien de leur profil.
     </p>
     <p>
       MiConnect fonctionne sur le serveur partagé de l'École, administré avec sa direction des
@@ -178,8 +183,9 @@
     <p>
       Si ces conditions changent de façon importante (une donnée ou un usage nouveau), la case t'est
       redemandée à la connexion suivante. Une modification mineure (un service retiré, une
-      formulation précisée) change seulement la date en haut de cette page, sans rien te redemander.
-      Version en vigueur pour l'acceptation : {acceptedVersionLabel}.
+      formulation précisée, un service ajouté qui ne reçoit les données que des personnes qui s'y
+      connectent elles-mêmes) change seulement la date en haut de cette page, sans rien te
+      redemander. Version en vigueur pour l'acceptation : {acceptedVersionLabel}.
     </p>
   </section>
 </LegalDocument>

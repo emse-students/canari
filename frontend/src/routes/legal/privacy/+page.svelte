@@ -116,18 +116,21 @@
         <dt>Messages privés et de groupe</dt>
         <dd>
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
-          serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
-          revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
-          l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
-          jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
-          réponse perdue. Pour chaque conversation, il garde aussi l'heure de réception de son
-          dernier message visible, sans contenu ni auteur, 90 jours au plus, pour qu'un nouvel
-          appareil affiche vos conversations dans l'ordre avant que leur historique n'arrive ; seuls
-          les membres de la conversation la reçoivent. Un pseudo donné à un membre dans une
-          conversation voyage chiffré comme un message et n'est jamais lu par le serveur : il est
-          gardé sur les appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à
-          la déconnexion, et il n'apparaît jamais dans une notification.
+          serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. « Mes notes », votre
+          conversation avec vous-même, est chiffrée de la même façon ; l'ancien bloc-notes du
+          profil, que le serveur gardait chiffré sous une clé qu'il détenait, y est déplacé par
+          votre appareil puis supprimé du serveur, avec sa clé. Il connaît en revanche, en clair :
+          les membres de chaque conversation, le nom des groupes, l'expéditeur, l'heure et la taille
+          de chaque message. Pour chaque message envoyé, il garde aussi l'identifiant aléatoire que
+          lui donne l'application, avec l'appareil qui l'a envoyé, 90 jours au plus, pour ne pas le
+          remettre deux fois si l'application le renvoie après une réponse perdue. Pour chaque
+          conversation, il garde aussi l'heure de réception de son dernier message visible, sans
+          contenu ni auteur, 90 jours au plus, pour qu'un nouvel appareil affiche vos conversations
+          dans l'ordre avant que leur historique n'arrive ; seuls les membres de la conversation la
+          reçoivent. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
+          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
+          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
+          jamais dans une notification.
         </dd>
       </div>
       <div>

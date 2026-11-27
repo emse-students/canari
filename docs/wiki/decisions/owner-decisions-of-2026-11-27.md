@@ -28,6 +28,10 @@ Recorded so no question answered here is asked again. All three ship in `1.8.3`,
      is asked once; a MINOR revision (a service retired, a wording made precise, a recipient added
      under rules the text already describes) moves `updated` alone. `check-consent-version.sh` pins
      `acceptedVersion` to the other four places and refuses an `updated` earlier than it.
+   - **The lead's reading of "minor"** (lead, 2026-11-27, reversible): adding a RECIPIENT that receives
+     data ONLY for the people who themselves sign in to it (the MDE network console, a new site behind
+     MiConnect) counts as minor - it adds no data and no purpose for anyone who does not use it.
+     Section 8 of the page says so in its examples. A new kind of data or a new purpose stays material.
    - **This revision is minor**: the version stays `2026-11-24`. The full text now names the wiki
      among the sites the cotisant rule opens, drops the archives, and names the MDE network console
      and what it receives; the notice is two sentences and the link. **An existing account that
