@@ -39,7 +39,7 @@ nobody**.
 1. `custom_statut` - "Je suis : Élève / Personnel de l'école" (the label/value pair keeps the value
    `Elève`, see [authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)).
 2. If `Elève` (policy `is-student`): `attributes.promo`, the ENTRY year (AST 2A enter the year
-   before), validated `1816 <= promo <= this year`; `attributes.formation`, one of ICM / ISMIN / FSSS
+   before), validated `1816 <= promo <= this year`; `attributes.formation`, one of ICM / ISMIN / FISA
    / Master.
 3. `Merge attributes` copies the status into `attributes.school_status`, then write + login.
 
@@ -64,7 +64,7 @@ can sign in to all nine.
 | Eleve, ICM | 550 |
 | Eleve, ISMIN | 17 |
 | Eleve, Master | 13 |
-| Eleve, FSSS | 5 |
+| Eleve, FISA | 5 |
 | "Personnel de l'ecole" (no promo, no formation) | 14 |
 | no status at all | 1 |
 | no CAS connection | 6 |
@@ -98,7 +98,11 @@ criterion, hard-coded three times, and every admin flag is local:
   **Alumni association**.
 - **D3 - No graduated/current distinction.** A student and an alumnus are the same thing in the model:
   someone with a cursus. Any time filter goes through the promo.
-- **D4 - Formations: ICM, ISMIN, FSSS (formation sous statut salarie), PDIS, Autre** - one bucket for
+- **D4 - Formations: ICM, ISMIN, FISA (Formation d'Ingenieur Sous statut d'Apprenti - the
+  apprentices), PDIS, Autre** - **spelt `FSSS` until 1.8.3, and glossed here "formation sous statut
+  salarie", which was wrong**: the owner settled on 2026-11-26 that FSSS and FISA are the same
+  population and that the name is FISA; migration 187 (social-service) rewrote every stored value
+  ([backlog entry](backlog.d/p2-the-formation-fsss-is-fisa.md) for what the other estates owe) - one bucket for
   masters, doctorates and the rest, no sub-values. **PDIS added 2026-10-04 (user), same shape as the
   others and nobody in it yet**: the list lives in `SPACE_FORMATIONS` + migration 071 (social-service),
   `FORMATIONS` (frontend, ONE list: `profileEdit.ts` re-exports it), `FORMATIONS` in core-service
@@ -155,7 +159,7 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D19 - Feed, agenda and associations are per space, and an audience is FIXED BY THE AUTHOR, never
   chosen.** Most content is published by an association, so it inherits the association's space: an
   ICM post never lands in an ISMIN feed. An association therefore carries a campus and/or a
-  formation. Reaching beyond it (an ICM Saint-Etienne association addressing the FSSS) is set by an
+  formation. Reaching beyond it (an ICM Saint-Etienne association addressing the FISA) is set by an
   admin on the association, and a nominative permission may WIDEN one post (the rare inter-campus
   case).
   **AMENDED FOR INSTITUTIONS ONLY (owner, 2026-11-10): an institution CHOOSES the reach of each
@@ -561,7 +565,7 @@ filters.
   second apply report a change forever (the applier now ignores `expires` on a non-expiring token),
   and the token `key` must be digest-compared, never printed (`SECRETS`).
 - **`PUT /users/:id/profile`** (global admin, `ProfileEditService`): validates the whole profile
-  (campus, cursus entries of ICM / ISMIN / FSSS / Autre with a plausible year, posts, both names;
+  (campus, cursus entries of ICM / ISMIN / FISA / Autre with a plausible year, posts, both names;
   D11 enforced), reads the authentik user by the person's `miconnectUuid`, writes
   `attributes.profile` as a read-modify-write of the WHOLE `attributes` (authentik's PATCH replaces it;
   since 1.8.1 the profile key alone, merged by MiConnect's write flow under the account's row lock)
@@ -1050,7 +1054,8 @@ claim and calls the editor account.
   re-reads the duplicate just before it writes the mark through MiConnect's write flow (the mark's
   three keys only, MERGED by MiConnect under the account's row lock, so no other key is written and no
   concurrent edit is lost); turns the row MARKED. Called again on an open row into the same target, it resumes: the mark
-  is idempotent. **Nothing is erased at the mark** (owner, 2026-11-24): the duplicate's Canari
+  is idempotent, and it keeps the ROW's mode and reason ("Reprendre" sends none, D55); an `auto` row
+  whose target is no longer the unique match is refused rather than marked `auto`. **Nothing is erased at the mark** (owner, 2026-11-24): the duplicate's Canari
   account is erased through `AccountErasureService.requestErasure`, the ONE erasure path
   ([account-erasure](account-erasure.md)), when the open-merges list sees the duplicate gone from
   MiConnect - after the merge, never before it (`complete`: the erasure requested, then the row
@@ -1122,9 +1127,10 @@ attribute keys, once nothing reads them - each removal measured, per
 ### The Alumni merge, extended (D52-D58, planned for `1.8.3`)
 
 Decided 2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md)); designed the
-same day, NOTHING BUILT. One entry per work package, each `target: 1.8.3`:
-[Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md),
-[MiConnect](backlog.d/alumni-merge-miconnect-policy-event-push-and-manual-mark.md),
+same day. **The Canari and MiConnect halves (D54, D55, D57) and the pickers (D56) are BUILT** - see
+"As built" at the end of this section; what they still owe is in
+[Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md). The other
+entries, each `target: 1.8.3`:
 [Sky](backlog.d/alumni-merge-sky-transfers-then-erases-the-duplicate.md),
 [MiGallery](backlog.d/alumni-merge-migallery-transfers-then-erases-the-duplicate.md),
 [Le Cercle](backlog.d/alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md).
@@ -1194,8 +1200,10 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     naming the other (the owner's decision of 2026-11-26,
     [decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 7) - a new ledger type, so a
     Le Cercle schema migration; the duplicate is then closed by `deleteOwnAccount`, its balance
-    already zero: `merged`. **Until that migration ships**, and only until then, this case answers
-    `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD`, changes nothing, and is reported (D54).
+    already zero: `merged`. The migration ships WITH the endpoint, so there is no interim refusal.
+    A target who closed their own Le Cercle account -> `409 { code: 'ALUMNI_MERGE_TARGET_CLOSED' }`,
+    nothing changed: the job is BLOCKED, said at ERROR at once, and named with its code
+    (`lastError`) in every daily report until a human settles it (D54).
   - **Portail-etu**: no package - it keeps no account (read 2026-11-26).
 - **D54 - The completion follows the merge, and the sites follow the completion** (lead, item 5).
   - **The push.** MiConnect journals the merge as an Event `custom_alumni_merge` (D57 makes it
@@ -1219,16 +1227,46 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     **The target's next Canari sign-in does NOT run it**: the push and the sign-in arrive within the
     same seconds, so a third path would only race the push; the reconciler already covers a lost one.
   - **The sites.** `complete` writes, in the transaction that closes the row, one job per site in
-    `alumni_merge_site_jobs` (`mergeId`, `site` in `sky`, `migallery`, `cercle`, the two subjects,
+    `alumni_merge_site_jobs` (`mergeId`, `site` in `sky`, `migallery`, `le-cercle` - the ids of the
+    `ECOSYSTEM_SITES` registry, from which the list is derived - the two subjects,
     attempts, next attempt, last failure, outcome; one row per merge and site, a unique index). The
     worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
     backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
     `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token Canari signs with its
-    handoff key, `typ: canari-merge+jwt`, audience the site, claims `dup`, `target`, `jti` = the job
-    id - verified by the site's VENDORED verifier against Canari's JWKS, the file `shape.mjs` already
-    compares. A `2xx` with its outcome completes the job; a `409` with a typed refusal marks it
-    `blocked` (no retry: the state, not the network, refused) and is an ERROR line; anything else is
-    retried. The daily report names every job pending over 24 h and every blocked one, and the admin
+    handoff key, `typ: canari-merge+jwt`, audience the site, claims `mode` (REQUIRED, no default:
+    `transfer`, or `erase` once the target was erased - see below), `dup`, `target` (a `transfer`
+    only; each subject at most 128 characters, `ALUMNI_MERGE_SUBJECT_MAX_LENGTH`, the ONE bound the
+    hook, the columns and the verifier share), `jti` =
+    the job id, lifetime 60 s - verified against Canari's JWKS by the ONE verifier Canari ships,
+    `libs/handoff/alumni-merge-verify.ts`, beside the handoff verifier whose leeway and lifetime it
+    imports, VENDORED by each site beside its `handoff-verify.ts` and compared by `shape.mjs`
+    (`ALUMNI_MERGE_VENDORED`); its test signs with core-service's own sender. A `2xx` with its outcome
+    completes the job - an `erase` may answer `absent` or `erased`, a `transfer` `absent`,
+    `transferred` or `merged`, and any other outcome is a broken contract, an ERROR line, retried with
+    backoff; a `409` with a typed refusal marks it `blocked` (no retry: the state, not the
+    network, refused) and is an ERROR line; a `401 { outcome: <class> }` is a refused token, an ERROR
+    line naming the site and the class on EVERY attempt, asked again hourly so that a key rotation
+    or a redeploy heals it; a `404` (`route_missing`: the site does not serve the path yet), or a
+    `503 { outcome: 'not_configured' }` (`trust_unset`: it serves the path but its trust in Canari's
+    keys is unset), is a site not ready - the job waits UNREADY, its `lastError` and the daily warning
+    saying which of the two the site answered, asked again daily, with
+    no line per try (a site that serves the path never answers 404: an account it does not hold is
+    `absent`); anything else, `503 { outcome: 'keys_unavailable' }` included, is retried with
+    backoff. Each is classified on the status and a typed body field, never on prose.
+  - **The target erased before its sites answered** (the review of 2026-11-27): NOTHING CASCADES to a
+    job. Each job carries the subjects it needs and never reads its merge row; the target's erasure
+    deletes the jobs a site already settled and turns every job still owed into an `erase` of the
+    duplicate's account on that site, the target's subject blanked, before it deletes the merge row,
+    whose foreign key then only nulls `mergeId` (`ON DELETE SET NULL`). A duplicate's account on a
+    sibling site never outlives the merge because the person it was merged into left. The erasure
+    first LOCKS the target's merge rows, and the close reads the target from its own `UPDATE ...
+    RETURNING`: a close in flight commits before the erasure's statements run (so they convert its
+    jobs), and a close that comes after reads the blanked target and writes `erase` jobs - neither
+    order leaves a transfer onto an erased person. A job already claimed keeps its lease
+    (`GREATEST("nextAttemptAt", now())`). **Canari's erasure does not reach the target's OWN accounts
+    on the sibling sites**: each site erases those under its own rules, as for any person who leaves
+    MiConnect; only the duplicate's account, which the merge made Canari's business, is erased by a
+    job. The daily report names every job pending over 24 h and every blocked one, and the admin
     page shows each closed merge's three site states.
   - **Idempotence from durable state**: the job row says what is owed, the site's own tables say what
     is done - a duplicate subject with no account is `absent`, whether it never signed in or the
@@ -1301,6 +1339,75 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
 - **D58 - What would make it wrong is reported.** A push Canari refuses (error), a completion by the
   reconciler (warning), a site job pending over 24 h or blocked (daily report, error), a homonym pair
   with nothing to tell apart (warning): each names the merge id and the site, never a name.
+
+**As built (1.8.3, the Canari and MiConnect halves).** Where each part lives, and the choices the
+build made:
+
+- **The policy** (`30-sources.yaml`, `miconnect-alumni-merge-or-refuse`) reads the seven mark keys;
+  a mark with no mode is `auto` (a mark written before 1.8.3). The manual names are compared through
+  the SAME `miconnect-alumni-names-agree` policy as the automatic rule. The merge Event is
+  `Event.new("alumni_merge", ...)`, `set_user(target)`, the client address from
+  `ClientIPMiddleware.get_client_ip`, ONE `save()`, run by `transaction.on_commit`: saving the Event
+  is what dispatches the push, which must never announce a merge that rolls back. Step M proves it:
+  a fault raised INSIDE the policy's own atomic block, after the merge registered its Event's save
+  (`transaction.on_commit` wrapped to register that one callback, then raise), leaves the duplicate
+  and its link standing, no merge Event and no push. The first form tried - the whole sign-in inside
+  an OUTER `transaction.atomic`, rolled back after - does not run: the step never returned and was
+  killed after about six hours (2026-11-27). The Event and the
+  push carry both OIDC subjects (`uid`), the duplicate's read BEFORE its delete, since it derives from
+  the pk. Refusals keep `from_http` (nothing is deleted).
+- **The push** is `85-alumni-merge-push.yaml`: the policy `miconnect-alumni-merge-is-the-event`, the
+  two webhook mappings, the transport (`send_once`) and the rule. The header mapping reads the secret
+  from the WORKER's environment (`os.environ`, not `!Env`: the blueprint would otherwise store it in
+  the database) and raises when it is unset, so a missing secret is a failed notification task, never
+  an unsigned call. The URL is production's: dev and production share ONE MiConnect, and dev holds no
+  editor token, so dev never marks a merge and has no secret to receive one (`compose-wiring`'s
+  `DEV_ABSENT_KEYS`). Step M of `test-enrollment-flow.py` proves the rule passes the merge
+  Events and nothing else, then DELIVERS each push synchronously, as `notification_transport` does,
+  to a loopback stub: on a fresh instance the worker drains thousands of dispatch tasks and was
+  measured still queued two minutes after the sign-in, so awaiting it would have been a timer. The
+  stored transport points at the stub for the whole run and never gets its production URL back.
+- **The endpoint** (`alumni-merge-hook.controller.ts`) is routed by the edge as its own
+  `location =`, `client_max_body_size 4k`, rate-limited (`limit_req` zone `miconnect_hook`, 1 r/s
+  burst 20 per client address), every trust header stripped, no `auth_request`
+  (`Dockerfile.frontend`). The secret is checked before the body is read; an unset secret refuses
+  everything, at error.
+- **The busy target** is enforced by a transaction-scoped advisory lock on the target's uuid and a
+  check of the open rows, not a unique index: an index would have failed the migration on any data
+  that already broke the rule, and the lock serializes the only writer.
+- **The subjects** are read from the editor API's `uid`; `listOpenMerges` backfills an open row that
+  has none, and the push names both, used where the row captured none (a row's own subject wins, a
+  push that differs is said at error). With neither, an invariant broke: ERROR, no job written.
+- **"Merged" has ONE predicate**, read by the push and the reconciler alike (`provenMerged`): the
+  target holds the duplicate's Alumni link (`af_id`) at MiConnect now. Never `markedAt`, which only
+  says Canari recorded its mark: a request that died between the mark at MiConnect and that record
+  is merged all the same.
+- **The target search** (`eligibleTargets`) refuses a uuid that is not an Alumni-created duplicate
+  whose links are exactly `['alumni']` - the same check the mark makes - since it discloses e-mails
+  and last sign-ins (register M1).
+- **The reason** is counted in code points after trimming on both sides; the bounds and the cases
+  that tell code points from UTF-16 units are `libs/contracts/alumni-merge-reason.json`, asserted by
+  core-service's spec and the page's test.
+- **A resume by another admin** writes that admin onto the row (`actorId`), as the mark it writes
+  names them; the admin who opened it stays in the log line.
+- **The site jobs** (`alumni-merge-site-jobs.service.ts`) and the account erasure share ONE runner,
+  `src/common/durable-queue.ts` (timers, single-flight drain, logged failures); each keeps its own
+  claim, because the two tables differ. A `2xx` must name an outcome its job's KIND may answer
+  (`OUTCOMES_OF`), else it is a `SITE_ANSWER_MALFORMED` at ERROR, retried with backoff; a `404`
+  (`HTTP 404 route_missing`) makes the job UNREADY (`unreadySince`), and so does a
+  `503 { outcome: 'not_configured' }` (`HTTP 503 not_configured`): asked again every 24 h, no WARN per
+  try, never accused as overdue, and the daily report says ONE warning per such site and answer with
+  its count. Every write that settles an attempt names the job's kind as claimed and checks it wrote
+  one row; none is classified by re-reading the row: the expected race - the target's erasure turned
+  the transfer into an erase under the call - is said at info and records nothing (plus ONE WARN naming
+  the site and the job when that transfer had landed), and the job as it now stands runs next; a job
+  gone or completed under its lease is a broken invariant, at ERROR. A done `erase` whose merge row is
+  gone deletes its own row.
+
+- **The admin page** lists every Alumni-created account not in an open merge: the flagged ones with
+  their targets, then those that match nobody, which only "Rattacher à un autre compte"
+  (`AlumniManualMerge.svelte`) can attach. The open merges show their mode and reason, the closed
+  ones their three site states and whether the reconciler completed them.
 
 **The three questions this design raised were answered by the owner on 2026-11-26**, each with the
 recommended option ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), items 7-9): Le
@@ -2514,7 +2621,7 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Model** (migration `078_read_grants.sql`): `read_grants(user_id, campus, formation NULL = whole campus, granted_by, created_at)`, unique per cell (`COALESCE(formation, '')`, so NULL repeats are refused), no end date; `read_grant_journal` is append-only (`grant`/`revoke`, `actor`, `at`). A revocation deletes the grant row and writes the journal line in one transaction; setting a state already held writes nothing, so the journal records changes only. API: `GET`/`PUT /api/associations/read-grants` (`read-grants/read-grants.*`), GLOBAL ADMIN ONLY on both - the list is internal, a grantee cannot even read their own row. Granting to an unknown account is a 404.
 - **Visibility plugs into the one predicate**: `readGrantReachesAssociationSql` in `spaces/reader-spaces.ts` - a grant cell contains the OPEN spaces it matches, and an association is reached when one of ITS RULES reaches such a space (any type; an institution addressing Gardanne is reached by a Gardanne cell whatever campus the grantee has). It is spliced through `ReadOpts.readGrants`, which only the `*ToViewerSql` read paths turn on (feed, search, one post, comments, reactions, votes, signed-in agenda, calendar link) and the feed gate (`IN_FEED_AUDIENCE_SQL`, so a named reader with no space and no membership opens the feed). It goes into the ASSOCIATION branch of `postVisibleToUserSql` (and the republisher's), never the personal-post branch: personal posts stay invisible by construction.
 - **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; **the association directory, the shop and the partnerships ARE widened since 2026-11-14** ([below](#a-grant-opens-everything-of-its-cell-owner-2026-11-14)), and so are an association's booking spaces; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
-- **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
+- **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet, each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FISA/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
 - **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible, no-grant readers unchanged, gate, agenda, no notification, the directory per grantee and the plain predicate unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read and react: YES; comment and like a comment: YES only with their switch "voit les commentaires" on (2026-11-04, next bullet); vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction), `'COMMENT'` (list, write, edit and like a comment, report a comment - the grant counts, then the comments predicate of the next bullet) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent). **Narrowed on 2026-11-04 for comments** - next bullet.
 - **COMMENTS AND PEOPLE OF A GRANT-ONLY POST (the 2026-11-04 amendment, [decisions](#the-nominative-read-grants---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08))**. ONE predicate, `commentsWithheldFromViewerSql(post, viewer)` in `spaces/reader-spaces.ts`, the posts' half of the ONE definition of "withheld" (`withheldFromGrantOnlyReaderSql`, shared with the live chat - next bullet): the viewer holds a grant, their switch is OFF (`readerSeesGrantCommentsSql`: no `read_grant_readers` row with `sees_comments`), the post is visible WITH grants and NOT visible WITHOUT them (neither arm widened for an admin since 2026-11-14: a platform admin is withheld from as any named reader, and reads the comments only by the moderation read, which skips this term; the live chat's half keeps its admin exemption, and a reader who also reaches the post natively - own space, membership, republication, accepted follow, member repost - keeps everything). It composes with the "Entre étudiants" gate ([as built](#the-students-only-switch-as-built-owner-2026-11-04)) with no term of its own: the gate sits INSIDE `postVisibleToUserSql` and closes the grant door on such a post, so there the two visibility arms agree (no grant door either way) and the predicate is never true: a named reader who reaches it only through a grant - a student holding a grant on another cell included - never opens it, and one who reaches it natively keeps everything; a live has no students-only column, so the live half below is unaffected. Its consumers, each asking it and nothing else:
@@ -3205,7 +3312,7 @@ Seven decisions on the audience of associations, lists and institutions (the las
 
 ### The nominative read grants - the decisions (user, 2026-10-07; moved from the backlog 2026-10-08)
 
-WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Cases named: the director of the ME, the ME communication and the School's student liaison reading the posts of associations but not the personal posts of students; a director of formations reading the associations of Saint-Etienne and Gardanne. Decisions: (1) a grid of checkboxes per person shaped like `/admin/spaces` (campus x formation, and whole campus); (2) it covers the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too - with comments, reactions, events and agenda; (3) NEVER the personal posts of students; (4) readers may react and comment; (5) a global admin grants, the grant ADDS and never removes; (6) staff without a cursus see nothing more by default, the named ones do (closes the staff-feed question); (7) no end date, the list of named readers is internal (global admins only), and a journal keeps who granted what to whom and when. The user's "ISTP" is FSSS. Named readers only READ and react, and get NO notifications for their perimeter (answers of 2026-10-07). As built: WP-C above.
+WP7 of this plan (D24: grants only ADD, a global admin grants across spaces). Cases named: the director of the ME, the ME communication and the School's student liaison reading the posts of associations but not the personal posts of students; a director of formations reading the associations of Saint-Etienne and Gardanne. Decisions: (1) a grid of checkboxes per person shaped like `/admin/spaces` (campus x formation, and whole campus); (2) it covers the posts of associations, lists AND institutions of the ticked spaces - an institution of ANOTHER campus too - with comments, reactions, events and agenda; (3) NEVER the personal posts of students; (4) readers may react and comment; (5) a global admin grants, the grant ADDS and never removes; (6) staff without a cursus see nothing more by default, the named ones do (closes the staff-feed question); (7) no end date, the list of named readers is internal (global admins only), and a journal keeps who granted what to whom and when. Named readers only READ and react, and get NO notifications for their perimeter (answers of 2026-10-07). As built: WP-C above.
 
 **AMENDED BY THE OWNER ON 2026-11-14 - decision (2), what a grant covers.** Beside the posts and the agenda, a grant opens the association directory, the shop and the partnerships of the ticked cells, with no per-person switch. As built: [a grant opens everything of its cell](#a-grant-opens-everything-of-its-cell-owner-2026-11-14).
 

@@ -481,13 +481,12 @@ association's columns, the code, the panel, the wording, the strip and this entr
 **What it humours:** upstream's newest image, `adminer:6.3.0` (`sha256:3a07decd...`, 2026-11-06), carries
 Alpine's `libpq 18.6-r0` and its 38 HIGH PostgreSQL advisories, fixed in Alpine 3.24's `18.7-r0`; the
 image scan failed every pull request from 2026-11-13. The owner chose a patched image over an allowlist
-and over removing the console: that same digest, `apk upgrade --no-cache libpq`, back to `USER adminer`.
+and over removing the console: that same digest, `apk upgrade --no-cache libpq` (the `libpq` half left on 2026-11-27, the base carries it; only `libxml2` is moved now), back to `USER adminer`.
 The scan builds it and reads the result ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
 **The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
 gap on a console only a global admin opens) where a pinned image moved only with its digest.
 **Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
-to an upstream build whose own `libpq` is `>= 18.7-r0` and, since 2026-11-20, whose `libxml2` is
-`>= 2.13.9-r3` (`CVE-2026-86144`, the second package the `RUN` moves) - read in the scan of that pull
+to an upstream build whose `libxml2` is `>= 2.13.9-r5` (the one package the `RUN` moves) - read in the scan of that pull
 request, or with `trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
@@ -714,6 +713,23 @@ deleting this paragraph and the "older editors" sentence of the forms page.
 - **Removal condition.** Once `minClientVersion` passes the stable carrying "Mes notes" (`1.8.0`), no
   admitted build lacks the capability: the gates and the `?kind=self` check go, and the column with
   them. The capability itself stays the way the next kind is introduced.
+
+### Removal once no row holds a notepad - the personal notepad routes, answering `410 NOTEPAD_MOVED` (2026-11-26)
+
+- **The shim.** `GET /users/me/notes`, `GET /users/me/notes-key` and `PUT /users/me/notes` stay, for
+  two readers: the `1.8.2` client moving a notepad into "Mes notes" (`notepadMigration.ts`), and a build
+  older than `1.8.2`, whose profile page still shows the notepad. To an account holding NO notepad -
+  moved, or never written - all three answer `410 NOTEPAD_MOVED` (`apps/core-service/src/users/notepad.ts`):
+  no notepad is read, no key minted, none created. A save is accepted only over a notepad still held,
+  in the statement that checks it, so an older build may finish editing one that has not moved yet.
+- **What the older build sees once the notepad moved.** Its notepad page shows its load error, and a
+  save shows its save error; the notes are in "Mes notes" on the account's `1.8.2` devices. Nothing is
+  lost: the move deletes only the notepad whose digest it read (`409 NOTEPAD_CHANGED` otherwise), so an
+  edit an older build made in between is moved by the next run, as a second message.
+- **Removal condition.** No row holding a notepad (the count in
+  [the entry](backlog.d/p3-drop-the-notepad-columns-once-every-notepad-moved.md)) AND `minClientVersion`
+  past `1.8.2`: the three routes, `POST /users/me/notes/moved`, `users/notepad.ts`, the client's
+  `notepadMigration.ts` and the three columns go together (a held migration).
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 

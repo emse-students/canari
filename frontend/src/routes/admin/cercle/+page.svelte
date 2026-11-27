@@ -10,6 +10,9 @@
     createProduct,
     updateProduct,
     listWebhookFailures,
+    listParkedDeliveries,
+    parkedAgeDays,
+    LONG_PARKED_DAYS,
     retryWebhookDelivery,
     deleteWebhookDelivery,
     type Association,
@@ -17,7 +20,7 @@
     type WebhookDelivery,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
+  import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2, Hourglass } from '@lucide/svelte';
   import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import { m } from '$lib/paraglide/messages';
   import { membersOnlySaveRefusalMessage } from '$lib/associations/paymentRefusal';
@@ -42,6 +45,11 @@
   /** The single `balance_topup` product. Null until it has been configured once. */
   let product = $state<AssociationProduct | null>(null);
   let webhookFailures = $state<WebhookDelivery[]>([]);
+  /**
+   * Top-ups Le Cercle holds for a member who has not signed in there yet (`parked`): shown so the
+   * money waiting is SEEN, with its age - nothing here retries them.
+   */
+  let parkedDeliveries = $state<WebhookDelivery[]>([]);
 
   // Configuration form. The secret is write-only: the server never returns it, so an empty field
   // means "keep the current one" rather than "erase it".
@@ -97,21 +105,24 @@
     if (!asso) {
       product = null;
       webhookFailures = [];
+      parkedDeliveries = [];
       return;
     }
     error = '';
     saved = false;
     console.log(`[ADMIN][CERCLE] loading top-up product for association=${asso.id}`);
     try {
-      const [products, failures] = await Promise.all([
+      const [products, failures, parked] = await Promise.all([
         listAssociationProductsForManage(asso.id),
         listWebhookFailures(asso.id),
+        listParkedDeliveries(asso.id),
       ]);
       product = products.find((p) => p.type === 'balance_topup') ?? null;
       webhookFailures = failures;
+      parkedDeliveries = parked;
       syncFormFromProduct();
       console.log(
-        `[ADMIN][CERCLE] loaded: product=${product?.id ?? 'none'} failures=${failures.length}`
+        `[ADMIN][CERCLE] loaded: product=${product?.id ?? 'none'} failures=${failures.length} parked=${parked.length}`
       );
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to load the top-up product', e);
@@ -218,7 +229,11 @@
                 delivered: false,
                 message: updated.lastError ?? m.admin_cercle_webhook_retry_failed(),
               };
-      webhookFailures = await listWebhookFailures(asso.id);
+      // A retry answered 202 moves the row from one list to the other.
+      [webhookFailures, parkedDeliveries] = await Promise.all([
+        listWebhookFailures(asso.id),
+        listParkedDeliveries(asso.id),
+      ]);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to retry webhook delivery', e);
       error = m.admin_cercle_generic_error();
@@ -519,6 +534,45 @@
                   >
                     <Trash2 size={14} />
                   </button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      {#if parkedDeliveries.length > 0}
+        <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
+          <h3 class="text-text-main flex items-center gap-2 text-sm font-bold">
+            <Hourglass size={16} />
+            {m.admin_cercle_parked_title({ count: parkedDeliveries.length })}
+          </h3>
+          <p class="text-text-muted text-xs">
+            {m.admin_cercle_parked_hint({ days: LONG_PARKED_DAYS })}
+          </p>
+          <ul class="space-y-2">
+            {#each parkedDeliveries as delivery (delivery.id)}
+              {@const days = parkedAgeDays(delivery, Date.now())}
+              <li class="border-cn-border flex items-center gap-3 rounded-xl border px-4 py-3">
+                <div class="min-w-0 flex-1 space-y-0.5">
+                  <p class="text-text-main text-xs font-semibold">
+                    {memberLabel(delivery)} - {(delivery.amountCents / 100).toFixed(2)} €
+                    {#if delivery.productName}
+                      <span class="text-text-muted font-normal">· {delivery.productName}</span>
+                    {/if}
+                  </p>
+                  <!-- A wait past the daily report's threshold reads as the report reads it. -->
+                  <p
+                    class="text-xs {days >= LONG_PARKED_DAYS
+                      ? 'text-amber-warn-text'
+                      : 'text-text-muted'}"
+                  >
+                    {m.admin_cercle_parked_age({
+                      moment: formatMoment(delivery.createdAt),
+                      days,
+                    })}
+                  </p>
+                  <p class="text-text-muted text-xs break-all">{delivery.paymentIntentId}</p>
                 </div>
               </li>
             {/each}

@@ -41,10 +41,10 @@ const { MANAGE_ASSO } = AssociationPermissionFlag;
 /** The ids every block shares, so the assertions read as the scenario. */
 const ID = {
   bde: randomUUID(), // slug `bde`: governs ICM and ISMIN at Saint-Etienne
-  fsss: randomUUID(), // governs FSSS at Saint-Etienne
+  fisa: randomUUID(), // governs FISA at Saint-Etienne
   a1: randomUUID(), // every Saint-Etienne space, category c1
   a2: randomUUID(), // every Saint-Etienne space, no category, a per-bubble override to c2
-  a3: randomUUID(), // FSSS only, category c2: on the live map, outside its space
+  a3: randomUUID(), // FISA only, category c2: on the live map, outside its space
   a4: randomUUID(), // every Saint-Etienne space, never placed: offered as new
   archived: randomUUID(), // every Saint-Etienne space, archived: never offered
   c1: randomUUID(),
@@ -52,10 +52,10 @@ const ID = {
   c3: randomUUID(),
   icm: randomUUID(),
   ismin: randomUUID(),
-  fsssSpace: randomUUID(),
+  fisaSpace: randomUUID(),
   icmGardanne: randomUUID(),
   live: randomUUID(), // the live map
-  fsssMap: randomUUID(), // drawn by the FSSS BDE's manager: one space, attached
+  fisaMap: randomUUID(), // drawn by the FISA BDE's manager: one space, attached
   bdeDraft: randomUUID(), // drawn by the `bde` manager: two spaces, left unattached
 };
 
@@ -134,13 +134,13 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
     await db.query(sql(file));
   }
   await db.query(
-    `INSERT INTO associations (id, slug, type) VALUES ($1, 'bde', 'association'), ($2, 'bde-fsss', 'association')`,
-    [ID.bde, ID.fsss]
+    `INSERT INTO associations (id, slug, type) VALUES ($1, 'bde', 'association'), ($2, 'bde-fisa', 'association')`,
+    [ID.bde, ID.fisa]
   );
   await db.query(
     `INSERT INTO spaces (id, formation, campus, "bdeAssociationId") VALUES
-      ($1, 'ICM', 'saint-etienne', $4), ($2, 'ISMIN', 'saint-etienne', $4), ($3, 'FSSS', 'saint-etienne', $5)`,
-    [ID.icm, ID.ismin, ID.fsssSpace, ID.bde, ID.fsss]
+      ($1, 'ICM', 'saint-etienne', $4), ($2, 'ISMIN', 'saint-etienne', $4), ($3, 'FISA', 'saint-etienne', $5)`,
+    [ID.icm, ID.ismin, ID.fisaSpace, ID.bde, ID.fisa]
   );
   if (opts.icmGardanne) {
     await db.query(
@@ -161,14 +161,14 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
   );
   await db.query(
     `INSERT INTO association_audiences ("associationId", formation, campus) VALUES
-      ($1, NULL, 'saint-etienne'), ($2, NULL, 'saint-etienne'), ($3, 'FSSS', 'saint-etienne'),
+      ($1, NULL, 'saint-etienne'), ($2, NULL, 'saint-etienne'), ($3, 'FISA', 'saint-etienne'),
       ($4, NULL, 'saint-etienne'), ($5, NULL, 'saint-etienne')`,
     [ID.a1, ID.a2, ID.a3, ID.a4, ID.archived]
   );
   await db.query(
     `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
-      ($1, 'bde-manager', $3), ($2, 'fsss-manager', $3), ($1, 'bde-plain-member', 0)`,
-    [ID.bde, ID.fsss, MANAGE_ASSO]
+      ($1, 'bde-manager', $3), ($2, 'fisa-manager', $3), ($1, 'bde-plain-member', 0)`,
+    [ID.bde, ID.fisa, MANAGE_ASSO]
   );
   const layout = (ids: string[], override?: [string, string]) =>
     JSON.stringify({
@@ -179,16 +179,16 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
   await db.query(
     `INSERT INTO poster_projects (id, name, layout, "createdBy", publication, "publishedAt", "publicationFingerprint") VALUES
       ($1, 'Carte live', $2::jsonb, 'bde-manager', $7::jsonb, now(), $5),
-      ($3, 'Carte FSSS', $4::jsonb, 'fsss-manager', NULL, NULL, NULL),
+      ($3, 'Carte FISA', $4::jsonb, 'fisa-manager', NULL, NULL, NULL),
       ($6, 'Brouillon', '{}'::jsonb, 'bde-manager', NULL, NULL, NULL)`,
     [
       ID.live,
       layout([ID.a1, ID.a2, ID.a3], [ID.a2, 'sport']),
-      ID.fsssMap,
+      ID.fisaMap,
       layout([ID.a3]),
       FP,
       ID.bdeDraft,
-      // The document that is live: a1 (switched ON by 147), a3 (FSSS only, switched OFF) and a4 (of
+      // The document that is live: a1 (switched ON by 147), a3 (FISA only, switched OFF) and a4 (of
       // the space but never placed, so NO switch), as units and directory lines; one zone holds
       // only a3, one only a4.
       JSON.stringify({
@@ -293,7 +293,7 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
   });
 
   it("attaches another map to the one space its creator manages, and leaves a two-space creator's map unattached", async () => {
-    await expect(spaceOf(ID.fsssMap)).resolves.toEqual({ spaceId: ID.fsssSpace, live: false });
+    await expect(spaceOf(ID.fisaMap)).resolves.toEqual({ spaceId: ID.fisaSpace, live: false });
     await expect(spaceOf(ID.bdeDraft)).resolves.toEqual({ spaceId: null, live: false });
   });
 
@@ -320,7 +320,7 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
     expect(byAsso).toEqual({
       [ID.a1]: { on: true, zone: 'Culture' },
       [ID.a2]: { on: true, zone: 'Sport' }, // the per-bubble override wins over "no category"
-      [ID.a3]: { on: false, zone: 'Sport' }, // of FSSS only: switched off, never deleted
+      [ID.a3]: { on: false, zone: 'Sport' }, // of FISA only: switched off, never deleted
     });
     // a4 is of the space and was never placed: no row, so the editor offers it as new.
   });
@@ -414,7 +414,7 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
   let service: PosterService;
   const ADMIN = { userId: 'platform-admin', isGlobalAdmin: true };
   const BDE = { userId: 'bde-manager', isGlobalAdmin: false };
-  const FSSS = { userId: 'fsss-manager', isGlobalAdmin: false };
+  const FISA = { userId: 'fisa-manager', isGlobalAdmin: false };
   const PLAIN = { userId: 'bde-plain-member', isGlobalAdmin: false };
 
   beforeAll(async () => {
@@ -457,18 +457,18 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     const notOfTheCarte = new Set(rows.map((r) => r.id));
     expect(directory.filter((id: string) => !notOfTheCarte.has(id))).toEqual(carte);
     expect(carte.length).toBeGreaterThan(0);
-    // a3 addresses FSSS only: not of ICM, in either.
+    // a3 addresses FISA only: not of ICM, in either.
     expect(directory).not.toContain(ID.a3);
   });
 
   it('lists an archived association of the space in the directory, never in the carte, and not an archived one of another space', async () => {
     const offSpace = randomUUID();
     await db.query(
-      `INSERT INTO associations (id, slug, archived) VALUES ($1, 'archived-fsss', true)`,
+      `INSERT INTO associations (id, slug, archived) VALUES ($1, 'archived-fisa', true)`,
       [offSpace]
     );
     await db.query(
-      `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'FSSS', 'saint-etienne')`,
+      `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'FISA', 'saint-etienne')`,
       [offSpace]
     );
     const directory = (await db.query(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).rows.map(
@@ -490,7 +490,7 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
       (await db.query(sql, params)).rows.map((r) => r.id);
     try {
       expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).toContain(list);
-      expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['FSSS', 'saint-etienne'])).not.toContain(list);
+      expect(await idsOf(OFFERED_BY_SPACE_KEY_SQL, ['FISA', 'saint-etienne'])).not.toContain(list);
       expect(await idsOf(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).not.toContain(list);
     } finally {
       await db.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [list]);
@@ -504,10 +504,10 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
 
   it('lists to each manager only the maps of the spaces its BDE governs', async () => {
     expect((await service.list(BDE)).map((p) => p.id)).toEqual([ID.live]);
-    expect((await service.list(FSSS)).map((p) => p.id)).toEqual([ID.fsssMap]);
+    expect((await service.list(FISA)).map((p) => p.id)).toEqual([ID.fisaMap]);
     expect(await service.list(PLAIN)).toEqual([]);
     expect((await service.list(ADMIN)).map((p) => p.id).sort()).toEqual(
-      [ID.live, ID.fsssMap, ID.bdeDraft].sort()
+      [ID.live, ID.fisaMap, ID.bdeDraft].sort()
     );
     expect((await service.listSpaces(BDE)).map((s) => s.id).sort()).toEqual(
       [ID.icm, ID.ismin].sort()
@@ -515,21 +515,21 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
   });
 
   it("refuses a manager every route of another BDE's map with a 404, and writes nothing", async () => {
-    await expect(refusal(service.detail(ID.live, FSSS))).resolves.toBe(404);
-    await expect(refusal(service.update(ID.live, { name: 'pris' }, FSSS))).resolves.toBe(404);
+    await expect(refusal(service.detail(ID.live, FISA))).resolves.toBe(404);
+    await expect(refusal(service.update(ID.live, { name: 'pris' }, FISA))).resolves.toBe(404);
     await expect(
-      refusal(service.publish(ID.live, { carte: carte([ID.a1]), fingerprint: FP }, FSSS))
+      refusal(service.publish(ID.live, { carte: carte([ID.a1]), fingerprint: FP }, FISA))
     ).resolves.toBe(404);
-    await expect(refusal(service.unpublish(ID.live, FSSS))).resolves.toBe(404);
-    await expect(refusal(service.createZone(ID.live, 'Z', FSSS))).resolves.toBe(404);
+    await expect(refusal(service.unpublish(ID.live, FISA))).resolves.toBe(404);
+    await expect(refusal(service.createZone(ID.live, 'Z', FISA))).resolves.toBe(404);
     await expect(
-      refusal(service.setEntries(ID.live, [{ associationId: ID.a1, enabled: false }], FSSS))
+      refusal(service.setEntries(ID.live, [{ associationId: ID.a1, enabled: false }], FISA))
     ).resolves.toBe(404);
-    await expect(refusal(service.remove(ID.live, FSSS))).resolves.toBe(404);
+    await expect(refusal(service.remove(ID.live, FISA))).resolves.toBe(404);
     // An unattached map is the platform admin's alone, even to the BDE that drew it.
     await expect(refusal(service.detail(ID.bdeDraft, BDE))).resolves.toBe(404);
     // Creating in a space one does not manage: the same 404.
-    await expect(refusal(service.create({ name: 'x', spaceId: ID.icm }, FSSS))).resolves.toBe(404);
+    await expect(refusal(service.create({ name: 'x', spaceId: ID.icm }, FISA))).resolves.toBe(404);
     const { rows } = await db.query(
       `SELECT name, publication IS NOT NULL AS live FROM poster_projects WHERE id = $1`,
       [ID.live]
@@ -538,7 +538,7 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
 
     takeLogged(
       'warn',
-      /^\[CARTE\] fsss-man asked for map [0-9a-f-]{36} of a space it does not manage - answered 404$/,
+      /^\[CARTE\] fisa-man asked for map [0-9a-f-]{36} of a space it does not manage - answered 404$/,
       7
     );
     takeLogged(
@@ -547,7 +547,7 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     );
     takeLogged(
       'warn',
-      /^\[CARTE\] fsss-man tried to create a map in space [0-9a-f-]{36}, which it does not manage - answered 404$/
+      /^\[CARTE\] fisa-man tried to create a map in space [0-9a-f-]{36}, which it does not manage - answered 404$/
     );
   });
 
@@ -578,16 +578,16 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
   });
 
   it("publishing replaces only the same space's live map", async () => {
-    // The FSSS map goes live beside the ICM one.
-    await service.setEntries(ID.fsssMap, [{ associationId: ID.a3, enabled: true }], FSSS);
-    await service.publish(ID.fsssMap, { carte: carte([ID.a3]), fingerprint: FP }, FSSS);
+    // The FISA map goes live beside the ICM one.
+    await service.setEntries(ID.fisaMap, [{ associationId: ID.a3, enabled: true }], FISA);
+    await service.publish(ID.fisaMap, { carte: carte([ID.a3]), fingerprint: FP }, FISA);
     // A second ICM map replaces the first one, and only that one.
     const second = await service.create({ name: 'Carte 2027', spaceId: ID.icm }, BDE);
     await service.publish(second.id, { carte: carte([ID.a1]), fingerprint: FP }, BDE);
     const { rows } = await db.query(
       `SELECT id FROM poster_projects WHERE publication IS NOT NULL ORDER BY id`
     );
-    expect(rows.map((r) => r.id).sort()).toEqual([ID.fsssMap, second.id].sort());
+    expect(rows.map((r) => r.id).sort()).toEqual([ID.fisaMap, second.id].sort());
     const icm = await service.getPublished({ formation: 'ICM', campus: 'saint-etienne' });
     expect(icm?.name).toBe('Carte 2027');
     await expect(
@@ -622,7 +622,7 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
   it('[LEGACY] serves the no-space read only while exactly one map is live', async () => {
     // Two maps are live from the test above: no guess.
     await expect(service.getSoleLegacyPublished()).resolves.toBeNull();
-    await service.unpublish(ID.fsssMap, FSSS);
+    await service.unpublish(ID.fisaMap, FISA);
     await expect(service.getSoleLegacyPublished()).resolves.toMatchObject({ name: 'Carte 2027' });
 
     takeLogged(

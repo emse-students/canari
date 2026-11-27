@@ -64,6 +64,8 @@ export class BlobUrlPool {
   private readonly maxBytes: number;
   /** Sum of every entry's declared bytes, held or idle. */
   private totalBytes = 0;
+  /** One-shot listeners waiting for a key to be registered (`onArrival`). */
+  private readonly arrivals = new Map<string, Set<() => void>>();
 
   constructor(options: BlobUrlPoolOptions = {}) {
     this.evictDelayMs = options.evictDelayMs ?? BLOB_URL_EVICT_DELAY_MS;
@@ -74,6 +76,23 @@ export class BlobUrlPool {
   /** The declared bytes the pool holds, held and idle entries alike. */
   get bytes(): number {
     return this.totalBytes;
+  }
+
+  /**
+   * Calls `listener` ONCE, the moment `key` is registered by `retain`, so a reader that found the
+   * pool empty is told when the bytes land instead of polling. The listener then takes its own hold
+   * (`tryRetain`). Returns the cancel function; a listener that already fired needs none.
+   */
+  onArrival(key: string, listener: () => void): () => void {
+    const set = this.arrivals.get(key) ?? new Set();
+    set.add(listener);
+    this.arrivals.set(key, set);
+    return () => {
+      const current = this.arrivals.get(key);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) this.arrivals.delete(key);
+    };
   }
 
   /** Returns a retained blob URL when the key is already cached. */
@@ -117,6 +136,18 @@ export class BlobUrlPool {
     this.entries.set(key, { blobUrl, refCount: 1, bytes, lastAccess: Date.now() });
     this.totalBytes += bytes;
     this.enforceMaxSize();
+    const waiting = this.arrivals.get(key);
+    if (waiting) {
+      this.arrivals.delete(key);
+      for (const listener of waiting) {
+        // One reader's failure must neither skip the others nor fail the load that registered this.
+        try {
+          listener();
+        } catch (error) {
+          console.error(`[blobUrlPool] an arrival listener for ${key} threw`, error);
+        }
+      }
+    }
     return blobUrl;
   }
 

@@ -38,7 +38,7 @@ describe('profile sections', () => {
   });
 
   it('a section lives under the `me` segment so it never competes with a user id', () => {
-    expect(profileSectionHref('notepad')).toBe('/profile/me/notepad');
+    expect(profileSectionHref('bio')).toBe('/profile/me/bio');
     expect(profileSectionHref()).toBe('/profile');
   });
 

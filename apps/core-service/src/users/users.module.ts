@@ -13,6 +13,8 @@ import { ProfileCorrectionRequest } from './entities/profile-correction-request.
 import { MiconnectEditorClient } from './miconnect-editor.client';
 import { AlumniMergeService } from './alumni-merge.service';
 import { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
+import { AlumniMergeSiteJobsService } from './alumni-merge-site-jobs.service';
+import { AlumniMergeHookController } from './alumni-merge-hook.controller';
 import { AccountErasureModule } from '../account-erasure/account-erasure.module';
 import { SessionsModule } from '../auth/sessions.module';
 
@@ -31,8 +33,9 @@ import { SessionsModule } from '../auth/sessions.module';
     ProfileCorrectionService,
     AlumniMergeService,
     AlumniDuplicateQueue,
+    AlumniMergeSiteJobsService,
   ],
-  controllers: [UsersController],
+  controllers: [UsersController, AlumniMergeHookController],
   exports: [UsersService, AvatarService, UserBlocksService, ProfileEditService],
 })
 export class UsersModule {}

@@ -21,10 +21,13 @@
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import { LoaderCircle } from '@lucide/svelte';
+  import { everyoneMentionOf } from '$lib/notifications/conversationLevel';
+  import { isChannelConversationId } from '$lib/utils/chat/rawId';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import { m } from '$lib/paraglide/messages';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import { salonEchoSettleable } from '$lib/utils/chat/salonEcho';
+  import { quotedVisualMedia } from '$lib/utils/chat/quotedMedia';
   import { textWaitOf } from '$lib/utils/chat/uploadProgress.svelte';
 
   interface Props {
@@ -164,6 +167,11 @@
   /** Everyone who has read `msg`, its author excluded. */
   const readersOfMessage = (msg: ChatMessage): string[] =>
     readersOf(msg, readWatermarks, serverReadWatermarks);
+
+  /** The messages the thread holds: the only place a quote may look for its original. */
+  const heldMessages = $derived(
+    new Map(visibleMessageGroups.filter(isMessageGroupRow).map((g) => [g.message.id, g.message]))
+  );
 
   const pinnedSet = $derived(new Set(pinnedIds));
 
@@ -357,6 +365,7 @@
               isOwn={msg.isOwn}
               isSystem={msg.isSystem}
               replyTo={msg.replyTo}
+              replyToMedia={msg.replyTo ? quotedVisualMedia(heldMessages, msg.replyTo.id) : null}
               {reactions}
               readBy={readersOfMessage(msg)}
               isLastOwn={msg.id === lastOwnMessageId}
@@ -366,6 +375,10 @@
               reelPurgedAt={msg.mediaPurgedAt}
               {onReelPurged}
               {conversationId}
+              everyoneHonoured={everyoneMentionOf(
+                conversationId !== undefined && isChannelConversationId(conversationId),
+                msg.everyoneVouched === true
+              ) === 'honoured'}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}

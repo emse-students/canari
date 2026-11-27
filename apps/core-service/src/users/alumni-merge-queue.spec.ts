@@ -2,7 +2,12 @@ import { Logger } from '@nestjs/common';
 import axios from 'axios';
 import type { DataSource } from 'typeorm';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
-import { AlumniMergeService, COMPLETE_MERGE_SQL, autoMergeRefusal } from './alumni-merge.service';
+import {
+  AlumniMergeService,
+  RESOLVE_DUPLICATE_FLAG_SQL,
+  duplicateShapeRefusal,
+} from './alumni-merge.service';
+import type { AlumniMergeSiteJobsService } from './alumni-merge-site-jobs.service';
 import type { AlumniDuplicateQueue } from './alumni-duplicate-queue.service';
 import type { MiconnectEditorClient, MiconnectUserListing } from './miconnect-editor.client';
 
@@ -20,6 +25,7 @@ const person = (over: Partial<MiconnectUserListing>): MiconnectUserListing => ({
   email: 'camille@example.org',
   is_active: true,
   last_login: null,
+  uid: 'sub-1',
   attributes: { profile: { cursus: [{ formation: 'ICM', promo: 2020 }] } },
   ...over,
 });
@@ -61,9 +67,13 @@ describe('AlumniMergeService and the admin queue', () => {
       writeUser: jest.fn(async () => undefined),
     };
     const service = new AlumniMergeService(
-      { query } as unknown as DataSource,
+      {
+        query,
+        transaction: async (cb: (m: { query: typeof query }) => unknown) => cb({ query }),
+      } as unknown as DataSource,
       editor as unknown as MiconnectEditorClient,
-      {} as AccountErasureService
+      {} as AccountErasureService,
+      {} as AlumniMergeSiteJobsService
     );
     Object.assign(service, { queue: queue as unknown as AlumniDuplicateQueue });
     return { service, editor, query };
@@ -76,41 +86,32 @@ describe('AlumniMergeService and the admin queue', () => {
       expect(queue.flag).toHaveBeenCalledWith(DUP_UUID);
     });
 
-    it('NEVER flags a homonym: two accounts match, so there is no action for the admins yet', async () => {
+    it('flags a duplicate that matches nobody, or several: a merge by hand (D55) is its action, nothing is merged by itself', async () => {
+      const alone = make([DUP]);
+      await alone.service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).toHaveBeenCalledWith(DUP_UUID);
+      queue.flag.mockClear();
       const homonym = person({
         pk: 3,
         uuid: '44444444-4444-4444-8444-444444444444',
         username: 'camille.durand2',
       });
-      const { service } = make([DUP, TARGET, homonym]);
-      await service.flagNewAccount(DUP_UUID);
-      expect(queue.flag).not.toHaveBeenCalled();
+      await make([DUP, TARGET, homonym]).service.flagNewAccount(DUP_UUID);
+      expect(queue.flag).toHaveBeenCalledWith(DUP_UUID);
     });
 
-    it('never flags a duplicate whose links are not exactly [alumni], nor one whose match holds an Alumni link', async () => {
+    it('never flags a duplicate whose links are not exactly [alumni]', async () => {
       const { service, editor } = make([DUP, TARGET]);
-      editor.sourceSlugsOf.mockImplementation(async (pk: number) =>
-        pk === 1 ? ['alumni', 'cas-emse'] : ['cas-emse']
-      );
-      await service.flagNewAccount(DUP_UUID);
-      editor.sourceSlugsOf.mockImplementation(async (pk: number) =>
-        pk === 1 ? ['alumni'] : ['alumni']
-      );
+      editor.sourceSlugsOf.mockImplementation(async () => ['alumni', 'cas-emse']);
       await service.flagNewAccount(DUP_UUID);
       expect(queue.flag).not.toHaveBeenCalled();
     });
 
-    it('flags nothing for an account no Alumni sign-in created, and does not even look for a match', async () => {
+    it('flags nothing for an account no Alumni sign-in created, and reads no links', async () => {
       const { service, editor } = make([TARGET]);
       await service.flagNewAccount(TARGET_UUID);
       expect(queue.flag).not.toHaveBeenCalled();
-      expect(editor.searchUsers).not.toHaveBeenCalled();
-    });
-
-    it('flags nothing for an Alumni account that matches nobody: it waits for no admin', async () => {
-      const { service } = make([DUP]);
-      await service.flagNewAccount(DUP_UUID);
-      expect(queue.flag).not.toHaveBeenCalled();
+      expect(editor.sourceSlugsOf).not.toHaveBeenCalled();
     });
 
     it('reads nothing on the dev estate, which shares production MiConnect and tells production nothing', async () => {
@@ -129,39 +130,38 @@ describe('AlumniMergeService and the admin queue', () => {
     });
   });
 
-  it('closing a completed merge resolves its flag in the SAME statement, so an erased merge row cannot bring it back', () => {
-    expect(COMPLETE_MERGE_SQL).toContain('UPDATE alumni_merges SET "completedAt" = now()');
-    expect(COMPLETE_MERGE_SQL).toContain('UPDATE alumni_duplicate_flags SET "resolvedAt" = now()');
-    expect(COMPLETE_MERGE_SQL.match(/;/g)).toBeNull();
+  it('the flag is resolved by ONE statement keyed on the closed duplicate, never on a row that may be erased', () => {
+    expect(RESOLVE_DUPLICATE_FLAG_SQL).toContain(
+      'UPDATE alumni_duplicate_flags SET "resolvedAt" = now()'
+    );
+    expect(RESOLVE_DUPLICATE_FLAG_SQL).not.toContain('alumni_merges');
+    expect(RESOLVE_DUPLICATE_FLAG_SQL.match(/;/g)).toBeNull();
   });
 
-  describe('the one rule of what the mark accepts (autoMergeRefusal)', () => {
-    const ok = { dupSlugs: ['alumni'], matchUuids: [TARGET_UUID], targetSlugs: ['cas-emse'] };
-    it('accepts exactly one match, links exactly [alumni], a target without an Alumni link', () => {
-      expect(autoMergeRefusal(ok)).toBeNull();
-      expect(autoMergeRefusal({ ...ok, targetUuid: TARGET_UUID })).toBeNull();
+  describe('the one rule of what an admin can act on (duplicateShapeRefusal)', () => {
+    it('accepts a person created by an Alumni sign-in whose links are exactly [alumni]', () => {
+      expect(duplicateShapeRefusal(DUP, ['alumni'])).toBeNull();
     });
     it.each([
-      ['links beyond alumni', { ...ok, dupSlugs: ['alumni', 'cas-emse'] }, 'not_duplicate'],
-      ['no match', { ...ok, matchUuids: [] }, 'no_match'],
-      ['a homonym', { ...ok, matchUuids: [TARGET_UUID, DUP_UUID] }, 'no_match'],
-      ['another target than the match', { ...ok, targetUuid: DUP_UUID }, 'no_match'],
-      ['a target already linked to Alumni', { ...ok, targetSlugs: ['alumni'] }, 'no_match'],
-    ])('refuses %s', (_name, input, kind) => {
-      expect(autoMergeRefusal(input)?.kind).toBe(kind);
+      ['links beyond alumni', DUP, ['alumni', 'cas-emse'], 'not [alumni]'],
+      ['no link', DUP, [], 'not [alumni]'],
+      ['an account no Alumni sign-in created', TARGET, ['alumni'], 'not created by an Alumni'],
+      [
+        'a service account',
+        person({ type: 'service_account' }),
+        ['alumni'],
+        'not created by an Alumni',
+      ],
+    ])('refuses %s', (_name, user, slugs, reason) => {
+      expect(duplicateShapeRefusal(user, slugs)).toContain(reason);
     });
   });
 
-  it('the queue filter and the mark agree: isAutoMergeable is the same verdict', async () => {
-    expect(await make([DUP, TARGET]).service.isAutoMergeable(DUP_UUID)).toBe(true);
-    const homonym = person({
-      pk: 3,
-      uuid: '44444444-4444-4444-8444-444444444444',
-      username: 'camille.durand2',
-    });
-    expect(await make([DUP, TARGET, homonym]).service.isAutoMergeable(DUP_UUID)).toBe(false);
-    expect(await make([TARGET]).service.isAutoMergeable(TARGET_UUID)).toBe(false);
-    expect(await make([]).service.isAutoMergeable(DUP_UUID)).toBe(false);
+  it('the queue filter and the mark agree: isFlaggable is the same verdict', async () => {
+    expect(await make([DUP, TARGET]).service.isFlaggable(DUP_UUID)).toBe(true);
+    expect(await make([DUP]).service.isFlaggable(DUP_UUID)).toBe(true);
+    expect(await make([TARGET]).service.isFlaggable(TARGET_UUID)).toBe(false);
+    expect(await make([]).service.isFlaggable(DUP_UUID)).toBe(false);
   });
 
   it('a mark that fails half-way still recounts the admins (the requested row keeps the item pending)', async () => {

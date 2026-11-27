@@ -10,7 +10,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { HANDOFF_VENDORED, LEAVE_IAB_VENDORED } from '../../../tools/ecosystem-shape/vendored.mjs';
+import {
+  ALUMNI_MERGE_VENDORED,
+  HANDOFF_VENDORED,
+  LEAVE_IAB_VENDORED,
+} from '../../../tools/ecosystem-shape/vendored.mjs';
 
 const repo = join(import.meta.dir, '..', '..', '..');
 const shape = readFileSync(join(repo, 'tools/ecosystem-shape/shape.mjs'), 'utf8');
@@ -18,6 +22,7 @@ const labels = [...shape.matchAll(/^\s+\['([A-Za-z-]+)', '[^']+'\],$/gm)].map((m
 
 for (const [name, table] of [
   ['handoff', HANDOFF_VENDORED],
+  ['alumni-merge', ALUMNI_MERGE_VENDORED],
   ['leave-in-app-browser', LEAVE_IAB_VENDORED],
 ]) {
   for (const [source, sites] of table) {

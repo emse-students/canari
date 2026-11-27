@@ -59,6 +59,15 @@
   import { m } from '$lib/paraglide/messages';
   import { replyCaption } from '$lib/utils/chat/replyCaption';
   import ReplyGifThumb from './ReplyGifThumb.svelte';
+  import ReplyMediaThumb from './ReplyMediaThumb.svelte';
+  import type { QuotedVisual } from '$lib/utils/chat/quotedMedia';
+  import {
+    onDecryptedMediaHeld,
+    releaseDecryptedMediaBlobUrl,
+    retainWarmDecryptedMediaBlobUrl,
+  } from '$lib/utils/mediaBlobCache';
+  import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
+  import { mediaKindLabel } from '$lib/envelope';
 
   interface Props {
     /** ID of the quoted message, used for scroll-to navigation. */
@@ -79,6 +88,11 @@
     currentUserId?: string;
     /** True when the sender's name is already drawn above the bubble (see `replyCaption`). */
     headerShown?: boolean;
+    /**
+     * The quoted photo or video, when the thread holds the original (`quotedVisualMedia`). The quote
+     * then draws a small dimmed thumbnail from what this device already has, never a fetch.
+     */
+    quotedMedia?: QuotedVisual | null;
     /** Called when the user clicks the quote to navigate to the original message. */
     onNavigateToMessage?: (id: string) => void;
   }
@@ -93,12 +107,51 @@
     quotedDisplayName = '',
     currentUserId = '',
     headerShown = false,
+    quotedMedia = null,
     onNavigateToMessage,
   }: Props = $props();
 
   const previewText = $derived(shortenReplyPreview(content));
   /** Set when the quoted message is a GIF: the quote then draws the picture, never its address. */
   const gifUrl = $derived(gifPreviewUrl(content));
+
+  /** The decrypted blob already in memory for the quoted media, held while this quote is mounted. */
+  let heldBlobUrl = $state<string | null>(null);
+  const hashUrl = $derived(placeholderDataUrl(quotedMedia?.ref.placeholder));
+  /** What the thumbnail draws; none means the text label stays, a legitimate state (debug only). */
+  const thumbSrc = $derived(heldBlobUrl ?? hashUrl);
+  const mediaLabel = $derived(quotedMedia ? mediaKindLabel(quotedMedia.ref) : '');
+  const mediaCaption = $derived(quotedMedia ? shortenReplyPreview(quotedMedia.caption) : '');
+
+  // Takes the held blob when there is one, else waits for the store to say it landed - the
+  // original's own bubble may still be downloading. Keyed on the quoted ref, so a ref that changes
+  // or an original that joins the thread late is followed; the cleanup releases the hold (only if
+  // one was taken) and cancels the wait. A VIDEO takes no hold: it would pin the blob for a quote,
+  // so it draws its ThumbHash, or its label.
+  $effect(() => {
+    const ref = quotedMedia?.ref;
+    if (!ref || ref.type !== 'image') return;
+    let held = false;
+    let cancelWait: (() => void) | null = null;
+    const take = () => {
+      const warm = retainWarmDecryptedMediaBlobUrl(ref);
+      if (!warm) return;
+      held = true;
+      heldBlobUrl = warm;
+    };
+    take();
+    if (!held) {
+      cancelWait = onDecryptedMediaHeld(ref, () => {
+        cancelWait = null;
+        take();
+      });
+    }
+    return () => {
+      cancelWait?.();
+      if (held) releaseDecryptedMediaBlobUrl(ref);
+      heldBlobUrl = null;
+    };
+  });
 
   /** Who answered whom, in one line; drops the replier when the header above already names them. */
   const caption = $derived(
@@ -152,6 +205,18 @@
   >
     {#if gifUrl}
       <ReplyGifThumb url={gifUrl} />
+    {:else if quotedMedia && thumbSrc}
+      <span class="flex items-center gap-2">
+        <ReplyMediaThumb
+          src={thumbSrc}
+          label={mediaLabel}
+          width={quotedMedia.ref.width}
+          height={quotedMedia.ref.height}
+        />
+        {#if mediaCaption}
+          <span class="min-w-0 truncate"><EmojiText text={mediaCaption} /></span>
+        {/if}
+      </span>
     {:else}
       <span class="block truncate"><EmojiText text={previewText} /></span>
     {/if}

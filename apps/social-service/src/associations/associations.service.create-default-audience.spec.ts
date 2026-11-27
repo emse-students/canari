@@ -171,11 +171,11 @@ describe('AssociationsService.create - the governing parent and its default audi
     return made;
   }
   const BDE = { id: 'bde', type: 'association' };
-  const FSSS = { id: 'fsss', type: 'association' };
+  const FISA = { id: 'fisa', type: 'association' };
   const BDS = { id: 'bds', type: 'association' };
   const SCHOOL = { id: 'school', type: 'institution' };
   const SE = (formation: string) => ({ formation, campus: 'saint-etienne' });
-  const governing = { bde: ['ICM', 'ISMIN', 'PDIS', 'Autre'].map(SE), fsss: [SE('FSSS')] };
+  const governing = { bde: ['ICM', 'ISMIN', 'PDIS', 'Autre'].map(SE), fisa: [SE('FISA')] };
 
   async function codeOf(p: Promise<unknown>): Promise<string | null> {
     const e = await p.then(
@@ -212,7 +212,7 @@ describe('AssociationsService.create - the governing parent and its default audi
 
   describe('a parent governing spaces of two campuses: the child gets ONE campus (decision 3)', () => {
     const GA = (formation: string) => ({ formation, campus: 'gardanne' });
-    const ALL = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+    const ALL = ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'];
     const rulesWritten = (manager: { insert: jest.Mock }) =>
       (manager.insert.mock.calls as unknown[][]).find((c) => c[0] === AssociationAudience)?.[1];
 
@@ -271,7 +271,7 @@ describe('AssociationsService.create - the governing parent and its default audi
 
   it('gives a default audience its PARENT may edit rule by rule, and nothing of the other BDE (WP-D2)', async () => {
     // Since WP-D2 the parent governs the child and writes inside its own spaces only, so the default
-    // must lie inside them: every rule editable by the parent, none on the FSSS BDE's space.
+    // must lie inside them: every rule editable by the parent, none on the FISA BDE's space.
     const { service, manager } = withDependencies({ governing, mine: ['bde'] });
 
     await service.create(dto, 'star-1', false);
@@ -279,19 +279,19 @@ describe('AssociationsService.create - the governing parent and its default audi
     const [, rules] = (manager.insert.mock.calls as unknown[][]).find(
       (c) => c[0] === AssociationAudience
     ) as [unknown, { formation: string; campus: string }[]];
-    const parentSpaces = ['ICM', 'ISMIN', 'PDIS', 'Autre', 'FSSS'].map((formation) => ({
+    const parentSpaces = ['ICM', 'ISMIN', 'PDIS', 'Autre', 'FISA'].map((formation) => ({
       ...SE(formation),
-      governed: formation !== 'FSSS',
+      governed: formation !== 'FISA',
     }));
     expect(rules.every((r) => ruleInsideGovernedSpaces(r, parentSpaces))).toBe(true);
-    expect(rules.some((r) => r.formation === 'FSSS')).toBe(false);
+    expect(rules.some((r) => r.formation === 'FISA')).toBe(false);
   });
 
   it('makes a creator managing two BDEs pick one, and holds the pick to its own BDEs', async () => {
     const two = withDependencies({
-      byId: { bde: BDE, fsss: FSSS },
+      byId: { bde: BDE, fisa: FISA },
       governing,
-      mine: ['bde', 'fsss'],
+      mine: ['bde', 'fisa'],
     });
     expect(await codeOf(two.service.create(dto, 'star-2', false))).toBe(
       DEPENDENCY_PARENT_CHOICE_REQUIRED
@@ -299,24 +299,24 @@ describe('AssociationsService.create - the governing parent and its default audi
     expect(two.manager.save).not.toHaveBeenCalled();
 
     const picked = withDependencies({
-      byId: { bde: BDE, fsss: FSSS },
+      byId: { bde: BDE, fisa: FISA },
       governing,
-      mine: ['bde', 'fsss'],
+      mine: ['bde', 'fisa'],
     });
     await picked.service.create(
-      { ...(dto as object), parentAssociationId: 'fsss' } as never,
+      { ...(dto as object), parentAssociationId: 'fisa' } as never,
       'star-2',
       false
     );
     expect(picked.manager.insert).toHaveBeenCalledWith(AssociationAudience, [
-      { associationId: 'new-asso', formation: 'FSSS', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: 'FISA', campus: 'saint-etienne' },
     ]);
 
-    const notMine = withDependencies({ byId: { bde: BDE, fsss: FSSS }, governing, mine: ['bde'] });
+    const notMine = withDependencies({ byId: { bde: BDE, fisa: FISA }, governing, mine: ['bde'] });
     expect(
       await codeOf(
         notMine.service.create(
-          { ...(dto as object), parentAssociationId: 'fsss' } as never,
+          { ...(dto as object), parentAssociationId: 'fisa' } as never,
           'star-1',
           false
         )
@@ -387,14 +387,14 @@ describe('AssociationsService.create - the governing parent and its default audi
   });
 
   it("lets a platform admin pick a BDE (its spaces) or none (the admin's campus)", async () => {
-    const picked = withDependencies({ byId: { fsss: FSSS }, governing });
+    const picked = withDependencies({ byId: { fisa: FISA }, governing });
     await picked.service.create(
-      { ...(dto as object), parentAssociationId: 'fsss' } as never,
+      { ...(dto as object), parentAssociationId: 'fisa' } as never,
       'admin',
       true
     );
     expect(picked.manager.insert).toHaveBeenCalledWith(AssociationAudience, [
-      { associationId: 'new-asso', formation: 'FSSS', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: 'FISA', campus: 'saint-etienne' },
     ]);
 
     const none = withDependencies({ governing });

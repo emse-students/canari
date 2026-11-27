@@ -38,6 +38,9 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   };
 });
 
+const showConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
+
 const drainOutboxForExit = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
@@ -383,5 +386,89 @@ describe('exitGroupAndCleanup - an exit the server never answered stays owed', (
       expect.objectContaining({ contactKey: CONTACT, groupId: GROUP_ID })
     );
     expect(convs.conversations.get(CONTACT)?.lifecycle).toBe('removed');
+  });
+});
+
+/** "Mes notes" has no settings, so its delete is its own gesture: asked first, kind stated. */
+describe('handleDeleteSelfConversation', () => {
+  function selfConversation(): Conversation {
+    return { ...conversation(), name: 'self', conversationType: 'self' } as Conversation;
+  }
+
+  it('deletes nothing when the confirmation is declined', async () => {
+    showConfirm.mockResolvedValue(false);
+    const convs = useConversations();
+    convs.conversations.set('self', selfConversation());
+    convs.selectConversation('self');
+    const storage = makeExitStorage();
+    const { ctx } = makeCtx(storage);
+
+    await convs.handleDeleteSelfConversation(ctx);
+
+    expect(showConfirm).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ danger: true })
+    );
+    expect(deleteGroupAndBroadcast).not.toHaveBeenCalled();
+    expect(storage.savePendingGroupExit).not.toHaveBeenCalled();
+    expect(convs.conversations.get('self')?.lifecycle).toBe('active');
+  });
+
+  it('owes and performs the delete with the kind stated, once confirmed', async () => {
+    showConfirm.mockResolvedValue(true);
+    const convs = useConversations();
+    convs.conversations.set('self', selfConversation());
+    convs.selectConversation('self');
+    const storage = makeExitStorage();
+    const { ctx } = makeCtx(storage);
+    let owedDuring: unknown[] = [];
+    deleteGroupAndBroadcast.mockImplementation(async () => {
+      owedDuring = [...storage.rows.values()];
+    });
+
+    await convs.handleDeleteSelfConversation(ctx);
+
+    expect(deleteGroupAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: GROUP_ID, kind: 'self' })
+    );
+    expect(owedDuring).toEqual([
+      expect.objectContaining({ groupId: GROUP_ID, kind: 'delete-self' }),
+    ]);
+    // Answered: nothing is owed afterwards.
+    expect(storage.rows.size).toBe(0);
+  });
+
+  it('refuses an ordinary conversation, and asks nothing', async () => {
+    const convs = useConversations();
+    convs.conversations.set(CONTACT, conversation());
+    convs.selectConversation(CONTACT);
+    const { ctx } = makeCtx(makeExitStorage());
+
+    await convs.handleDeleteSelfConversation(ctx);
+
+    expect(showConfirm).not.toHaveBeenCalled();
+    expect(deleteGroupAndBroadcast).not.toHaveBeenCalled();
+  });
+});
+
+/** The notepad's move posts into "Mes notes" from the background: it must not take the screen. */
+describe('openSelfConversation', () => {
+  it('silent: answers the held row without selecting it', async () => {
+    const convs = useConversations();
+    convs.conversations.set('self', {
+      ...conversation(),
+      name: 'self',
+      conversationType: 'self',
+    } as Conversation);
+    const { ctx } = makeCtx();
+
+    await expect(convs.openSelfConversation(ctx, { silent: true })).resolves.toEqual({
+      ok: true,
+      key: 'self',
+    });
+    expect(convs.selectedContact).toBeNull();
+
+    await convs.openSelfConversation(ctx);
+    expect(convs.selectedContact).toBe('self');
   });
 });

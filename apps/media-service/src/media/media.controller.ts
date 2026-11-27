@@ -1246,7 +1246,7 @@ export class MediaController {
   async touch(
     @Body() body: { mediaIds?: unknown },
     @Req() req: Request
-  ): Promise<{ refreshed: number }> {
+  ): Promise<{ refreshed: number; windows: Record<string, number | null> }> {
     this.verifyToken(req);
 
     const ids = body?.mediaIds;
@@ -1260,10 +1260,11 @@ export class MediaController {
       throw new BadRequestException(`mediaIds must hold at most ${TOUCH_MAX_IDS} entries`);
     }
 
-    const refreshed = await this.mediaService.touch(
-      ids.filter((id): id is string => typeof id === 'string')
-    );
-    return { refreshed };
+    const strings = ids.filter((id): id is string => typeof id === 'string');
+    const refreshed = await this.mediaService.touch(strings);
+    // Per id, how long the server keeps the object from now (`null`: no sweep takes it), so the
+    // client's cache cap compares a copy's confirmation to the window it was really given.
+    return { refreshed, windows: this.mediaService.holdWindows(strings) };
   }
 
   // ---------------------------------------------------------------------------

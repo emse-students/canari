@@ -48,4 +48,47 @@ describe('ChatHeader on "Mes notes"', () => {
     expect(heading).toBe('Camille DUPONT (Notes)');
     unmount(app);
   });
+
+  it('offers its delete in place of the settings it does not have, and hands the press up', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const onDeleteSelfConversation = vi.fn();
+    const app = mount(ChatHeader, {
+      target,
+      props: {
+        contactName: '',
+        displayName: 'Camille DUPONT (Notes)',
+        isReady: true,
+        isSelfConversation: true,
+        currentUserId: 'me',
+        onDeleteSelfConversation,
+      },
+    });
+    flushSync();
+    expect(document.querySelector('header [aria-label="Paramètres de la discussion"]')).toBeNull();
+    const del = document.querySelector<HTMLButtonElement>('[data-self-conversation-delete]')!;
+    expect(del).not.toBeNull();
+    del.click();
+    expect(onDeleteSelfConversation).toHaveBeenCalledTimes(1);
+    unmount(app);
+  });
+
+  it('draws no delete in an ordinary conversation, even when handed one', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ChatHeader, {
+      target,
+      props: {
+        contactName: 'g',
+        displayName: 'Group',
+        isReady: true,
+        isGroupConversation: true,
+        currentUserId: 'me',
+        onDeleteSelfConversation: vi.fn(),
+      },
+    });
+    flushSync();
+    expect(document.querySelector('[data-self-conversation-delete]')).toBeNull();
+    unmount(app);
+  });
 });

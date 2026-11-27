@@ -3003,6 +3003,34 @@ read at the pick"), `outbox.test.ts`, `fileDownload.test.ts` and the gallery plu
 tests; the native copy is verified by compiling only until the reading below. The reading owed on the bench phone is
 [a backlog entry](../../backlog.d/reading-picked-file-sent-from-the-gallery-and-a-cloud-item.md).
 
+### What the picked file's copy tells the page (2026-11-26)
+
+Follow-ups of #4154, from its review and the alpha.8 sittings.
+
+- **A provider stating no size is not a warning.** Google Photos cloud items state none; the copy is
+  read to its end, so nothing is lost, and every such pick logged a WARN. It is one debug line now,
+  with the bytes read.
+- **A pick over the ceiling is said as too large.** The page only ever receives an EMPTY file for a
+  refused pick, which cannot tell "over 200 MB" from "unreadable", so the native side dispatches
+  `canari-pick-copy` (`phase: refused, reason: too-large, name, limitMb`) on the WebView and the
+  page (`pickCopyState.svelte.ts`) remembers it by file name; the pick's refusal then says
+  `chat_media_pick_too_large`. A pick whose provider STATES more than the ceiling is refused before
+  a byte is copied. Nothing is guessed from the empty file.
+- **The copy's progress is drawn.** The chooser answers only after every copy is done, so a large pick
+  showed nothing: the same event carries `start` and each whole percent of `progress` (only when a
+  size is stated; a function of the bytes read, no timer) and `end`, and the composer draws one line
+  (`chat_media_reading`, `chat_media_reading_percent`).
+- **A video over 200 MB is still copied, deliberately.** The provider's stated size cannot be proved
+  (it was 0 for the Downloads logs), so the stream is the only truth; the copy is sequential disk I/O,
+  the encoder then reads it by ranges, and the progress line is what the member was missing. A copy
+  that runs out of disk is refused as unreadable, said in the log.
+- **One fact, one line for a save's recorded size.** Kotlin, Rust and the page each logged the
+  mismatch at error; the page (`fileDownload.ts`) is the layer that knows the member's save and is
+  the only one that accuses. Kotlin and Rust say it at debug.
+
+Pinned by `pickCopyState.svelte.test.ts` and `useMessaging.mediaEnqueue.svelte.test.ts`; the native
+half by compiling, then [a reading](../../backlog.d/reading-the-picked-file-copy-progress-and-too-large.md).
+
 ### A 2xx a captive portal answered is no answer (2026-10-25)
 
 Under a captive portal every request is answered `200 text/html` without reaching the server. The
@@ -8405,13 +8433,71 @@ that knows "Mes notes" (`selfConversationVersion >= SELF_CONVERSATION_VERSION`, 
 a peek that claims nothing) AND seated in the group (`getGroupMembers`): a second device that merely
 exists is no copy. Either read failing says nothing - `readSelfConversationDeviceCover`.
 
-**Not yet here** ([the entry](../../backlog.d/mes-notes-notepad-migration-and-retention.md)):
-the move of existing notepads and the `410` on the old routes, the 90-day retention line, the removal
-of the notepad entry point, and a way to delete the conversation.
+**The notepad moves in (owner, 2026-11-22 items 12-14, moved to `1.8.2` on 2026-11-25).** The
+personal notepad sat in `users.notesCiphertext` under a key core-service held (`users.notesKey`),
+which charter principle 1 refuses; principle 2 says nothing may be lost on the way
+([principes](../../../principes.md)). `notepadMigration.ts`, run by `ChatBackgroundService` once per
+signed-in account whose conversations are all drawn (leader tab only, again when "Mes notes" appears):
+reads the notepad (`GET /users/me/notes`, decrypted under `GET /users/me/notes-key`, or the legacy
+plaintext), creates or finds "Mes notes" WITHOUT selecting it (`openSelfConversation(ctx, { silent })`),
+posts the notepad as a message under a heading (`notepad_moved_heading`), and only once the outbox says
+the message is SENT asks `POST /users/me/notes/moved { digest }`, which deletes the notepad, its
+plaintext and its key in one conditional statement (`apps/core-service/src/users/notepad.ts`).
+
+*Why it can neither post twice nor lose anything* - idempotence from durable state, termination from
+the server's answer, no clock anywhere:
+
+- **The message id is derived, not minted** (`notepadMessageId`: SHA-256 of the account and the
+  notepad's digest, shaped as a v8 UUID). A kill after the post replays under the SAME id: the device
+  asks its own store first (`heldAs`) and queues nothing new. Two devices of the account moving the
+  same notepad post the same id; each receiver keeps one row ("all already held").
+- **The server's notepad is the "still owed" bit.** It is deleted only after the post is sent, and
+  only if the digest named is the notepad held NOW: a save an older build made between the read and
+  the delete changes it, the conditional `UPDATE` matches nothing, the answer is `409
+  NOTEPAD_CHANGED`, and the next run moves the newer notepad as a second message (another digest,
+  another id). A kill between the send and the delete leaves the notepad owed and the message held:
+  the replay finds both and only deletes.
+- **No notepad is ever created again**, so "none held" is final: every old route answers `410
+  NOTEPAD_MOVED` to an account holding none - the read, the key (never minted) and the save, which
+  writes only over a notepad still held, in the same statement as its condition. That finality is
+  what lets the device keep a local mark (`notepadDoneMark`) once the server has said it, and ask
+  nothing in later sessions.
+- **What waits:** a message only queued, or parked failed for the member's Retry, keeps the notepad
+  on the server; "Mes notes" arriving from another device (`self-conversation-arriving`) posts nothing
+  until its Welcome lands; a read with no answer changes nothing. Every branch logs `[NOTEPAD]`.
+
+*The entry point is removed in the same build* (the entry's ordering rule: never before the
+migration ships). The profile's notepad section is gone (`profileSections.ts`; an old
+`/profile/me/notepad` link lands on the hub through `+page.ts`'s unknown-segment redirect), and the
+build that removes it is the build that moves the notepad, at the first signed-in session; until that
+session the notepad stays on the server, unread but whole. An older build keeps its page and may edit a
+notepad not moved yet; once moved, its read answers `410` (its load error is shown) and nothing it
+saves is accepted - the notes are in "Mes notes" on the moving device. Recorded in
+[legacy-compatibility](../../legacy-compatibility.md). The three emptied columns are dropped by a later
+held migration ([the entry](../../backlog.d/p3-drop-the-notepad-columns-once-every-notepad-moved.md)).
+
+**The retention line** (item 13). Below the loss notice, always: the photos, files and voice notes of
+"Mes notes" follow the ordinary conversation retention - the server deletes them after 90 days
+unopened, by default (`conversation_self_retention`, `SelfConversationLossNotice.svelte`).
+
+**The delete.** A self row has no settings, so the header offers "Supprimer mes notes" in their place
+(the desktop icon, the phone menu entry; `onDeleteSelfConversation`). It asks first, `danger` (nothing
+can bring the notes back), then runs the ordinary exit (`exitGroupAndCleanup`: retired first, owed
+durably, answer classified) with the kind stated: `deleteGroupAndBroadcast({ kind: 'self' })` sends
+`?kind=self`, and the owed row is the verb `delete-self`, which the replay
+(`drainPendingGroupExits`) sends the same way - the row that knew the kind is gone by then. Both stores
+narrow the verb through `isPendingGroupExitKind`, so a build that does not know `delete-self` keeps the
+row unrun. Tests: `useConversations.exitGroup.svelte.test.ts`, `pendingGroupExits.test.ts`,
+`pendingGroupExitsStore.test.ts`, `groupActions.exitPropagation.test.ts`,
+`ChatHeader.selfConversation.svelte.test.ts`, `notepadMigration.test.ts`, and core-service's
+`users.service.spec.ts` and `user-write-gone.integration.spec.ts` (the conditional statements against
+PostgreSQL).
 
 Tests: `selfConversation.test.ts`, `mlsDeliveryApi.selfKind.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
 `tabCommitDelegation.test.ts`. **Owed: a reading on both phones** - open "Mes notes" on one device,
-write, add a photo and a voice note, then read them on the account's second device.
+write, add a photo and a voice note, then read them on the account's second device; and an account
+holding a profile notepad sees it arrive in "Mes notes" once
+([the reading](../../backlog.d/reading-owed-mes-notes-on-both-phones-and-the-notepad-move.md)).
 
 ### The jump outline follows the bubble (2026-11-26)
 
@@ -8426,3 +8512,19 @@ the quoted chip is a second, separate bubble (`MessageReplyQuote`) and is not ou
 fill of its own (media alone, link card, poll, emoji) carries `rounded-bubble` so the shadow still has
 a corner; a row with no bubble (system notice, channel invite card) is its own shape and carries the
 class itself. The old `isHighlighted` ring prop of `MessageBubble` has no caller and was left alone.
+
+## A quoted photo is drawn, not named (2026-11-27)
+
+Owner's two minifixes. **No frame:** an own photo or video with no caption that answers a message
+sets `isMediaOnly` like a plain one (`MessageBubble`, `isVisualReply`): no padded `bg-bubble-out`
+around it, the quote stays stacked above. A reel, a voice note or a file keeps its framing; a caption
+keeps the bubble (principle 7, simplicity: the owner asked only about the bare image).
+
+**Thumbnail in the quote:** a stored quote carries only a text preview, so `ChatMessageGroups` looks
+the original up in an id map of the messages it already renders (`quotedVisualMedia`, never a fetch; the same original answers with the same object) and hands
+its ref to `MessageReplyQuote`, which draws `ReplyMediaThumb` (60% opacity, `aria-label` = the kind
+label) from, in order: the decrypted blob already in memory (`retainWarmDecryptedMediaBlobUrl`,
+released on teardown; an `$effect` keyed on the ref; a VIDEO takes no hold - pinning its blob for a quote would keep it alive - and uses its ThumbHash), else the ThumbHash the sender embedded, else
+today's text label. The last two states are legitimate (original not loaded, expired, never opened)
+and log at debug only. A quote mounted before its original finished downloading takes the blob the moment it lands
+(`onDecryptedMediaHeld`, a one-shot arrival listener on `BlobUrlPool`; no polling, no remount).

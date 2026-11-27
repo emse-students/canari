@@ -168,6 +168,8 @@ export class TauriMlsService extends BaseMlsService {
   }
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
+  /** True only while the `pagehide` release runs: the document dies, so nothing may wait on it. */
+  private pageLeaving = false;
   /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
   private _pageShowHandler: (() => void) | null = null;
   private wsUnlisten: (() => void) | null = null;
@@ -408,7 +410,12 @@ export class TauriMlsService extends BaseMlsService {
       this._pageHideHandler = () => {
         if (!this.ws) return;
         console.log('[WS] page leaving - releasing the native socket and its listener channel');
-        this.pauseSocket();
+        this.pageLeaving = true;
+        try {
+          this.pauseSocket();
+        } finally {
+          this.pageLeaving = false;
+        }
       };
       window.addEventListener('pagehide', this._pageHideHandler);
       // A `pagehide` the page SURVIVES (a bfcache entry restored, a navigation that did not
@@ -667,6 +674,25 @@ export class TauriMlsService extends BaseMlsService {
     this.wsUnlisten?.();
     this.wsUnlisten = null;
     this.ws = null;
+    if (this.pageLeaving) {
+      // THE DOCUMENT IS DYING, SO BOTH CALLS GO OUT NOW. The release below waits for the frame's
+      // acceptance before it asks for the native disconnect, and a page that has gone never runs
+      // that continuation: the plugin's reader then kept the connection and answered every gateway
+      // frame into the dead page's channel, `[TAURI] Couldn't find callback id N` every ~15 s
+      // after a reload (iPhone 12, 1.8.2-alpha.8, a language switch: 7 lines in 90 s). The two
+      // invocations leave in order, the frame first; no watcher is registered, since nobody
+      // is left to read what it would learn.
+      const frame = ws.send(JSON.stringify({ type: 'disconnect' }));
+      const release = ws.disconnect();
+      void frame.catch((e: unknown) =>
+        console.log(`[WS] page leaving: the disconnect frame was not accepted (${String(e)})`)
+      );
+      void release.catch((e: unknown) =>
+        console.log(`[WS] page leaving: the native release was refused (${String(e)}) - released.`)
+      );
+      console.log('[WS] Page leaving - disconnect frame and native release sent together.');
+      return;
+    }
     // THE SEND IS THE PROBE. A socket the OS closed under a backgrounding app delivers no `Close`
     // (the listener of a live one would have nulled `this.ws`), but its `send` REJECTS - and the
     // plugin has already dropped such a connection, so `disconnect()` on it can only answer

@@ -29,20 +29,22 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
       return out;
     }
   ),
-  decodeChannelMessageRow: vi.fn(async (_raw: string, row: { id: string; at: number }) =>
-    droppedV1.ids.includes(row.id)
-      ? null
-      : {
-          kind: 'message',
-          message: {
-            id: row.id,
-            senderId: 'peer',
-            content: `server ${row.id}`,
-            timestamp: new Date(row.at),
-            isOwn: false,
-            isSystem: false,
-          },
-        }
+  decodeChannelMessageRow: vi.fn(
+    async (_raw: string, row: { id: string; at: number; vouched?: boolean }) =>
+      droppedV1.ids.includes(row.id)
+        ? null
+        : {
+            kind: 'message',
+            message: {
+              id: row.id,
+              senderId: 'peer',
+              content: `server ${row.id}`,
+              timestamp: new Date(row.at),
+              isOwn: false,
+              isSystem: false,
+              ...(row.vouched ? { everyoneVouched: true } : {}),
+            },
+          }
   ),
   UnreadableRowTally: class {
     report() {}
@@ -152,6 +154,31 @@ describe("a salon's stored page", () => {
     // The copy's row the server no longer holds, older than its page, is withdrawn.
     expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['b', 'c']);
     expect(convs.conversations.get(SALON)?.messages[0].content).toBe('server b');
+  });
+
+  it('draws a vouched @tous from the device copy, so the chip does not flip when the server page lands', async () => {
+    const storage = makeStorage([{ ...storedRow('a', 1_000), everyoneVouched: true }]);
+    let answer!: (rows: unknown[]) => void;
+    listMessages.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const vouchedOf = () => convs.conversations.get(SALON)?.messages[0]?.everyoneVouched;
+
+    const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage), {
+      atTap: true,
+    });
+    await drawnAs(convs, ['a']);
+    // Drawn FIRST, from the copy: already vouched, so the bubble draws the chip from its first frame.
+    expect(vouchedOf()).toBe(true);
+
+    answer([{ id: 'a', at: 1_000, vouched: true }]);
+    await loading;
+    expect(vouchedOf()).toBe(true);
+    // And the copy that replaces it keeps the fact for the next open.
+    expect(storage.saveMessages).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'a', everyoneVouched: true })],
+      'k'
+    );
   });
 
   it('is replaced in the store by the server page, only once that page is in hand', async () => {

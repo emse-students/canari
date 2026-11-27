@@ -154,6 +154,12 @@ export interface StoredMessage {
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
   /**
+   * A salon row whose `@tous` the SERVER vouched for (`ChatMessage.everyoneVouched`). Sealed with the
+   * row, never a clear column, so a page drawn from this copy already knows it and the chip does not
+   * flip when the server page arrives.
+   */
+  everyoneVouched?: boolean;
+  /**
    * Why this own attachment was retired UNSENT, when the reason was the group's (see
    * {@link UnsentReason}). Written by the outbox as it retires the entry - the entry and its bytes go,
    * and this is what lets the bubble still say why after a reload or in another tab.
@@ -616,10 +622,22 @@ export interface PendingGroupExit {
    * Which call is owed. `delete` destroys the group for everyone (owner only); `leave` removes just
    * this user. They are NOT interchangeable, and the drain cannot infer one from the other after the
    * local state that distinguished them is gone - which is why the verb is stored and not derived.
+   * `delete-self` is the delete of "Mes notes", which the server accepts only from a request that
+   * says it knows the kind (`?kind=self`): the fact is gone with the row too, so it is a verb of its
+   * own. A build that does not know it skips the row and keeps it for one that does.
    */
-  kind: 'delete' | 'leave';
+  kind: 'delete' | 'leave' | 'delete-self';
   /** When the user asked (Unix ms). Reported by the drain, never used to decide anything. */
   requestedAt: number;
+}
+
+/**
+ * Whether a stored exit verb is one this build has a call for. Both stores read through it: a row a
+ * later build wrote (or a hand) can hold a verb this one does not know, and running the WRONG exit is
+ * worse than leaving the row alone for a build that does know it.
+ */
+export function isPendingGroupExitKind(kind: unknown): kind is PendingGroupExit['kind'] {
+  return kind === 'delete' || kind === 'leave' || kind === 'delete-self';
 }
 
 /**

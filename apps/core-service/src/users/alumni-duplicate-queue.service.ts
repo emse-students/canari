@@ -20,10 +20,11 @@ export type FlagOutcome = 'created' | 'reopened' | 'known' | 'failed';
  * `alumni_merges`. Marking a duplicate for a merge therefore clears it for every admin by itself;
  * this service only tells the badges ({@link changed}). When MiConnect completes the merge nothing is
  * announced: the item has been gone since the mark, and the completion resolves the flag
- * (`COMPLETE_MERGE_SQL`).
+ * in the closing transaction (`RESOLVE_DUPLICATE_FLAG_SQL`).
  *
- * ONLY WHAT THE MARK ACCEPTS IS FLAGGED: callers pass duplicates `autoMergeRefusal` accepts, never a
- * homonym or another case the admins have no action for yet.
+ * ONLY WHAT AN ADMIN CAN ACT ON IS FLAGGED: callers pass duplicates `duplicateShapeRefusal` accepts (links
+ * exactly [alumni]); since D55 that includes one with no or several name matches, attached by hand.
+ * Nothing is ever merged by the flag.
  *
  * FOUND BY READING, SO TOLD WHEN FOUND. A duplicate lives at MiConnect; Canari finds it when it reads
  * it - at the sign-in that creates the duplicate's Canari account (`AlumniMergeService.flagNewAccount`,

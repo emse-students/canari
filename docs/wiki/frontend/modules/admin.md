@@ -127,7 +127,8 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   one notice. Opens `/admin/moderation`.
 - `admin_alumni_duplicate` (owner, 2026-11-26: "quand il y a une fusion d'alumni, je devrais recevoir
   une notif, comme toutes les autres fonctionnalités de la console admin"): when an Alumni sign-in
-  created an account that matches an existing one. EVERY global admin is told (nobody asked for it, so
+  created an account that an admin can act on (D55: one holding only the Alumni link, whether it matches
+  an existing account by name and promo or not - a merge by hand needs no match). EVERY global admin is told (nobody asked for it, so
   nobody is excluded), ONCE per duplicate: core-service's `AlumniDuplicateQueue.flag` writes the
   `alumni_duplicate_flags` row and posts `POST /internal/notifications/alumni-duplicate-flagged` (a
   page reading that flags several posts `alumni-duplicates-found` once: a bell row each, ONE push for
@@ -142,12 +143,11 @@ person who filed the item, actor = the platform, no text, one bell row each and 
   created at MiConnect that signs in nowhere in Canari and that no admin reads waits for the next
   reading; a push at MiConnect's creation of it is a MiConnect-side event, not built. **It clears for
   every admin when one marks it for a merge** (the marked `alumni_merges` row is the state; no write
-  to the flag, and ONLY what the mark accepts is ever flagged - `autoMergeRefusal`, one shared predicate - so a homonym is never announced; `reconcile` resolves only flags older than its reading's start), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
+  to the flag, and ONLY what an admin can act on is ever flagged - `duplicateShapeRefusal`, one shared predicate also read by the mark - so a duplicate whose links are not exactly [alumni] is never announced, while a homonym or a differently spelled name IS (attached by hand, D55; nothing is merged automatically); `reconcile` resolves only flags older than its reading's start), and the badges are told by `POST /internal/notifications/alumni-duplicates-changed`
   (mark, cancel, resolution) with NO push. When MiConnect completes the merge nothing is announced: the
-  item has been gone since the mark, and the completion resolves the flag in the SAME statement
-  (`COMPLETE_MERGE_SQL`), so an erasure deleting the merge row cannot bring it back. There is no "dismiss". The unpaired duplicates of the manual
-  merge ([profiles-and-access](../../profiles-and-access.md)) are not queue items: only a duplicate
-  that matches an account is. Proved in `alumni-duplicate-queue.service.spec.ts` (once, never again,
+  item has been gone since the mark, and the completion resolves the flag in the SAME transaction as the closing UPDATE
+  (`RESOLVE_DUPLICATE_FLAG_SQL`, run by `AlumniMergeService.complete`, the one place every completion path - reconciler, push, a "Rattacher" resumed over a vanished duplicate - closes a row), so an erasure deleting the merge row cannot bring it back. There is no "dismiss". The unpaired duplicates of the manual
+  merge ([profiles-and-access](../../profiles-and-access.md)) ARE queue items since D55 (owner's lead, 2026-11-27). Proved in `alumni-duplicate-queue.service.spec.ts` (once, never again,
   resolved, reopened), `alumni-merge-queue.spec.ts` (the sign-in, the cancel), `admin-queues.service.spec.ts`
   (every admin told, the predicate in the count), `bell-target-rows.integration.spec.ts` and
   `bde-moderation.integration.spec.ts` (the predicate against PostgreSQL: marked, cancelled, completed,

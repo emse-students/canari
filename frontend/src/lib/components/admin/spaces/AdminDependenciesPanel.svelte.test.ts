@@ -37,7 +37,7 @@ const e = (over: Partial<DependencyEntity> & { id: string; name: string }): Depe
 
 const AXIS: DependencyEntity[] = [
   e({ id: 'bde', name: 'BDE', governs: true }),
-  e({ id: 'fsss', name: 'BDE FSSS', governs: true }),
+  e({ id: 'fisa', name: 'BDE FISA', governs: true }),
   e({ id: 'bds', name: 'BDS' }),
   e({
     id: 'list',
@@ -116,10 +116,10 @@ it('moves a list to another BDE through setDependency, then reads the axis back'
   target.querySelector('[data-dependency-row="list"]')!.querySelector('button')!.click();
   flushSync();
 
-  await pick(target, 'dependency-parent-list', 'BDE FSSS');
+  await pick(target, 'dependency-parent-list', 'BDE FISA');
   button(target, m.common_save_button()).click();
 
-  await vi.waitFor(() => expect(api.setDependency).toHaveBeenCalledWith('list', 'fsss', 'bds'));
+  await vi.waitFor(() => expect(api.setDependency).toHaveBeenCalledWith('list', 'fisa', 'bds'));
   await vi.waitFor(() => expect(api.listDependencies).toHaveBeenCalledTimes(2));
 });
 
@@ -154,7 +154,7 @@ it('summarises the warnings per BDE and filters the list to them', async () => {
   expect(family.querySelector('[data-mismatch-summary]')!.textContent).toContain(
     m.admin_dependencies_mismatch_summary({ count: 2 })
   );
-  expect(target.querySelector('[data-mismatch-summary="fsss"]')).toBeNull();
+  expect(target.querySelector('[data-mismatch-summary="fisa"]')).toBeNull();
   expect(family.querySelectorAll('[data-dependency-row]')).toHaveLength(4);
 
   family.querySelector<HTMLButtonElement>('[data-mismatch-filter]')!.click();

@@ -44,7 +44,7 @@ export function postLabel(post: Post): string {
 }
 
 /** The formations MiConnect knows (D4). Mirrors `social-service` `SPACE_FORMATIONS`. */
-export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
+export const FORMATIONS = ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'] as const;
 export type Formation = (typeof FORMATIONS)[number];
 
 /** The localized name of a formation: the four acronyms stand for themselves, the rest is "Other". */

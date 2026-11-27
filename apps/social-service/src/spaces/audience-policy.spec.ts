@@ -68,7 +68,7 @@ describe('ruleInsideGovernedSpaces', () => {
     campus: 'saint-etienne',
     governed,
   });
-  const twoBdes = [se('ICM', true), se('ISMIN', false), se('FSSS', false)];
+  const twoBdes = [se('ICM', true), se('ISMIN', false), se('FISA', false)];
 
   it('keeps a formation rule inside only on a governed space', () => {
     expect(ruleInsideGovernedSpaces({ formation: 'ICM', campus: 'saint-etienne' }, twoBdes)).toBe(
@@ -110,7 +110,7 @@ describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
     campus: 'saint-etienne',
     governed,
   });
-  const icmStar = [se('ICM', true), se('ISMIN', false), se('FSSS', false)];
+  const icmStar = [se('ICM', true), se('ISMIN', false), se('FISA', false)];
   const wide = [{ formation: null, campus: 'saint-etienne' }];
   const icm = { formation: 'ICM', campus: 'saint-etienne' };
 
@@ -149,15 +149,15 @@ describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
   });
 
   it("writes inside its PARENT's spaces only, never another BDE the same person manages (WP-D2)", () => {
-    // The star holds MANAGE_ASSO in two BDEs: ICM's (the entity's parent) and FSSS's. It READS
+    // The star holds MANAGE_ASSO in two BDEs: ICM's (the entity's parent) and FISA's. It READS
     // across both, and WRITES inside the parent's spaces alone (G8, D1).
-    const reader = [se('ICM', true), se('ISMIN', false), se('FSSS', true)];
-    const parent = [se('ICM', true), se('ISMIN', false), se('FSSS', false)];
-    const fsss = { formation: 'FSSS', campus: 'saint-etienne' };
+    const reader = [se('ICM', true), se('ISMIN', false), se('FISA', true)];
+    const parent = [se('ICM', true), se('ISMIN', false), se('FISA', false)];
+    const fisa = { formation: 'FISA', campus: 'saint-etienne' };
     const write = (submitted: (typeof icm)[]) =>
       codeOf(() => assertBdeMayWriteAudience('list', reader, parent, true, [icm], submitted));
     expect(write([icm])).toBeNull();
-    expect(write([icm, fsss])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+    expect(write([icm, fisa])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
   });
 
   it('lets a parent read its child wherever its rules lie, and no one else beyond its campus', () => {

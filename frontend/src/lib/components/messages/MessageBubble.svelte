@@ -51,6 +51,7 @@
   import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
+  import type { QuotedVisual } from '$lib/utils/chat/quotedMedia';
   import MessageTextBody from './MessageTextBody.svelte';
   import MessageMetadata from './MessageMetadata.svelte';
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
@@ -114,6 +115,8 @@
       senderId: string;
       content: string;
     };
+    /** The quoted photo or video when the thread holds the original (`quotedVisualMedia`). */
+    replyToMedia?: QuotedVisual | null;
     /** Emoji reactions attached to this message. */
     reactions?: MessageReaction[];
     /** User IDs who have read the message, shown in the info tooltip. */
@@ -181,6 +184,8 @@
     onReelPurged?: (messageId: string, atMs: number, conversationId: string) => void;
     /** The conversation this row is drawn in: the reel viewer keeps it when it opens (RC-6). */
     conversationId?: string;
+    /** See `MessageInlineText`'s `everyoneHonoured`: false for a salon row the server did not vouch `@tous` for. */
+    everyoneHonoured?: boolean;
     /**
      * Called when the user chooses "edit" on their own text message, with its current text. The
      * edit itself happens in the conversation's composer (user, 2026-10-02: *"modification des
@@ -219,6 +224,7 @@
     isOwn,
     isSystem = false,
     replyTo,
+    replyToMedia = null,
     reactions = [],
     readBy = [],
     isLastOwn = false,
@@ -247,6 +253,7 @@
     reelPurgedAt,
     onReelPurged,
     conversationId,
+    everyoneHonoured = true,
     currentUserId = '',
     authToken = '',
     shouldAnimate = false,
@@ -436,7 +443,17 @@
     return text ? () => void runShareOut(what, () => shareTextOut(text)) : undefined;
   });
 
-  const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
+  // A photo or video with no caption is drawn like a plain one even when it answers a message
+  // (owner, 2026-11-27: "le bord jaune pour l'image dans une reponse"): no bubble padding around it,
+  // the quote stays stacked above. A reel, a voice note or a file keeps its own framing.
+  const isVisualReply = $derived(
+    !!effectiveReplyTo &&
+      (mediaRef?.type === 'image' || mediaRef?.type === 'video') &&
+      !isReelMessageRow
+  );
+  const isMediaOnly = $derived(
+    !!mediaRef && !textContent && (!effectiveReplyTo || isVisualReply) && !isDeleted
+  );
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
   // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
   // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A quoted reply stacks its own
@@ -1245,6 +1262,7 @@
             quotedDisplayName={quotedFirstName}
             {currentUserId}
             headerShown={senderHeaderShown}
+            quotedMedia={replyToMedia}
             {onNavigateToMessage}
           />
         {/if}
@@ -1341,6 +1359,7 @@
                   {authToken}
                   {reelPurgedAt}
                   {conversationId}
+                  {everyoneHonoured}
                   onReelPurged={onReelPurged
                     ? (at, openedFrom) => onReelPurged(messageId, at, openedFrom)
                     : undefined}
@@ -1361,6 +1380,7 @@
                   {firstLink}
                   jumbo={isEmojiOnly}
                   onOwnBubble={isOwn}
+                  {everyoneHonoured}
                 />
               {/if}
             {/if}

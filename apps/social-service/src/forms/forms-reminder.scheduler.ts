@@ -493,15 +493,17 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:00) - deletes delivered and parked webhooks after 30 days.
-   * Failed deliveries are kept for manual retry.
+   * Weekly (Sunday 04:00) - deletes delivered webhooks after 30 days.
+   * Failed deliveries are kept for manual retry, and PARKED ones until a re-send turns them
+   * `delivered`: the money is not on the member's balance yet, and the row is what the sweep
+   * re-sends, and what `/admin/cercle` and the daily report (`CercleDeliveryScheduler`) read.
    */
   @Cron('0 4 * * 0')
   async purgeDeliveredWebhooks() {
     try {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM webhook_deliveries
-         WHERE status IN ('delivered', 'parked')
+         WHERE status = 'delivered'
            AND "createdAt" < NOW() - make_interval(days => $1)`,
         [GC_WEBHOOK_DELIVERY_DAYS]
       );

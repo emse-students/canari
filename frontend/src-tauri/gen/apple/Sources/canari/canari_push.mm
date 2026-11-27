@@ -3848,6 +3848,9 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // `NotificationLevelGate.EVERYONE_TOKEN` and the extension's `everyoneToken`, pinned for all of them
 // by `libs/contracts/mention-decision.cases.json`.
 static BOOL CanariCallsEveryone(NSString *body) {
+  // A nil or empty body calls nobody (messaging a nil string answers a zero location, which is not
+  // NSNotFound): said here, so no caller has to remember the guard.
+  if (body.length == 0) return NO;
   return [body rangeOfString:@"@[everyone]" options:NSCaseInsensitiveSearch].location != NSNotFound;
 }
 

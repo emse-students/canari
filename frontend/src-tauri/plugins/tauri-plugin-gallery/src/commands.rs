@@ -350,20 +350,12 @@ pub(crate) async fn write_staged_document<R: Runtime>(
         Err(crate::Error::AndroidOnly)
     };
     match &outcome {
-        Ok(w) => match w.recorded {
-            Some(recorded_len) if recorded_len != w.written => log::error!(
-                "[gallery] write_staged_document {session}: {} bytes written but the provider records {recorded_len}",
-                w.written
-            ),
-            Some(recorded_len) => log::debug!(
-                "[gallery] write_staged_document {session}: {} bytes written, the provider records {recorded_len}",
-                w.written
-            ),
-            None => log::warn!(
-                "[gallery] write_staged_document {session}: {} bytes written, the provider states no size",
-                w.written
-            ),
-        },
+        // One fact, one accusing line: a recorded size short of the bytes written (or none) is
+        // said once, by the page (`fileDownload.ts`), which is the layer that knows the member's save.
+        Ok(w) => log::debug!(
+            "[gallery] write_staged_document {session}: {} bytes written",
+            w.written
+        ),
         Err(e) => log::error!("[gallery] write_staged_document {session} failed: {e}"),
     }
     remove_staged(&staged);
