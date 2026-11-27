@@ -562,6 +562,19 @@ describe('the suggestion a share arrives with', () => {
     expect(suggestionIfHeld('from-another-account', held)).toBeNull();
     expect(suggestionIfHeld(null, held)).toBeNull();
   });
+
+  it('a sender the previous account left in the iPhone sheet preselects nothing for the next one', () => {
+    // The notification extension donates under `c:<conversation id>` (NotificationService
+    // `conversationIdPrefix`), and its donations can outlive the sign-out until its next run
+    // erases them: the picked hint goes through the same two steps as any suggestion.
+    const nextAccountHolds = [{ id: 'conv-of-the-next-account' }];
+    const leftover = conversationIdFromShareTarget('c:conv-of-the-previous-account');
+    expect(leftover).toBe('conv-of-the-previous-account');
+    expect(suggestionIfHeld(leftover, nextAccountHolds)).toBeNull();
+    // The next account's own suggestion still lands.
+    const own = conversationIdFromShareTarget('c:conv-of-the-next-account');
+    expect(suggestionIfHeld(own, nextAccountHolds)).toBe('conv-of-the-next-account');
+  });
 });
 
 describe('the erase says its outcome at a level the exported log keeps (iPhone 12, 1.8.0-alpha.6)', () => {
