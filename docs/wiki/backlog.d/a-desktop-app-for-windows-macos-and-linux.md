@@ -2,6 +2,10 @@
 
 target: 1.10.0
 
+**macOS is not urgent at all (owner, 2026-11-27: *"Mac ça ne presse pas du tout du tout"*)**: Windows
+and Linux are the `1.10.0` scope; the macOS build may follow later without holding the version. Windows
+is read on the lead's Windows machine, Linux by a CI build and launch (no Linux desktop on the bench).
+
 **Decided by the owner on 2026-11-27:** build it after the reliability tiers, on all three desktop
 platforms, and distribute the binaries **unsigned** (no code-signing certificate, no Microsoft Store).
 The owner accepts the consequence: Windows SmartScreen ("Windows a protégé votre ordinateur") on

@@ -1,6 +1,6 @@
 ## P2 - a massively reported comment stays up until a human acts
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#comments-plain-anonymous-in-an-associations-name),
 decision 17): auto-hide extends to comments, with the same threshold. That a moderator restores one

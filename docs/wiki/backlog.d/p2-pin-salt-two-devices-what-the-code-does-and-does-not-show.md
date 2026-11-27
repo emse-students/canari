@@ -1,6 +1,6 @@
 ## P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, two adjacent races remain (2026-11-20)
 
-target: 1.9.0
+target: 1.8.6
 
 The PIN-gate audit of 2026-11-20 (row 19) reported two devices rotating the account's PIN salt back
 and forth. Read in the code on 2026-11-20, that loop does not exist: the salt changes ONLY when

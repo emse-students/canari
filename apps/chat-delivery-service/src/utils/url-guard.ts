@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { isIP } from 'node:net';
@@ -710,47 +710,65 @@ export function mergeOEmbedIntoPayload(
 }
 
 const GALLERY_HOST = 'gallery.mitv.fr';
+/** An Immich album id, exactly. */
+const GALLERY_ALBUM_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
 
 /**
- * The wide (1200x630) cover a card may draw large, or '' when the album is private.
+ * The wide (1200x630) cover a card draws large, for every album whatever its visibility.
  *
  * The hero banner is about 640 CSS px wide, so the 400px square cover that fills the tile is
- * upscaled about three times there (the visibly pixelated card of 2026-11-26). The wide cover is
- * the sharp one, but a PRIVATE album's reach is not widened by a resolution change made here: its
- * card keeps the square it always had, and this returns '' so the client does not ask for more.
- * An unknown visibility is treated as private - `/info` always states one, so an absent field is
- * something to be careful about, never a reason to publish.
+ * upscaled about three times there (the visibly pixelated card of 2026-11-26). MiGallery serves
+ * BOTH covers without a key for every album, private included - an external site embeds one from an
+ * `<img>`, which carries no key (MiGallery's `og-cover/+server.ts` and its wiki,
+ * `albums-and-permissions.md`, "Covers and OG"). Withholding the wide one from a private album
+ * therefore protected nothing - the square of the same photo was already on the card - and left
+ * the one card the owner asked for (2026-11-27: private albums show their preview, cover included)
+ * pixelated.
  */
-export function galleryWideCoverFor(
-  visibility: string | undefined,
-  origin: string,
-  albumId: string
-): string {
-  if (!visibility || visibility.toLowerCase() === 'private') return '';
+export function galleryWideCoverFor(origin: string, albumId: string): string {
   return `${origin}/api/albums/${albumId}/og-cover`;
 }
 
+/** The card MiGallery's `GET /api/albums/[id]/preview` answers: these four fields, nothing else. */
+interface MiGalleryAlbumPreview {
+  name?: string;
+  date?: string | null;
+  location?: string | null;
+  visibility?: string;
+  /** Set on a 404 only, by the route itself, when the ALBUM is unknown. */
+  code?: string;
+}
+
+/** The `code` MiGallery's preview route puts on the 404 of an unknown album. */
+const MIGALLERY_ALBUM_NOT_FOUND = 'album_not_found';
+
+const galleryLogger = new Logger('LinkPreview');
+
+/** Whether the absent key was already reported by this process (it cannot change while it lives). */
+let galleryKeyMissingReported = false;
+
 /**
- * Fetches a link-preview payload for a MiGallery album URL.
+ * Fetches a link-preview payload for a MiGallery album URL, for EVERY visibility, private included.
  *
- * Uses `MIGALLERY_API_URL` / `MIGALLERY_API_KEY` from the environment to call the
- * authenticated `/api/albums/[id]/info` endpoint - works for all visibility
- * levels (unlisted, authenticated, private).
+ * Reads MiGallery's `GET /api/albums/[id]/preview` with `MIGALLERY_API_URL` / `MIGALLERY_API_KEY`
+ * (a READ-scoped key): name, date, location and visibility, never the album's grant lists. It used
+ * to read `/api/albums/[id]/info`, which also returns those lists and became the staff's in
+ * MiGallery v2.23.1: the read key got `403 Write or Admin scope required`, this function returned
+ * null without a word, and every album link fell to the HTML of a page that sends an anonymous
+ * reader to sign in - the generic MiGallery card, measured on production 2026-11-27.
  *
- * ONE RULE, TWO KINDS OF THING: an image is public and needs no key, a metadata
- * read does. MiGallery serves every album's cover unauthenticated whatever its
- * visibility - an external site embeds one from an `<img>`, which carries no
- * key - so the image URL here is MiGallery's own public one, fetched like any
- * other preview image by the SSRF-guarded proxy. Only this call holds the key,
- * because `/info` is the one thing that stays gated.
+ * ONE RULE, TWO KINDS OF THING: an image is public and needs no key, a metadata read does. The
+ * cover URL is MiGallery's own public one (see {@link galleryWideCoverFor}), fetched like any other
+ * preview image by the SSRF-guarded proxy, so the key never leaves this service.
  *
- * The URL is built from `targetUrl.origin`, never from `MIGALLERY_API_URL`: that
- * variable may name an internal address, and this string is handed to a browser
- * and re-validated as an external URL before anything fetches it.
+ * The URL is built from `targetUrl.origin`, never from `MIGALLERY_API_URL`: that variable may name
+ * an internal address, and this string is handed to a browser and re-validated as an external URL
+ * before anything fetches it.
  *
- * Returns `null` when the URL is not a recognised album link or the API call fails.
- * The returned object has the same shape as `buildLinkPreviewPayload`.
+ * Returns `null` when the URL is not an album link, and when MiGallery did not give the card - then
+ * the caller reads the page itself, which is a FALLBACK: every such branch logs at a level that
+ * accuses, with the status, so a degraded card is never silent again.
  */
 export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   url: string;
@@ -764,16 +782,34 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   if (!match) return null;
 
   const albumId = match[1];
+  // Only an exact UUID (an Immich album id, which is all MiGallery ever names) is placed in the path
+  // sent with the key: the loose path pattern above also matches `---` or `abc`, and no string a
+  // message chose should decide which MiGallery route the key reaches.
+  if (!GALLERY_ALBUM_ID_RE.test(albumId)) return null;
+  // NEVER THE ALBUM ID IN A LOG LINE: for an unlisted album the id IS the bearer link, and a log
+  // is read by people the link was never sent to. The host and the outcome say all a reader needs.
   const galleryBaseUrl = (process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`).replace(
     /\/$/,
     ''
   );
   const apiKey = process.env.MIGALLERY_API_KEY || '';
 
-  if (!apiKey) return null;
+  if (!apiKey) {
+    // A state of the estate read from its environment, fixed for the life of the process: said
+    // once, not once per link, or a key-less estate writes the same line for every album it meets.
+    if (!galleryKeyMissingReported) {
+      galleryKeyMissingReported = true;
+      galleryLogger.warn(
+        '[LINK_PREVIEW] MIGALLERY_API_KEY is not set: every MiGallery album card falls back to the page'
+      );
+    }
+    return null;
+  }
 
+  let res: Response;
+  let data: MiGalleryAlbumPreview;
   try {
-    const res = await fetch(`${galleryBaseUrl}/api/albums/${albumId}/info`, {
+    res = await fetch(`${galleryBaseUrl}/api/albums/${albumId}/preview`, {
       method: 'GET',
       headers: {
         'user-agent': 'CanariLinkPreview/1.0',
@@ -782,48 +818,59 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
       },
       signal: AbortSignal.timeout(4000),
     });
-
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as {
-      album?: {
-        name?: string;
-        date?: string | null;
-        location?: string | null;
-        visibility?: string;
-      };
-    };
-
-    const album = data.album;
-    if (!album?.name) return null;
-
-    const descParts: string[] = [];
-    if (album.date) {
-      try {
-        const d = new Date(album.date + 'T12:00:00');
-        descParts.push(
-          d.toLocaleDateString('fr-FR', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          })
-        );
-      } catch {
-        descParts.push(album.date);
-      }
-    }
-    if (album.location) descParts.push(album.location);
-
-    return {
-      url: targetUrl.toString(),
-      title: album.name.slice(0, 180),
-      description: descParts.join(' · '),
-      image: galleryWideCoverFor(album.visibility, targetUrl.origin, albumId),
-      siteName: 'MiGallery',
-    };
-  } catch {
+    data = (await res.json().catch(() => ({}))) as MiGalleryAlbumPreview;
+  } catch (error) {
+    galleryLogger.warn(
+      `[LINK_PREVIEW] MiGallery album preview unreachable, falling back to the page: ${String(errorCause(error) ?? error)}`
+    );
     return null;
   }
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      galleryLogger.error(
+        `[LINK_PREVIEW] MiGallery refused the album preview (${res.status}): MIGALLERY_API_KEY must hold the read scope - falling back to the page`
+      );
+    } else if (res.status === 404 && data.code === MIGALLERY_ALBUM_NOT_FOUND) {
+      galleryLogger.warn('[LINK_PREVIEW] MiGallery knows no such album (/albums/{uuid}, 404)');
+    } else if (res.status === 404) {
+      // A 404 WITHOUT the route's own code is the 404 of a MiGallery that has no such route yet.
+      galleryLogger.warn(
+        '[LINK_PREVIEW] MiGallery has no preview route yet (404 on /api/albums/[id]/preview) - falling back to the page'
+      );
+    } else {
+      galleryLogger.warn(
+        `[LINK_PREVIEW] MiGallery album preview answered ${res.status} - falling back to the page`
+      );
+    }
+    return null;
+  }
+
+  if (!data.name) {
+    galleryLogger.warn(
+      '[LINK_PREVIEW] MiGallery album preview carried no name - falling back to the page'
+    );
+    return null;
+  }
+
+  const descParts: string[] = [];
+  if (data.date) {
+    const d = new Date(data.date + 'T12:00:00');
+    descParts.push(
+      Number.isNaN(d.getTime())
+        ? data.date
+        : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+    );
+  }
+  if (data.location) descParts.push(data.location);
+
+  return {
+    url: targetUrl.toString(),
+    title: data.name.slice(0, 180),
+    description: descParts.join(' · '),
+    image: galleryWideCoverFor(targetUrl.origin, albumId),
+    siteName: 'MiGallery',
+  };
 }
 
 /** Returns true when `hostname` is one of the known YouTube domains (`youtube.com`, `youtu.be`, etc.). */

@@ -1,6 +1,6 @@
 ## P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)
 
-target: 1.9.0
+target: 1.8.5
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

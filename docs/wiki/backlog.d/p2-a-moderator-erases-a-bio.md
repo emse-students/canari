@@ -1,6 +1,6 @@
 ## P2 - an offensive bio can only end in a mute, which leaves the bio up
 
-target: 1.9.0
+target: 1.8.4
 
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#people-profile-mute-community-nicknames),
 decision 16, *"Effacement par l'admin et le BDE"*): a bio is ERASED, never rewritten, by the platform

@@ -1,6 +1,6 @@
 ## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
 
-target: 1.9.0
+target: 1.9.2
 
 Each is a log or console line the campaign met and no row asserts on. NOISE IS NEVER ACCEPTABLE
 ([CLAUDE.md](../../../CLAUDE.md)): explain it or fix it, never demote it.

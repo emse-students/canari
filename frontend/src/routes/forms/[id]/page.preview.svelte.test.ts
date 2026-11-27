@@ -35,6 +35,8 @@ vi.mock('$lib/associations/api', async (orig) => ({
 const api = vi.hoisted(() => ({
   status: 'draft' as 'draft' | 'published',
   required: false,
+  /** When set, the form's questions instead of the single free-text one. */
+  items: null as Record<string, unknown>[] | null,
   checkSubmission: vi.fn(() =>
     Promise.resolve({
       hasSubmitted: false,
@@ -56,7 +58,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
       title: 'Soiree',
       description: '',
       status: api.status,
-      items: [{ id: 'q1', label: 'Nom', required: api.required, type: 'short_text' }],
+      items: api.items ?? [{ id: 'q1', label: 'Nom', required: api.required, type: 'short_text' }],
       currency: 'eur',
       basePrice: 0,
       allowCashPayment: false,
@@ -76,6 +78,7 @@ afterEach(() => {
   vi.clearAllMocks();
   api.revision = { revision: 0, document: null, savedAt: null };
   api.required = false;
+  api.items = null;
 });
 
 async function open(url: string) {
@@ -177,6 +180,60 @@ describe('the fill page as a preview', () => {
       }
       expect(report()).toBeNull();
       expect(api.submitForm).not.toHaveBeenCalled();
+    });
+
+    describe('the answer formats, judged as the send judges them', () => {
+      const number = {
+        id: 'n1',
+        label: 'Age',
+        type: 'short_text',
+        format: 'number',
+        min: 1,
+        max: 10,
+      };
+      const email = { id: 'e1', label: 'Mail', type: 'short_text', format: 'email' };
+
+      /** Types into a question's own field, then presses the test. */
+      async function typeThenTest(typed: Record<string, string>) {
+        api.status = 'draft';
+        api.items = [number, email];
+        await open('https://canari.test/forms/f1?preview=1');
+        for (const [id, text] of Object.entries(typed)) {
+          const field = document.querySelector<HTMLInputElement>(`#q-${id} input`)!;
+          field.value = text;
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        testButton()!.click();
+        for (let i = 0; i < 4; i++) {
+          await tick();
+          flushSync();
+        }
+      }
+      const card = (id: string) => document.getElementById(`q-${id}`)?.textContent ?? '';
+
+      it('a number above the maximum is refused, worded on its card', async () => {
+        await typeThenTest({ n1: '99', e1: 'a@b.fr' });
+        expect(report()).toBeNull();
+        expect(card('n1')).toContain(m.form_view_error_format_max({ label: 'Age', max: 10 }));
+      });
+
+      it('a number below the minimum is refused, worded on its card', async () => {
+        await typeThenTest({ n1: '0', e1: 'a@b.fr' });
+        expect(report()).toBeNull();
+        expect(card('n1')).toContain(m.form_view_error_format_min({ label: 'Age', min: 1 }));
+      });
+
+      it('an invalid e-mail is refused, worded on its card', async () => {
+        await typeThenTest({ n1: '5', e1: 'pasunmail' });
+        expect(report()).toBeNull();
+        expect(card('e1')).toContain(m.form_view_error_format_email({ label: 'Mail' }));
+      });
+
+      it('valid answers: the test passes and nothing is sent', async () => {
+        await typeThenTest({ n1: '5', e1: 'a@b.fr' });
+        expect(report()?.textContent).toContain(m.form_test_send_ok_free());
+        expect(api.submitForm).not.toHaveBeenCalled();
+      });
     });
   });
 });

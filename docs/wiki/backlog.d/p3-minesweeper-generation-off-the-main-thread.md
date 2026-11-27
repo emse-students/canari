@@ -1,6 +1,6 @@
 ## P3 - Minesweeper: the first dig's generation blocks the main thread (2026-11-14)
 
-target: 1.10.0
+target: 1.9.1
 
 Generator 2 climbs for about 0.3 s on a phone (a 90th percentile of 0.4 s in a back-to-back comparison; one
 earlier run read 2.6 s once and was not reproduced in 75 more boards), synchronously, at the first dig; the

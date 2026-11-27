@@ -1,6 +1,6 @@
 ## P2 - An unclean kill of a browser inside ~30 s of a rotation signs the user out (KILL-2, 2026-10-25; design after the stable)
 
-target: 1.9.0
+target: 1.8.6
 
 A browser or app killed without a clean shutdown (a crash, an OS kill, power lost) inside about
 30 s of a refresh rotation, or inside the window of two rotations close together, relaunches

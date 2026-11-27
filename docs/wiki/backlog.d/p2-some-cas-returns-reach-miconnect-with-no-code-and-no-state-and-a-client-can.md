@@ -1,6 +1,6 @@
 ## P2 - some CAS returns reach MiConnect with no code and no state, and a client can stay out (diagnosed 2026-10-09)
 
-target: 1.9.0
+target: 1.8.4
 
 Read end to end on 2026-10-09 ([authentik](../infrastructure/authentik.md#the-hand-built-configuration-audited-2026-09-29),
 last bullet): **52 % of the failing requests are server-side probes, not people**, the flow heals itself

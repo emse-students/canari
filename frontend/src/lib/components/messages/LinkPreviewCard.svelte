@@ -284,8 +284,9 @@
    * The square cover is 400x400 and is right for the tile. The hero banner is about 640 CSS px wide
    * (1300 device px at 2x) and cropped to 1.91:1, so it was stretching the middle 400x209 band of
    * that square about three times. The preview payload carries the site's own 1200x630 cover as
-   * `image` - and OMITS it for a private album, whose card keeps the square it always had - so
-   * the banner draws it when it is there and PROVEN to decode, and the square otherwise.
+   * `image` for every album, private included (2026-11-27; MiGallery serves both covers without a
+   * key) - so the banner draws it when it is there and PROVEN to decode, and the square otherwise
+   * (a payload read from the page rather than MiGallery's API may carry none).
    */
   const wideCoverUrl = $derived(coverCard ? proxiedPreviewImageUrl(externalPreview?.image) : '');
   let wideCoverLoads = $state(false);

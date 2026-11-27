@@ -1,6 +1,6 @@
 ## P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)
 
-target: 1.9.0
+target: 1.8.7
 
 **Re-read 2026-11-11: unchanged** - still no CI job runs Android lint, and `checkReleaseBuilds = false` is still the release gate's workaround.
 `./gradlew :app:lintUniversalDebug` (in `frontend/src-tauri/gen/android`) crashes inside Android lint's `UastGradleVisitor.visitBuildScript` on `main` as well, so it is not a regression of one branch. Nothing in CI runs Android lint, which is why nobody saw it. Owed: find which build-script construct the visitor cannot read (or the lint version that fixes it), then decide whether lint belongs in a gate.

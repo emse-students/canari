@@ -1,6 +1,6 @@
 ## P3 - The outbox sends into a group whose commit outcome it already knows is unknown (DUP-5, 2026-10-25)
 
-target: 1.9.0
+target: 1.9.2
 
 When an Add's commit is answered `503`, the client knows the outcome is unknown: it logs `the Add got
 no answer - kept with its invitation, settled at the next connection` (`CommitOutcomeUnknownError`).

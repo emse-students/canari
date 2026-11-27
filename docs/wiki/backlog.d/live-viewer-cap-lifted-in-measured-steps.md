@@ -1,6 +1,6 @@
 ## The live viewer cap (24 seats for the whole host) lifted in measured steps - the owner's "no visible ceiling" (2026-10-21)
 
-target: 1.9.0
+target: 1.8.5
 
 **Owner, 2026-11-19:** a viewer is NEVER refused. Quality steps down to the lowest rung; a viewer past what that rung carries waits on "Connexion au direct..." until a seat frees ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 

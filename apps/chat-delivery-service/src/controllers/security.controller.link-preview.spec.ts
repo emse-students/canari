@@ -43,11 +43,17 @@ jest.mock('../utils/url-guard', () => {
 });
 
 import { SecurityController } from './security.controller';
-import { assertSafeExternalUrl, ssrfSafeFetch, UpstreamUnreachableError } from '../utils/url-guard';
+import {
+  assertSafeExternalUrl,
+  fetchMiGalleryPreview,
+  ssrfSafeFetch,
+  UpstreamUnreachableError,
+} from '../utils/url-guard';
 import { mintPreviewTicket } from '../utils/previewTicket';
 
 const fetchMock = ssrfSafeFetch as jest.MockedFunction<typeof ssrfSafeFetch>;
 const guardMock = assertSafeExternalUrl as jest.MockedFunction<typeof assertSafeExternalUrl>;
+const galleryMock = fetchMiGalleryPreview as jest.MockedFunction<typeof fetchMiGalleryPreview>;
 
 /** `@Res({ passthrough: true })` only ever has `setHeader` called on it here. */
 const makeRes = () => {
@@ -182,6 +188,30 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
     );
 
     expect(payload.image).toBe('https://events.example/files/event/150/1461421.jpg?v=1789050716');
+  });
+
+  it('serves a MiGallery album card from the gallery API, never from the page', async () => {
+    const album = 'https://gallery.mitv.fr/albums/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
+    const card = {
+      url: album,
+      title: 'Gala',
+      description: '15 mai 2026',
+      image: `https://gallery.mitv.fr/api/albums/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/og-cover`,
+      siteName: 'MiGallery',
+    };
+    galleryMock.mockResolvedValueOnce(card);
+
+    const res = makeRes();
+    expect(await controller.getLinkPreview(album, res as never)).toEqual(card);
+    // An authenticated answer that may name a private album: the reader's browser may keep it, a
+    // shared cache may not - on the first answer and on the cached one alike.
+    expect(res.headers['Cache-Control']).toBe('private, max-age=21600');
+    const again = makeRes();
+    await controller.getLinkPreview(album, again as never);
+    expect(again.headers['Cache-Control']).toBe('private, max-age=21600');
+    // The page of a private album sends an anonymous reader to sign in: reading it is what drew
+    // the generic MiGallery card for every album, so a card the API gave must never touch it.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   /**

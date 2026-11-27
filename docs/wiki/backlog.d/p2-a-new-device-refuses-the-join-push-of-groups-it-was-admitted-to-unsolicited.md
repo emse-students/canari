@@ -1,6 +1,6 @@
 ## P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited
 
-target: 1.9.0
+target: 1.8.6
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
