@@ -53,3 +53,29 @@ describe('CercleDeliveryScheduler.reportLongParked', () => {
     expect(String(error.mock.calls[0][0])).toContain('unwatched today');
   });
 });
+
+/** The 5-minute sweep's summary: the three outcomes apart, silent when nothing was due. */
+describe('CercleDeliveryScheduler.retryFailedCercleDeliveries', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function run(result: { delivered: number; parked: number; failed: number; attempted: number }) {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const retryDueWebhookDeliveries = jest.fn(async () => result);
+    const scheduler = new CercleDeliveryScheduler({ retryDueWebhookDeliveries } as never);
+    return { scheduler, log };
+  }
+
+  it('names delivered, parked and failed separately, out of the rows due', async () => {
+    const { scheduler, log } = run({ delivered: 1, parked: 2, failed: 1, attempted: 5 });
+    await scheduler.retryFailedCercleDeliveries();
+    expect(log).toHaveBeenCalledWith(
+      '[CERCLE] automatic retry: delivered=1 parked=2 failed=1 of 5 due'
+    );
+  });
+
+  it('says nothing when nothing was due', async () => {
+    const { scheduler, log } = run({ delivered: 0, parked: 0, failed: 0, attempted: 0 });
+    await scheduler.retryFailedCercleDeliveries();
+    expect(log).not.toHaveBeenCalled();
+  });
+});

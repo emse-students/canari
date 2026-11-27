@@ -10,6 +10,7 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import { AxiosError } from 'axios';
 import { Client } from 'pg';
 import { of } from 'rxjs';
 import { DataSource, Repository } from 'typeorm';
@@ -139,9 +140,33 @@ maybe('Cercle deliveries against PostgreSQL', () => {
       status: 'failed',
       nextAttemptAt: null,
     });
-    answers = { pi_1: 200, pi_2: 202, pi_3: new Error('Request failed with status code 503') };
+    // Parked, and the Cercle now ANSWERS with an error (the account was deleted there).
+    const refused = await insert({
+      paymentIntentId: 'pi_6',
+      status: 'parked',
+      nextAttemptAt: past,
+    });
+    answers = {
+      pi_1: 200,
+      pi_2: 202,
+      pi_3: new Error('Request failed with status code 503'),
+      pi_6: new AxiosError(
+        'Request failed with status code 410',
+        'ERR_BAD_REQUEST',
+        undefined,
+        undefined,
+        {
+          status: 410,
+        } as never
+      ),
+    };
 
-    expect(await service().retryDueWebhookDeliveries()).toEqual({ delivered: 2, attempted: 3 });
+    expect(await service().retryDueWebhookDeliveries()).toEqual({
+      delivered: 1,
+      parked: 1,
+      failed: 2,
+      attempted: 4,
+    });
 
     expect(await statusOf(credited)).toBe('delivered');
     const stillParked = await repo.findOneByOrFail({ id: legacy });
@@ -151,6 +176,17 @@ maybe('Cercle deliveries against PostgreSQL', () => {
     expect(failed).toMatchObject({ status: 'failed', autoRetryCount: 1 });
     expect(await statusOf(notDue)).toBe('parked');
     expect(await statusOf(exhausted)).toBe('failed');
+    const answered = await repo.findOneByOrFail({ id: refused });
+    expect(answered.status).toBe('failed');
+    expect(answered.nextAttemptAt).not.toBeNull();
+    takeLogged(
+      'warn',
+      /^\[CERCLE\] webhook attempt 2 failed: Request failed with status code 410$/
+    );
+    takeLogged(
+      'error',
+      /^\[CERCLE\] parked delivery intent=pi_6 was answered HTTP 410 on its re-send - moved to failed: next automatic attempt at .*$/
+    );
     // The one failing row says so, as the ladder does.
     takeLogged(
       'warn',
@@ -176,11 +212,11 @@ maybe('Cercle deliveries against PostgreSQL', () => {
       svc as unknown as {
         settleDelivery: (
           d: WebhookDelivery,
-          from: WebhookDelivery['status'][],
+          expected: WebhookDelivery['status'],
           c: Pick<WebhookDelivery, 'status' | 'lastError' | 'nextAttemptAt'>
         ) => Promise<boolean>;
       }
-    ).settleDelivery(staleCopy, ['parked'], {
+    ).settleDelivery(staleCopy, 'parked', {
       status: 'parked',
       lastError: 'socket hang up',
       nextAttemptAt: new Date(Date.now() + 6 * HOUR),
@@ -189,10 +225,39 @@ maybe('Cercle deliveries against PostgreSQL', () => {
     expect(written).toBe(false);
     takeLogged(
       'warn',
-      /^\[CERCLE\] delivery .* intent=pi_race: not set parked - its status was no longer parked .*$/
+      /^\[CERCLE\] delivery .* intent=pi_race…: not set parked - it is delivered now, not parked .*$/
     );
     expect(await statusOf(id)).toBe('delivered');
     // The stale copy is left as read: nothing claims the write happened.
     expect(staleCopy.status).toBe('parked');
+  });
+
+  it('a credit landing on a row deleted meanwhile is an ERROR, not the race WARN', async () => {
+    const id = await insert({
+      paymentIntentId: 'pi_3Gone0000000000',
+      status: 'parked',
+      nextAttemptAt: new Date(Date.now() - HOUR),
+    });
+    const staleCopy = await repo.findOneByOrFail({ id });
+    await ds.query(`DELETE FROM webhook_deliveries WHERE id = $1`, [id]);
+    const written = await (
+      service() as unknown as {
+        settleDelivery: (
+          d: WebhookDelivery,
+          expected: WebhookDelivery['status'],
+          c: Pick<WebhookDelivery, 'status' | 'lastError' | 'nextAttemptAt'>
+        ) => Promise<boolean>;
+      }
+    ).settleDelivery(staleCopy, 'parked', {
+      status: 'delivered',
+      lastError: null,
+      nextAttemptAt: null,
+    });
+
+    expect(written).toBe(false);
+    takeLogged(
+      'error',
+      /^\[CERCLE\] delivery .* intent=pi_3Gone0000…: the Cercle CREDITED it, but its row was deleted meanwhile - a credit landed with no record here$/
+    );
   });
 });

@@ -9,6 +9,7 @@ import { createHmac } from 'crypto';
 import { Subject, isObservable, of, throwError } from 'rxjs';
 import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
+import { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
 import { CERCLE_PARKED_RESEND_MS, ProductsService } from './products.service';
@@ -2437,7 +2438,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         { id: 'd1', status: expect.anything() },
         expect.objectContaining({ status: 'delivered' })
       );
-      expect(result).toEqual({ delivered: 1, attempted: 1 });
+      expect(result).toEqual({ delivered: 1, parked: 0, failed: 0, attempted: 1 });
       // The failure ladder is not the park's: its count is untouched.
       expect(row.autoRetryCount).toBe(0);
     });
@@ -2473,9 +2474,81 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(row.lastError).toContain('ECONNREFUSED');
       expect(row.autoRetryCount).toBe(0);
       expect(deliveryRepo.update).toHaveBeenCalledWith(
-        { id: 'd1', status: expect.objectContaining({ _value: ['parked'] }) },
+        { id: 'd1', status: 'parked' },
         expect.objectContaining({ status: 'parked' })
       );
+    });
+
+    /** The Cercle's ANSWER with an HTTP error, as axios throws it - not a transport failure. */
+    const httpAnswer = (status: number) =>
+      new AxiosError(
+        `Request failed with status code ${status}`,
+        'ERR_BAD_RESPONSE',
+        undefined,
+        undefined,
+        {
+          status,
+        } as never
+      );
+
+    for (const status of [410, 500]) {
+      it(`a parked re-send answered HTTP ${status} is an answer: moved to failed, at ERROR, on the ladder`, async () => {
+        const { service, productRepo, deliveryRepo, httpService } = makeService();
+        const row = parkedRow();
+        deliveryRepo.__setRows([row]);
+        productRepo.findOne.mockResolvedValue(topupProduct());
+        (httpService.post as jest.Mock).mockImplementation(() =>
+          throwError(() => httpAnswer(status))
+        );
+        const log = jest.spyOn(Logger.prototype, 'log');
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+        const result = await service.retryDueWebhookDeliveries();
+
+        expect(row.status).toBe('failed');
+        expect(row.lastError).toContain(String(status));
+        // On the failure ladder from its first step: the admin's retry and delete now apply.
+        expect(row.nextAttemptAt).not.toBeNull();
+        expect(deliveryRepo.update).toHaveBeenCalledWith(
+          { id: 'd1', status: 'parked' },
+          expect.objectContaining({ status: 'failed' })
+        );
+        expect(result).toEqual({ delivered: 0, parked: 0, failed: 1, attempted: 1 });
+        const errors = error.mock.calls.map((c) => String(c[0]));
+        expect(
+          errors.some((l) => l.includes(`answered HTTP ${status}`) && l.includes('moved to failed'))
+        ).toBe(true);
+        // One line for the failure, at ERROR - no info line beside it.
+        expect(log.mock.calls.some((c) => String(c[0]).includes('webhook failed'))).toBe(false);
+        log.mockRestore();
+        error.mockRestore();
+      });
+    }
+
+    it('a parked row whose product lost its webhook keeps its park, and claims no re-send', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = parkedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct({ webhookUrl: null }));
+      const log = jest.spyOn(Logger.prototype, 'log');
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const before = Date.now();
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
+      expect(row.status).toBe('parked');
+      expect(row.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + CERCLE_PARKED_RESEND_MS);
+      expect(result).toEqual({ delivered: 0, parked: 0, failed: 0, attempted: 1 });
+      // Nothing was sent, so nothing says it was.
+      expect(log.mock.calls.some((c) => /sent again|webhook parked/.test(String(c[0])))).toBe(
+        false
+      );
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('no webhook configured - still parked'))
+      ).toBe(true);
+      log.mockRestore();
+      warn.mockRestore();
     });
 
     it('the sweep picks parked rows on their step, and a parked row with no step at all', async () => {
@@ -2510,7 +2583,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(waiting.status).toBe('parked');
       expect(failing.status).toBe('failed');
       expect(failing.autoRetryCount).toBe(1);
-      expect(result).toEqual({ delivered: 2, attempted: 3 });
+      expect(result).toEqual({ delivered: 1, parked: 1, failed: 1, attempted: 3 });
     });
 
     it('an attempt finishing after the row turned delivered leaves it delivered', async () => {
@@ -2519,8 +2592,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, deliveryRepo, httpService } = makeService();
       const stored: any = parkedRow();
       deliveryRepo.update.mockImplementation(async (criteria: any, fields: any) => {
-        const allowed: string[] = criteria.status._value;
-        if (!allowed.includes(stored.status)) return { affected: 0 };
+        if (criteria.status !== stored.status) return { affected: 0 };
         Object.assign(stored, fields);
         return { affected: 1 };
       });
@@ -2529,18 +2601,74 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       deliveryRepo.__setRows([staleCopy]);
       productRepo.findOne.mockResolvedValue(topupProduct());
       stored.status = 'delivered';
+      deliveryRepo.findOne.mockResolvedValue(stored);
       (httpService.post as jest.Mock).mockImplementation(() => {
         throw new Error('socket hang up');
       });
       const warn = jest.spyOn(Logger.prototype, 'warn');
 
-      await service.retryDueWebhookDeliveries();
+      const result = await service.retryDueWebhookDeliveries();
 
       expect(stored.status).toBe('delivered');
       expect(
-        warn.mock.calls.some((c) => String(c[0]).includes('its status was no longer parked'))
+        warn.mock.calls.some((c) => String(c[0]).includes('it is delivered now, not parked'))
       ).toBe(true);
+      // A lost write counts in none of the three.
+      expect(result).toEqual({ delivered: 0, parked: 0, failed: 0, attempted: 1 });
       warn.mockRestore();
+    });
+
+    it('a credit answered for a row deleted meanwhile is accused at ERROR, naming the intent', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.__setRows([parkedRow({ paymentIntentId: 'pi_3Gone0000000000' })]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() =>
+        of({ status: 200, data: { duplicate: true } })
+      );
+      // The row is gone by the time the write lands: nothing matches, and the re-read finds none.
+      deliveryRepo.update.mockResolvedValue({ affected: 0 });
+      deliveryRepo.findOne.mockResolvedValue(null);
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      const line = error.mock.calls.map((c) => String(c[0])).find((l) => l.includes('no record'));
+      expect(line).toContain('pi_3Gone0000');
+      expect(line).toContain('CREDITED');
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('settled it first'))).toBe(false);
+      expect(result).toEqual({ delivered: 0, parked: 0, failed: 0, attempted: 1 });
+      warn.mockRestore();
+      error.mockRestore();
+    });
+
+    for (const status of ['parked', 'delivered'] as const) {
+      it(`a manual retry of a ${status} row is refused, and sends nothing`, async () => {
+        const { service, productRepo, deliveryRepo, httpService } = makeService();
+        deliveryRepo.findOne.mockResolvedValue(failedRow({ status }));
+        productRepo.findOne.mockResolvedValue(topupProduct());
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await expect(service.retryWebhookDelivery('asso1', 'd1')).rejects.toThrow(
+          BadRequestException
+        );
+        expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
+        expect(deliveryRepo.update).not.toHaveBeenCalled();
+        warn.mockRestore();
+      });
+    }
+
+    it('a manual retry writes on condition of the row still being failed', async () => {
+      const { service, productRepo, deliveryRepo } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+
+      await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect(deliveryRepo.update).toHaveBeenCalledWith(
+        { id: 'd1', status: 'failed' },
+        expect.objectContaining({ status: 'delivered' })
+      );
     });
 
     it('is told apart by the status alone: a 200 stays delivered whatever its body says', async () => {
@@ -2603,7 +2731,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const result = await service.retryDueWebhookDeliveries();
 
-      expect(result).toEqual({ delivered: 2, attempted: 2 });
+      expect(result).toEqual({ delivered: 2, parked: 0, failed: 0, attempted: 2 });
     });
 
     it('counts the automatic attempt before making it, and schedules the next step', async () => {
@@ -2652,7 +2780,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
       expect(row.nextAttemptAt).toBeNull();
       expect(row.lastError).toContain('not configured');
-      expect(result).toEqual({ delivered: 0, attempted: 1 });
+      expect(result).toEqual({ delivered: 0, parked: 0, failed: 0, attempted: 1 });
     });
 
     it('names the member a failed delivery is about', async () => {

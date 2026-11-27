@@ -37,9 +37,14 @@ export class CercleDeliveryScheduler {
   @Cron('*/5 * * * *')
   async retryFailedCercleDeliveries() {
     try {
-      const { delivered, attempted } = await this.products.retryDueWebhookDeliveries();
+      const { delivered, parked, failed, attempted } =
+        await this.products.retryDueWebhookDeliveries();
       if (attempted > 0) {
-        this.logger.log(`[CERCLE] automatic retry: ${delivered}/${attempted} delivered or parked`);
+        // The three need not add up to `attempted`: a lost write and a row with no webhook are
+        // logged where they happen and counted in none.
+        this.logger.log(
+          `[CERCLE] automatic retry: delivered=${delivered} parked=${parked} failed=${failed} of ${attempted} due`
+        );
       }
     } catch (e) {
       // Swallowed rather than thrown: an unhandled rejection in a cron handler takes the process

@@ -11,7 +11,8 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 
  * top-up and credits it at their first sign-in. Not a failure - off the failure ladder and out of the
  * failure list - but not settled either: the sweep re-sends it every `CERCLE_PARKED_RESEND_MS` until
  * the Cercle answers 200 (the credit is on the balance, new or duplicate), which makes it
- * `delivered`. Never garbage-collected while parked.
+ * `delivered`, or answers an HTTP error (a 410, a 4xx, a 5xx), which moves it to `failed`. A re-send
+ * that does not get through leaves it parked. Never garbage-collected while parked.
  *
  * Every status change is a CONDITIONAL write (`ProductsService.settleDelivery`): nothing ever writes
  * over `delivered`.
