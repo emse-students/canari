@@ -171,6 +171,7 @@ import {
   isMobileOverlayLayout,
 } from '$lib/utils/historyOverlayStack';
 import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
+import { mergeReactions } from '$lib/utils/chat/messageReactions';
 
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
@@ -634,6 +635,15 @@ export function useConversations() {
         );
         base = base.filter((m) => !withdrawn.has(m.id));
       }
+    }
+    // MEMORY FIRST, THE STORE SECOND: while a catch-up window holds reaction writes
+    // (`catchupWrites.ts`) the stored row can be BEHIND what a frame already applied, so a page
+    // opened mid-drain must not replace the reactions memory holds with the stored ones. The two are
+    // merged as the convergent set they are, pair by pair, the later state winning.
+    for (const m of msgs) {
+      const held = ctx.messageReactions.get(id, m.id);
+      if (!held || held.length === 0) continue;
+      m.reactions = mergeReactions(held, m.reactions ?? []) ?? held;
     }
     conversations.set(contactName, {
       ...current,
