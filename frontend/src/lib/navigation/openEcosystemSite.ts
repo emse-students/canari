@@ -41,6 +41,15 @@ class HandoffUrlMismatchError extends Error {
   }
 }
 
+/**
+ * The opens whose mint has not settled yet, keyed `site + dest`. A mint takes seconds on a slow link
+ * and nothing on screen answers a tap meanwhile, so the same link is tapped again: each tap then
+ * minted its own token and opened its own browser, and the app, backgrounded under three launches,
+ * was killed. The guard is state cleared the moment the open settles, never a clock: a second tap
+ * while the first is pending is the SAME open, and is dropped.
+ */
+const opening = new Set<string>();
+
 /** Said once per app run: an estate without the handoff opens every site plainly by design. */
 let notOfferedSaid = false;
 
@@ -175,6 +184,12 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
     return;
   }
   const plain = plainSiteUrl(site, dest);
+  const key = `${site.id}${dest}`;
+  if (site.handoff && opening.has(key)) {
+    // EXPECTED and necessary: the person tapped again while the first open is still minting.
+    Log.i('ecosystemSite', `${site.id} ${loggedDest(site, dest)} is already opening - tap ignored`);
+    return;
+  }
   Log.i(
     'ecosystemSite',
     `opening ${site.id} ${loggedDest(site, dest)} handoff=${site.handoff ? 'on' : 'off'}`
@@ -185,9 +200,11 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
       openInSystemBrowser(plain, site);
       return;
     }
+    opening.add(key);
     void mintSiteHandoff(site, dest)
       .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
-      .then((url) => openInSystemBrowser(url, site));
+      .then((url) => openInSystemBrowser(url, site))
+      .finally(() => opening.delete(key));
     return;
   }
 
@@ -204,6 +221,7 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   }
   // The opener link is cut before the tab is steered: the site must not reach back into Canari.
   tab.opener = null;
+  opening.add(key);
   void mintSiteHandoff(site, dest)
     .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
     .then((url) => {
@@ -212,7 +230,8 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
         return;
       }
       tab.location.href = url;
-    });
+    })
+    .finally(() => opening.delete(key));
 }
 
 /**
@@ -246,4 +265,5 @@ export function openEcosystemSiteLink(href: string): boolean {
 /** Test seam: forgets that the not-offered state was said. */
 export function resetEcosystemSiteForTests(): void {
   notOfferedSaid = false;
+  opening.clear();
 }

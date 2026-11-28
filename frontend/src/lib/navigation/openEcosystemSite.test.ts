@@ -100,6 +100,33 @@ describe('openEcosystemSite', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
+    it('opens a link tapped three times while it mints ONCE, and again once it settled', async () => {
+      let resolveMint!: (r: Response) => void;
+      apiFetch.mockReturnValueOnce(new Promise<Response>((r) => (resolveMint = r)));
+      openEcosystemSite('migallery', '/mes-photos');
+      openEcosystemSite('migallery', '/mes-photos');
+      openEcosystemSite('migallery', '/mes-photos');
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      resolveMint(json(200, { url: MINTED }));
+      await settle();
+      expect(openUrl).toHaveBeenCalledTimes(1);
+      apiFetch.mockResolvedValueOnce(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+      expect(openUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('releases the guard when the mint fails, so a retry is possible', async () => {
+      apiFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      apiFetch.mockResolvedValueOnce(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+    });
+
     it('says a failed open by its class, never with the URL that carries the token', async () => {
       apiFetch.mockResolvedValue(json(200, { url: MINTED }));
       openUrl.mockRejectedValueOnce(new Error(`cannot open ${MINTED}`));

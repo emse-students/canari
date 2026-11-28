@@ -1077,3 +1077,15 @@ container with forged headers, and the forged call is the one the 401 must answe
 two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user
 on a manage action); its authorization refusals are 403s (`refuseModeration`).
 
+
+### One tap is one open: the handoff has an in-flight guard (owner's log of 2026-11-27, 1.8.4)
+
+A link to a MiGallery album in a message reaches `openEcosystemSite` through `openEcosystemSiteLink`.
+The mint takes seconds on a slow link and nothing on screen answers the tap meanwhile, so the same
+link was tapped three times in four seconds: three `POST /api/auth/handoff`, three system-browser
+launches, and the app - backgrounded under them - was killed by Android (the next start logged
+`the previous session ended while on screen`). The opener now keeps the opens whose mint has not
+settled (`opening`, keyed site + destination): a second tap on the SAME open is dropped with one info
+line, and the key is released the moment the open settles, success or failure. State, never a clock:
+nothing expires, so a retry after a failed mint is immediate. The kill itself is the OS's reaction to
+the launches and is not separately reproducible; one open instead of three removes what provoked it.
