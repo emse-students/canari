@@ -1686,14 +1686,17 @@ export function useMessaging() {
         // an account is bound here.
         const account = parkedAccount ?? notificationPreferences.account;
         if (account === null) return;
+        // A read SUPERSEDED by a sign-in or sign-out cached nothing: the frame re-enters as it first
+        // came - dropped by `settingsReadyFor` under another account, and read again under the new
+        // session for the same one - never raised as "all" for want of a level it never asked for.
         void notificationPreferences
           .loadChannelLevel(conversationKey)
-          .then(() => decideAgain(true, account));
+          .then((outcome) => decideAgain(outcome !== 'superseded', account));
         return;
       }
       if (level === undefined) {
         console.warn(
-          `[NOTIF] Inbound in ${conversationKey} - the salon's level is unreadable; raised as "all".`
+          `[NOTIF] Inbound in ${conversationKey} - the salon's level read failed; raised as "all".`
         );
       }
     }

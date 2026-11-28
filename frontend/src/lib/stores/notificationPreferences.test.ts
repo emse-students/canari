@@ -365,7 +365,13 @@ describe('notificationPreferences.answered - a decision waits for the first answ
     notificationPreferences.reset();
     notificationPreferences.bind('account-b', { offline: true });
     resolve('none');
-    expect(await reading).toBe(false);
+    expect(await reading).toBe('superseded');
+    expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
+  });
+
+  it('starts every sign-in with no salon level cached', () => {
+    notificationPreferences.rememberChannelLevel('channel_abc', 'none');
+    notificationPreferences.bind(A, { offline: false });
     expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
   });
 

@@ -66,7 +66,7 @@ let groupCalls = $state<Record<string, boolean>>({});
  */
 let channelLevels = $state<Record<string, ConversationNotificationLevel>>({});
 /** One read in flight per salon: a burst of frames asks once, not once per frame. */
-const channelReads = new SvelteMap<string, Promise<boolean>>();
+const channelReads = new SvelteMap<string, Promise<ChannelLevelRead>>();
 const channelKey = (id: string): string => id.replace(/^channel_/, '');
 /** Whether {@link groupLevels} has been answered by the server at least once this session. */
 let loaded = $state(false);
@@ -165,6 +165,13 @@ function clearLatch(): void {
   failedLatch?.();
   failedLatch = null;
 }
+
+/**
+ * How a salon level read ended: `read` (cached), `failed` (nothing cached, the next frame asks again),
+ * or `superseded` - a sign-in or sign-out came between the request and its answer, which was dropped:
+ * the caller reads again under the new session if the frame is still that account's.
+ */
+export type ChannelLevelRead = 'read' | 'failed' | 'superseded';
 
 /** Latches a failed read until one of the events that lift it (see {@link failedLatch}). */
 function latch(): void {
@@ -281,6 +288,9 @@ export const notificationPreferences = {
     account = userId;
     offline = options.offline;
     loaded = false;
+    // Defensive: `reset` already emptied it, and a salon level is read again per session anyway.
+    channelLevels = {};
+    channelReads.clear();
     const copy = readPersisted(userId);
     apply(copy ?? EMPTY_SET);
     source = copy ? 'persisted' : 'default';
@@ -505,28 +515,29 @@ export const notificationPreferences = {
   },
 
   /**
-   * Reads a salon's level once (shared in-flight read, cached after). Resolves false - logged, nothing
-   * cached, so the next frame asks again - when the read failed. Never throws.
+   * Reads a salon's level once (shared in-flight read, cached after). Resolves `failed` - logged,
+   * nothing cached, so the next frame asks again - when the read failed, and `superseded` when it
+   * answered after a sign-in or sign-out (see {@link ChannelLevelRead}). Never throws.
    */
-  loadChannelLevel(channelId: string): Promise<boolean> {
+  loadChannelLevel(channelId: string): Promise<ChannelLevelRead> {
     const key = channelKey(channelId);
     const pending = channelReads.get(key);
     if (pending) return pending;
     const started = generation;
     // On the next microtask, so the entry below is set before the read can settle.
-    const read: Promise<boolean> = Promise.resolve().then(async () => {
+    const read: Promise<ChannelLevelRead> = Promise.resolve().then(async () => {
       try {
         const level = await fetchChannelNotificationLevel(key);
         // Like `load`: an answer for the account that signed out is never written into the next one's.
-        if (!stillSession(started, `loadChannelLevel(${key})`)) return false;
+        if (!stillSession(started, `loadChannelLevel(${key})`)) return 'superseded';
         if (!isConversationNotificationLevel(level)) {
           throw new Error(`unknown salon notification level "${String(level)}"`);
         }
         channelLevels = { ...channelLevels, [key]: level };
-        return true;
+        return 'read';
       } catch (e) {
         Log.d(`notificationPreferences.loadChannelLevel(${key}) failed`, e);
-        return false;
+        return 'failed';
       } finally {
         if (channelReads.get(key) === read) channelReads.delete(key);
       }

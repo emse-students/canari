@@ -3541,7 +3541,10 @@ with the fix (coordinator's review of #4207):
   signed out and in again is still the frame's recipient: it is answered by the new session's read.
   With no account bound nothing is read at all (`load` and `answered` refuse at once). A salon frame
   waits twice (the sign-in set, then the salon's own level) and captures the account BEFORE the
-  second read. Separately, every sign-in (`bind`) and sign-out (`reset`) moves the store's
+  second read; a salon read SUPERSEDED by a sign-in or sign-out (`loadChannelLevel` resolves
+  `superseded`, never a bare false) re-enters the frame as it first came, so the same account reads
+  the level again under its new session instead of raising as "all". A revoked-device wipe unbinds
+  the store too, and every sign-in starts with no salon level cached. Separately, every sign-in (`bind`) and sign-out (`reset`) moves the store's
   GENERATION, and a read (the sign-in set, a salon level) or a save answering under an older one
   writes nothing - not into the set, not into a copy, and a refused save reverts nothing of the
   next session's.

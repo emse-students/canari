@@ -808,6 +808,9 @@ async function endAccountSessionLocally(
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
   clearDeviceKeyAndWrapKey();
+  // `clearUserLocally` erases the settings copies on disk; the binding in memory goes with them, or a
+  // save answering late would write the ended account's copy back.
+  notificationPreferences.reset();
   clearUserLocally();
   cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }

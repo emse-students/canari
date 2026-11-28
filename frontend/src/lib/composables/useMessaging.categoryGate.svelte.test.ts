@@ -539,6 +539,32 @@ describe("a salon's own level gates the notification this client raises", () => 
     expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
   });
 
+  // The same account signing out and in while the salon's level is read: the dropped answer is no
+  // "unreadable" level - the frame reads it again under the new session and obeys it.
+  it('reads the salon level again after a same-account re-login, and obeys it', async () => {
+    await notificationPreferences.load();
+    let staleSalon!: (level: string) => void;
+    api.fetchChannelNotificationLevel.mockReturnValueOnce(
+      new Promise((resolve) => {
+        staleSalon = resolve;
+      })
+    );
+    api.fetchChannelNotificationLevel.mockResolvedValueOnce('none');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, sendSystemNotification } = makeContext('channel_abc');
+    await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 's11' });
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1));
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-a', { offline: false });
+    await notificationPreferences.load();
+    staleSalon('all');
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(2));
+    await flushMacrotask();
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+    expect(notificationPreferences.channelLevel('channel_abc')).toBe('none');
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('raised as "all"'))).toBe(false);
+  });
+
   it('raises as all when the level cannot be read, and reads again on the next frame', async () => {
     api.fetchChannelNotificationLevel.mockRejectedValue(new Error('boom'));
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
