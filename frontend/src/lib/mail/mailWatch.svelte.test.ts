@@ -33,6 +33,7 @@ import {
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
   mailTabOnScreen,
+  nativeWatchWanted,
   pauseUntilRetry,
   watcherShouldRun,
 } from './mailWatch.svelte';
@@ -56,6 +57,7 @@ const facts = (over: Partial<Parameters<typeof watcherShouldRun>[0]> = {}) => ({
   wanted: true,
   state: 'ready' as MailSessionState['kind'],
   eligible: true,
+  remembered: true,
   ...over,
 });
 
@@ -101,6 +103,26 @@ describe('backgroundRefreshWanted (the iOS flag)', () => {
     expect(backgroundRefreshWanted(facts({ mailKnown: false, mailOn: false }), 'ready')).toBeNull();
     expect(backgroundRefreshWanted(facts({ mailKnown: false }), null)).toBeNull();
     expect(backgroundRefreshWanted(facts({ client: null }), 'ready')).toBeNull();
+  });
+});
+
+describe('nativeWatchWanted (the Android sealed copy, lot 4b)', () => {
+  it('armed only while wanted AND remembered, from read facts', () => {
+    expect(nativeWatchWanted(facts(), null)).toBe(true);
+    expect(nativeWatchWanted(facts({ remembered: false }), null)).toBe(false);
+  });
+
+  it('erased by any fact read false: the switch, the server, a mail sign-out, a closed account', () => {
+    expect(nativeWatchWanted(facts({ wanted: false }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ mailOn: false }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ state: 'signed_out' }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ state: 'closed' }), 'ready')).toBe(false);
+  });
+
+  it('left alone while a fact is unknown: a launch has not read them yet', () => {
+    expect(nativeWatchWanted(facts({ mailKnown: false }), null)).toBeNull();
+    expect(nativeWatchWanted(facts({ client: null }), 'ready')).toBeNull();
+    expect(nativeWatchWanted(facts({ state: 'signed_out', remembered: false }), null)).toBeNull();
   });
 });
 

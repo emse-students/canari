@@ -485,6 +485,20 @@ describe('MailSession and an account the school ended (D8)', () => {
   });
 });
 
+describe('MailSession.rememberedForNativeWatch (lot 4b)', () => {
+  it('hands the password over only from a ready, remembered mailbox with the device key held', async () => {
+    const server = mailbox();
+    const { s, lock } = session(server);
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+    await s.signIn(GOOD, false);
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+    await s.signIn(GOOD, true);
+    expect(await s.rememberedForNativeWatch()).toEqual({ account: ADDRESS, password: GOOD });
+    lock();
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+  });
+});
+
 describe('MailSession.signOut', () => {
   it('forgets the password and the token before telling the server, then closes', async () => {
     const server = mailbox();

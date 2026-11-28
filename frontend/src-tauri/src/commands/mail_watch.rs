@@ -85,17 +85,46 @@ pub(crate) fn write_cursor(dir: &Path, user_id: &str, value: &str) -> Result<(),
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename cursor: {e}"))
 }
 
-/// Erases everything the watcher keeps natively for `user_id` (its cursor). Idempotent.
-pub(crate) fn forget(dir: &Path, user_id: &str) -> Result<(), String> {
-    let path = cursor_path(dir, user_id)?;
-    for file in [path.with_extension("json.tmp"), path] {
-        if let Err(e) = std::fs::remove_file(&file) {
+/// The Android native watcher's sealed copy of the mailbox password for `user_id` (lot 4b): the
+/// ciphertext `MailWatchVault.kt` writes under its Android Keystore key. Same allowlist as the cursor.
+fn vault_path(dir: &Path, user_id: &str) -> Result<std::path::PathBuf, String> {
+    if !super::storage::is_wipeable_account_id(user_id) {
+        return Err("an account id outside the allowlist".into());
+    }
+    Ok(dir
+        .join(MAIL_WATCH_DIR)
+        .join(format!("vault_{user_id}.bin")))
+}
+
+/// Removes `files`, an absent one not being an error.
+fn remove_all(files: &[std::path::PathBuf]) -> Result<(), String> {
+    for file in files {
+        if let Err(e) = std::fs::remove_file(file) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(format!("remove: {e}"));
             }
         }
     }
     Ok(())
+}
+
+/// THE ONE ERASURE of the native sealed password of `user_id` (lot 4b): its ciphertext and a write
+/// in flight. Every forget path reaches it - a mail sign-out, an unticked "remember", a refused
+/// password, the Canari sign-out (all through `forgetMailPassword`), and through [`forget`] the
+/// switch turned off, D8 and the account deletion. The Keystore key is not the account's (it wraps
+/// the next copy), so the ciphertext is the whole of what is erased. The native watcher checks the
+/// file before each cursor write and each notice, so an erased copy also ends its run. Idempotent.
+pub(crate) fn erase_vault(dir: &Path, user_id: &str) -> Result<(), String> {
+    let path = vault_path(dir, user_id)?;
+    remove_all(&[path.with_extension("bin.tmp"), path])
+}
+
+/// Erases everything the watcher keeps natively for `user_id`: its cursor and the sealed password
+/// ([`erase_vault`]). Idempotent.
+pub(crate) fn forget(dir: &Path, user_id: &str) -> Result<(), String> {
+    let path = cursor_path(dir, user_id)?;
+    erase_vault(dir, user_id)?;
+    remove_all(&[path.with_extension("json.tmp"), path])
 }
 
 fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -139,6 +168,16 @@ pub(crate) fn mail_watch_forget(app: tauri::AppHandle, user_id: String) -> Resul
     Ok(())
 }
 
+/// The remembered password is forgotten (a mail sign-out, unticked, refused, the Canari sign-out):
+/// the native watcher's copy goes with it.
+#[tauri::command]
+pub(crate) fn mail_watch_vault_erase(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
+    erase_vault(&data_dir(&app)?, &user_id)
+        .inspect_err(|e| log::warn!("[MailWatch] native password copy not erased: {e}"))?;
+    log::info!("[MailWatch] native password copy erased");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,6 +215,33 @@ mod tests {
             Some("b"),
             "another account is untouched"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_sealed_copy_is_erased_alone_or_with_the_cursor_and_never_another_accounts() {
+        let dir = std::env::temp_dir().join(format!("canari-mail-vault-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vault = |u: &str| dir.join(MAIL_WATCH_DIR).join(format!("vault_{u}.bin"));
+        std::fs::create_dir_all(dir.join(MAIL_WATCH_DIR)).unwrap();
+        for u in ["alice", "bob"] {
+            std::fs::write(vault(u), b"sealed").unwrap();
+        }
+        std::fs::write(vault("alice").with_extension("bin.tmp"), b"half").unwrap();
+        write_cursor(&dir, "alice", "c").unwrap();
+        // A mail sign-out: the copy goes, the cursor stays.
+        erase_vault(&dir, "alice").unwrap();
+        erase_vault(&dir, "alice").expect("erased twice");
+        assert!(!vault("alice").exists());
+        assert!(!vault("alice").with_extension("bin.tmp").exists());
+        assert_eq!(read_cursor(&dir, "alice").unwrap().as_deref(), Some("c"));
+        // The switch off / D8 / deletion: both go.
+        std::fs::write(vault("alice"), b"sealed").unwrap();
+        forget(&dir, "alice").unwrap();
+        assert!(!vault("alice").exists());
+        assert_eq!(read_cursor(&dir, "alice").unwrap(), None);
+        assert!(vault("bob").exists(), "another account is untouched");
+        assert!(erase_vault(&dir, "../bob").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -459,6 +459,20 @@ client and a `MailContext` - the Canari account id, a getter for the session's d
 Unticked, nothing is written and any earlier entry is removed: the token lives in memory only and
 the password is asked again when it lapses.
 
+**A SECOND SEALED COPY, ON ANDROID ONLY (lot 4b, owner decision 2026-11-28).** The native new-mail
+watcher restarts at boot and after the process is killed, with no page to open the copy above. So
+while the user ticked "remember" AND turned "Notifications de nouveaux mails" on, the page hands the
+password to `MailWatchVault.kt`, which seals it under an **Android Keystore key**: AES-256-GCM,
+generated inside the keystore (the TEE on a phone that has one), never exportable, with **no
+user-authentication requirement** (the watch runs with the screen locked). The ciphertext is
+`mail_watch/vault_<id>.bin` in the app's data dir, **credential-encrypted storage**: it cannot be read
+before the user's first unlock after a boot, so the watch starts after that unlock. The associated
+data names the Canari account. **Every forget path erases it through ONE function**, Rust's
+`erase_vault` (`commands/mail_watch.rs`): `forgetMailPassword` calls it (a mail sign-out, unticked, a
+refused password, the Canari sign-out), and `mail_watch_forget` calls it with the cursor (the switch
+off, D8, the account deletion); a fact read false (the switch, the server's `mail_mode`, the mailbox
+ended, "remember" unticked) erases it from the controller too. One account's copy at a time.
+
 **Offered everywhere, with no warning (owner, 2026-11-27, the review's I2).** The exposure: on the
 web and the desktop the device key is derived from the PIN, so a stolen `localStorage` lets the
 sealed password be guessed OFFLINE against the PIN; on a phone the key is the hardware keystore's.
@@ -984,8 +998,8 @@ so turning it on again takes a new baseline: nothing that came while it was off 
     (`MainActivity.onDestroy`), task removed.
   - **It never outlives the page.** The watcher, its TLS and the session token live in the page
     (D3, D6), so a service with no page would keep the process alive for nothing.
-  - For the same reason this lot does **NOT restart it at boot**: at boot there is no page, so
-    there is no watcher. The owner decided on 2026-11-28 that it must (lot 4b, a native watcher).
+  - Lot 4 alone did not restart it at boot (no page, no watcher). Lot 4b does, with a native
+    watcher: see below.
   - Android refuses a foreground start from the background (`off-screen`). The next return on
     screen asks again; that event triggers the retry, never a timer.
   - New-mail notices are posted natively (`MailWatchBridge.post`) on the channel `canari_mail`,
@@ -1025,6 +1039,8 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
    (mAh), wakelocks, mobile/Wi-Fi radio active time and network bytes.
 4. Reset again, turn the switch **on**, and repeat for 1 h.
 5. Write both readings here. The hint's "battery" line is believed only once they exist.
+6. Lot 4b: repeat step 4 with the app closed from Recents (the NATIVE watcher, 300 s waits) and
+   compare it with the page's 60 s waits.
 
 **The numbers are owed.** No reading has been taken yet.
 
@@ -1067,9 +1083,7 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
 
 - **The full path on the Mi 9T and the iPhone** (device-verification `MAIL-N`), including the iOS
   cold launch above.
-- **Boot restart on Android**: the owner decided on 2026-11-28 that the watcher restarts by itself
-  at boot and after the process is killed. It needs a native watcher holding a Keystore-sealed copy
-  of the password: lot 4b, its own pull request.
+- **Boot restart on Android**: built in lot 4b (below).
 - **Play Console - OWED before the first store build carrying `MailWatchService`**: the `specialUse`
   foreground service (`FOREGROUND_SERVICE_SPECIAL_USE`) must be declared in App content with its
   justification (a persistent connection to the school's mail server while the user's switch is on).
@@ -1079,3 +1093,94 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
   no link, so it opens the app on the Mail tab's last screen. The desktop's tap payload is unmeasured
   (the same caveat as chat's, `useNotifications.svelte.ts`).
 - **The battery numbers** above.
+
+## As built - lot 4b: the native Android watcher
+
+**The decision (owner, 2026-11-28): "un maximum pratique pour l'utilisateur".** On Android the
+new-mail watch restarts by itself at boot and after the app's process is killed, while the switch is
+on. With no page there, a NATIVE watcher runs it.
+
+**What it runs.** `NativeMailWatcher.kt` is the page's watcher (`mailWatcher.ts`) without the page:
+
+- it signs in from a **sealed copy of the password** (`MailWatchVault.kt`, D6 above: an Android
+  Keystore key, credential-encrypted storage, armed only with "remember" ticked AND the switch on);
+- it talks to `partage.emse.fr` **directly, over the platform's TLS** (`HttpsURLConnection`: the
+  system trust store and hostname verification) - no relay;
+- it follows the **same protocol**, every rule pure in `mail/NativeMailWatch.kt` and held to the
+  page's by `NativeMailWatchTest.kt`: the wait set created first, the delta paged by id against the
+  cursor, the cursor written before notifying, the wait from the wait set's `seq`, the same fault
+  classes, the same retry ladder, a summary beyond five, the same notice words (Android resources
+  mirroring the Paraglide `mail_*` messages);
+- it reads and writes **the same cursor file** as the page (`mail_watch/cursor_<id>.json`, atomic),
+  byte for byte the page's JSON - so "never twice" holds across the page and the native run;
+- before each cursor write and each notice it checks that its sealed copy is still there: every
+  forget path erases the copy, so an erased copy ends the run;
+- a password the server refuses (`account.AUTH_FAILED`, `CHANGE_PASSWORD`) erases the copy and ends
+  the run: retrying it at every boot would only send a wrong password again.
+
+**One watcher at a time, and the handover.** `decideMailWatch` (`mail/MailWatch.kt`) is the whole
+table, over three modes: `OFF`, `PAGE`, `NATIVE`.
+
+| Event | OFF | PAGE | NATIVE |
+| --- | --- | --- | --- |
+| the page's run starts (`start`) | foreground, PAGE | redraw | hand to the page |
+| the watch is not wanted (`stop`) | ignored | leave | leave (native stopped) |
+| the page goes (activity destroyed, task removed, a new document's `page`) | ignored | NATIVE if armed, else leave | ignored |
+| boot, an update, a restart of the killed process (`Resume`) | NATIVE if armed | ignored | ignored |
+| the native run ends by itself | ignored | ignored | leave |
+
+**The page wins, and it claims first.** Before the page's own run starts, it sends `claim`; the
+bridge stops the native run and JOINS its thread, and only then answers `handed`
+(`claimAndroidMailWatch`). So the two never write the cursor or notify at once: the overlap is
+removed, not reconciled afterwards. A new document sends `page` (the page before it is gone), so an
+armed watch goes native until this page claims it.
+
+**The restarts.**
+
+- **Boot**: `CanariBootReceiver` on `BOOT_COMPLETED` (and `MY_PACKAGE_REPLACED`) calls
+  `MailWatchService.resumeIfArmed`. `BOOT_COMPLETED` arrives after the first unlock. The receiver
+  does **not** listen to `LOCKED_BOOT_COMPLETED`, deliberately: the sealed copy is in
+  credential-encrypted storage and cannot be read before that unlock. A `specialUse` foreground
+  service may start from `BOOT_COMPLETED` (the Android 15 boot restriction names other types).
+- **The process killed**: while NATIVE, the service returns `START_STICKY`, and the system's restart
+  (a null intent) is a `Resume`. A PAGE run is not sticky: a restarted process has no page.
+- **The page gone**: `MainActivity.onDestroy` and a removed task hand an armed watch to native.
+
+**What the native side never decides.** Whether the watch is wanted is the page's facts: the page
+arms the copy (`arm`) only while `nativeWatchWanted` (the iOS flag's rule plus "remember") is true,
+and erases it the moment a fact is READ false. A copy is the native side's only licence to run.
+
+**A five-minute wait, not one.** The page asks for 60 s only to stay under the web relay's 100 s idle
+close. The native watcher talks to the server directly, so it asks for **300 s**
+(`NATIVE_WAIT_TIMEOUT_SECONDS`): the longest hold measured on Partage (a wait with no timeout given
+answered after 303 s, 2026-11-27). An idle mailbox then wakes the radio once per five minutes instead
+of once per minute; the battery procedure below compares the two. A longer request is not measured:
+a server that capped it lower would answer sooner (one more empty round trip), never miss a change.
+
+**Its timers bound a rate or a transport.** The ladder (2 s doubling to 5 min) ends early when a
+network comes back (`ConnectivityManager` default-network callback, hence `ACCESS_NETWORK_STATE`).
+The read timeout (360 s, over the 300 s wait) only cuts a connection the server stopped answering: a
+transport failure, retried. Neither question reads a clock.
+
+**The push path's entry point: `NativeMailWatcher.checkOnce(context)`.** Mail lot 5 wakes the device
+with an empty FCM data push when the mailbox changed; its handler calls `checkOnce` for ONE delta
+check and notify: the same sealed copy, the same cursor file, the same notices, no foreground
+service. It is blocking (call it from a worker thread) and answers a typed `CheckOutcome`: `DONE`,
+`NOTHING_SEALED`, `WATCHING` (the page or the persistent run watches and notifies by itself), `BUSY`
+(a check already runs), `REFUSED` (the password was refused: the copy is erased), `FAILED`. One
+writer at a time still holds: a check does nothing while a watcher runs, a page claim waits for a
+check in flight to end, and a persistent run starting waits for it too. The persistent watch stays
+the user's separate choice ("sans aucun serveur, consomme plus de batterie").
+
+**Unverified on a phone (MAIL-N):** the restart after boot and after the process is killed, a
+`START_STICKY` restart's foreground start being allowed from the background on Android 12+ (a
+refusal is caught and logged, and the watch then resumes at the next open), the network in Doze
+while a foreground service holds it, and the battery cost. None of these is proven by a compile.
+
+**Tests.** `NativeMailWatchTest.kt` (the requests, the measured answers, the faults, the cursor file
+byte for byte, the delta, the baseline, the notice, the ladder, the copy's file name and associated
+data); `MailWatchTest.kt` (the three-mode table, the seven bridge ops); Rust `mail_watch.rs` (the one
+erasure, alone or with the cursor, never another account's); `androidMailWatch.test.ts` (a claim
+resolves only on `handed`); `mailWatch.svelte.test.ts` (`nativeWatchWanted`); `mailSession.test.ts`
+(the password handed over only from a ready, remembered mailbox with the device key held);
+`sealedMailPassword.test.ts` (forgetting erases the native copy).

@@ -22,6 +22,7 @@ import fr.emse.canari.mail.MailNoticeError
 import fr.emse.canari.mail.MailSummary
 import fr.emse.canari.mail.MailWatchCommand
 import fr.emse.canari.mail.MailWatchSpec
+import fr.emse.canari.mail.NativeVaultRecord
 import fr.emse.canari.mail.mailBridgeMessageAccepted
 import fr.emse.canari.mail.mailNoticeOf
 import fr.emse.canari.mail.mailSummaryOf
@@ -33,10 +34,12 @@ import org.json.JSONObject
  * docs/wiki/mail-client-transport.md#as-built---lot-4). Its twin is `mobile/androidMailWatch.ts`.
  *
  * Down: `MainActivity` registers `window.canariMail` through [register] - a WEB MESSAGE LISTENER,
- * one JSON op per message (`start`, `stop`, `notify`, `summary`), delivered only from the app's
- * origin and acted on only from the top frame. Up: ONE DOM event, `canari:mail-native`, `kind` `started`, `failed` (with the
- * [StartRefusal] `code`: `off-screen` is answered by the page at its next return on screen) or
- * `stopped` (the service went away on its own).
+ * one JSON op per message (`start`, `stop`, `notify`, `summary`, and for lot 4b's native watcher
+ * `page`, `claim`, `arm`), delivered only from the app's origin and acted on only from the top frame.
+ * Up: ONE DOM event, `canari:mail-native`, `kind` `started` (`code` the mode: `page` or `native`),
+ * `failed` (with the [StartRefusal] `code`: `off-screen` is answered by the page at its next return
+ * on screen), `stopped` (the service went away on its own), `handed` (the native run is joined: the
+ * page's own run may start) or `armed` (`code` `ok` / `failed`).
  *
  * A new-mail notification is posted HERE, natively, because its tap must open the message: the
  * notification plugin's tap opens the app onto nothing (`useNotifications.svelte.ts`). It carries no
@@ -245,8 +248,42 @@ object MailWatchBridge {
                 o.optString("publicTitle", ""),
                 o.optString("link", ""),
             ).fold(onSuccess = { postSummary(context, it) }, onFailure = ::refused)
+            MailBridgeOp.PAGE -> {
+                NativeMailWatcher.pageGone()
+                MailWatchService.stopForPageGone(context)
+            }
+            MailBridgeOp.CLAIM -> claim(context)
+            MailBridgeOp.ARM -> arm(context, o.optString("userId", ""), o.optString("account", ""), o.optString("password", ""))
             null -> Log.e(TAG, "message refused: an unknown op")
         }
+    }
+
+    /**
+     * The page's watcher is about to run: the native run stops and is JOINED - it writes no cursor and
+     * posts nothing any more - before `handed` lets the page start. Off the UI thread (a join).
+     */
+    private fun claim(context: Context) {
+        Thread({
+            NativeMailWatcher.stopAndJoin(context, "the page claims the watch", forPage = true)
+            Log.i(TAG, "the watch is handed to the page")
+            emit("handed", null)
+        }, "canari-mail-claim").start()
+    }
+
+    /**
+     * Seals the password for the native watcher. The page sends it ONLY with "remember" ticked AND the
+     * switch on (`mailWatch.svelte.ts`); the password is never logged, and leaves this frame sealed.
+     */
+    private fun arm(context: Context, userId: String, account: String, password: String) {
+        if (userId.isBlank() || account.isBlank() || password.isEmpty()) {
+            Log.e(TAG, "arm refused: a missing field")
+            emit("armed", "failed")
+            return
+        }
+        Thread({
+            val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(account, password))
+            emit("armed", if (ok) "ok" else "failed")
+        }, "canari-mail-arm").start()
     }
 
     private fun refused(error: Throwable) {

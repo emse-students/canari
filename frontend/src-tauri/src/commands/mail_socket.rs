@@ -304,16 +304,16 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::duplex;
 
-    /// Runs a socket over an in-memory pipe; returns the far end, the order sender, what was
-    /// delivered and the task's end.
-    fn start(
-        page_takes: bool,
-    ) -> (
+    /// What [`start`] hands a test: the far end, the order sender, what was delivered, the task's end.
+    type Rig = (
         tokio::io::DuplexStream,
         mpsc::UnboundedSender<Order>,
         Arc<Mutex<Vec<u8>>>,
         tokio::task::JoinHandle<MailSocketEnd>,
-    ) {
+    );
+
+    /// Runs a socket over an in-memory pipe.
+    fn start(page_takes: bool) -> Rig {
         let (near, far) = duplex(1024);
         let (orders, rx) = mpsc::unbounded_channel();
         let delivered = Arc::new(Mutex::new(Vec::new()));

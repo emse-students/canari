@@ -34,6 +34,8 @@
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The native mail watcher ends its retry pause when a network comes back (lot 4b). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- READ_EXTERNAL_STORAGE has had no effect since API 33: capped at API 28-32. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />

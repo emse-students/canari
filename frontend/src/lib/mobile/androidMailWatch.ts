@@ -16,11 +16,16 @@ import { Log } from '$lib/utils/Log';
  * - `stop` - leave it (always sent: the native side ignores a stop with nothing held);
  * - `notify` - post ONE new-mail notification natively: its tap is a deep link
  *   (`fr.emse.canari://mail/<conversation>`), which the plugin's notifications cannot carry;
- * - `summary` - post the ONE notice that stands for a flood of new mails.
+ * - `summary` - post the ONE notice that stands for a flood of new mails;
+ * - `page` - a new document: the page before it is gone (lot 4b: the watch goes native if armed);
+ * - `claim` - the page's watcher is about to run: the native run stops, JOINED, then `handed`;
+ * - `arm` - seal the password for the native watcher (lot 4b): sent only with "remember" ticked AND
+ *   the switch on.
  *
- * Outcomes come back as ONE DOM event, {@link NATIVE_MAIL_EVENT}: `started`, `failed` (with a
- * `code`: `off-screen` when Android refused to start it from the background - the next return on
- * screen asks again - or `refused`), and `stopped` (the service left on its own).
+ * Outcomes come back as ONE DOM event, {@link NATIVE_MAIL_EVENT}: `started` (`code` the mode, `page`
+ * or `native`), `failed` (with a `code`: `off-screen` when Android refused to start it from the
+ * background - the next return on screen asks again - or `refused`), `stopped` (the service left on
+ * its own), `handed` and `armed` (`ok` / `failed`).
  */
 
 /** The DOM event `MailWatchBridge.emit` dispatches. Its twin is `MailWatchBridge.EVENT` in Kotlin. */
@@ -90,6 +95,40 @@ export function startAndroidMailService(spec: MailWatchSpec): boolean {
 export function stopAndroidMailService(reason: string): void {
   Log.i('MAIL-WATCH', `asking the mail watch service to stop (${reason})`);
   if (!send('stop', { reason })) Log.d('MAIL-WATCH', 'no window.canariMail - nothing to stop');
+}
+
+/** A new document: the page before it is gone - the native side hands an armed watch to native. */
+export function announceAndroidPageReplaced(): void {
+  if (send('page', {})) Log.d('MAIL-WATCH', 'told the service a new document starts');
+}
+
+/**
+ * The page's watcher is about to run: resolves once the native run is STOPPED AND JOINED (the
+ * `handed` answer), so the two never write the cursor or notify at once. Resolves at once with no
+ * bridge (nothing native can run then). The native side always answers a claim: no timer here.
+ */
+export function claimAndroidMailWatch(): Promise<void> {
+  if (typeof window === 'undefined' || !androidMailBridge()) return Promise.resolve();
+  return new Promise((resolveIt) => {
+    const onEvent = (event: Event) => {
+      if ((event as CustomEvent<{ kind?: string }>).detail?.kind !== 'handed') return;
+      window.removeEventListener(NATIVE_MAIL_EVENT, onEvent);
+      Log.d('MAIL-WATCH', 'the native watch is handed to the page');
+      resolveIt();
+    };
+    window.addEventListener(NATIVE_MAIL_EVENT, onEvent);
+    send('claim', {});
+  });
+}
+
+/** Seals `password` for the native watcher (lot 4b). Never logged. `false` with no bridge. */
+export function armAndroidMailWatch(userId: string, account: string, password: string): boolean {
+  if (send('arm', { userId, account, password })) {
+    Log.i('MAIL-WATCH', 'the native watcher is armed with the remembered password');
+    return true;
+  }
+  Log.w('MAIL-WATCH', 'ERROR: no window.canariMail - the native watcher cannot be armed');
+  return false;
 }
 
 /** Posts one notice natively. `false` when there is no bridge. */
