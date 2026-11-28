@@ -3139,6 +3139,28 @@ type MessageEnvelope =
 `appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
 MessageEnvelope).
 
+### A voice note's waveform is its scrubber
+
+`VoiceMessagePlayer`'s waveform is a `role="slider"` on pointer events (touch and mouse), with arrow
+keys, Home and End, and `aria-valuenow`/`aria-valuetext`; the arithmetic is in
+`utils/audio/scrub.ts`. It replaced a transparent `input[type=range]` that could not work in a
+bubble: **the bubble reads every press as its own** - held 420 ms it opens the actions sheet, dragged
+sideways it is a reply swipe that claims the `touchmove` - so the finger moved the message, not the
+playhead (owner, 1.8.2). The scrubber is marked `data-scrub`, and `MessageBubble.pressOwnedByScrub`
+arms neither gesture for a press that starts on it (the same contract as `[data-video-player]`).
+
+**A reaction does not restart a note (the 1.8.2 report).** `handleAddReaction` replaces the message
+OBJECT (`{ ...msg, reactions }`) in a new conversation. The thread hands each bubble
+`messageId={msg.id}` as a getter over its `msg` derived, and the bubble's media-download effect read
+`messageId` for a log line - a TRACKED read - so the replaced object re-ran the effect for an
+attachment that had not changed: its cleanup nulled `blobUrl`, the renderer fell to its skeleton, the
+player was destroyed and rebuilt, and the note began at 0:00. The effect now reads `messageId`
+untracked and is keyed on the attachment alone. `ChatMessageGroups.voiceReaction.svelte.test.ts`
+pins it at the level where it happened (a new message object under the same key keeps the same
+`<audio>` and position); a bubble-level test with a constant `messageId` prop could not see it.
+Rule: **an effect in a row component must not read a prop that the list passes as a getter over the
+message object, unless it means to re-run on every replacement of that object.**
+
 ### A voice note declares itself, because nothing downstream can tell
 
 **A recording and an imported `.m4a` are the same bytes with the same mime type.** By the time a
