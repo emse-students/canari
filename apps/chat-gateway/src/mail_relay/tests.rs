@@ -241,6 +241,23 @@ fn relay_to(upstream: &str, core: String) -> MailRelay {
 }
 
 #[test]
+fn the_per_account_cap_holds_two_clients_each_with_a_watcher_and_a_reconnect() {
+    // Mail lot 4: per client the screens' connection + the watcher's, and a reconnect of each.
+    let per_client = 2 + 2;
+    assert!(MAX_MAIL_CONNECTIONS_PER_ACCOUNT >= 2 * per_client);
+    let relay = Arc::new(relay_to("127.0.0.1:9", String::new()));
+    let held: Vec<_> = (0..MAX_MAIL_CONNECTIONS_PER_ACCOUNT)
+        .map(|_| relay.admit("a").expect("within the cap"))
+        .collect();
+    assert_eq!(held.len(), MAX_MAIL_CONNECTIONS_PER_ACCOUNT);
+    assert_eq!(
+        relay.admit("a").err(),
+        Some(PlaceRefusal::Account),
+        "and no further"
+    );
+}
+
+#[test]
 fn places_are_capped_per_account_then_per_process_and_given_back() {
     let mut relay = relay_to("127.0.0.1:9", String::new());
     relay.max_per_account = 2;

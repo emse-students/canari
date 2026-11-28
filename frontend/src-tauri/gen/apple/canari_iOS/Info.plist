@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.8.3</string>
 	<key>CFBundleVersion</key>
-	<string>100800301</string>
+	<string>100800302</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -52,6 +52,9 @@
 	<array>
 		<string>fr.emse.canari.cleanup</string>
 		<string>fr.emse.canari.outboxRetry</string>
+		<!-- The new-mail watcher's check (mail lot 4, D11): a BGAppRefreshTask, best effort, run only
+		     while the page's flag file says the account wants it (canari_ios.mm). -->
+		<string>fr.emse.canari.mailRefresh</string>
 	</array>
 	<!-- The conversation suggestions of the share sheet (sharing lot S5): an app may donate an
 	     INSendMessageIntent only if it DECLARES that intent here. Without it every donation is

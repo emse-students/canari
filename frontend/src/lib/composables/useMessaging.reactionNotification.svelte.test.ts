@@ -34,8 +34,14 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
   isMobileTauriRuntime: () => MOBILE,
 }));
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
+
 const { useMessaging } = await import('./useMessaging.svelte');
 const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { InboundReaction } from '$lib/utils/chat/reactionNotification';

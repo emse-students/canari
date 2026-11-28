@@ -68,6 +68,12 @@ export const ACCOUNT_KEY = {
    * Called with `''` it is the prefix every sign-out erases.
    */
   workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
+  /**
+   * `notificationPreferences.svelte.ts`: the last notification settings the server ANSWERED for the
+   * account, in the read's wire shape - decided on when a later read fails or the session is offline.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  notificationPreferences: (userId: string) => `canari_notification_preferences:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -199,6 +205,17 @@ export const ACCOUNT_KEY = {
    */
   mailSealedPassword: (userId: string) => `canari_mail_sealed_password:v1:${userId}`,
   /**
+   * `mail/mailWatchCursor.ts`: the new-mail watcher's high-water mark - the mailbox address and the
+   * highest inbox item id already considered, never a subject or a sender - so a message is notified
+   * once across restarts (lot 4). Erased with the mail data (D8).
+   */
+  mailWatchCursor: (userId: string) => `canari_mail_watch_cursor:v1:${userId}`,
+  /**
+   * `mail/mailWatchSwitch.svelte.ts`: whether this account wants new-mail notifications on THIS
+   * device ("Notifications de nouveaux mails", off by default). Erased with the mail data (D8).
+   */
+  mailNotifications: (userId: string) => `canari_mail_notifications:v1:${userId}`,
+  /**
    * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
    * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
    * truth; this is the optimistic copy that keeps a help from replaying offline.
@@ -292,6 +309,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.agendaSpaceFilter(userId),
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),
+    ACCOUNT_KEY.notificationPreferences(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.registerOwed(userId),
@@ -319,6 +337,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.backupRecoveryCode(userId),
     ACCOUNT_KEY.backupOwedAfterKeyMove(userId),
     ACCOUNT_KEY.mailSealedPassword(userId),
+    ACCOUNT_KEY.mailWatchCursor(userId),
+    ACCOUNT_KEY.mailNotifications(userId),
   ];
 }
 

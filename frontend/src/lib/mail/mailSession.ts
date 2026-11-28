@@ -126,6 +126,15 @@ export class MailSession {
     return this.current;
   }
 
+  /**
+   * The session's generation: it moves at every sign-out, closed account and new sign-in. A reader
+   * that captured it compares before acting on what it read (the new-mail watcher writes its cursor
+   * and notifies only while it is unchanged, mail lot 4).
+   */
+  get generation(): number {
+    return this.epoch;
+  }
+
   /** Calls `listener` at every state change; returns the unsubscribe. */
   onState(listener: (state: MailSessionState) => void): () => void {
     this.listeners.add(listener);
@@ -246,6 +255,18 @@ export class MailSession {
    */
   async call(body: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.withToken((token) => this.soap.call(body, token));
+  }
+
+  /**
+   * {@link call} over ANOTHER connection: the new-mail watcher's blocking `WaitSetRequest` holds its
+   * connection for up to a minute, and lot 1's client sends one request at a time per connection, so
+   * on the screens' connection it would stall every other call. Same token, same single renewal.
+   */
+  async callOver(
+    channel: Pick<MailSoap, 'call'>,
+    body: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    return this.withToken((token) => channel.call(body, token));
   }
 
   /**

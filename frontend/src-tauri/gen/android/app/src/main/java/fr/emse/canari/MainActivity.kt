@@ -369,6 +369,12 @@ class MainActivity : TauriActivity() {
             webView.addJavascriptInterface(CallBridge.JsInterface(applicationContext), "canariCall")
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
+        // The new-mail watch (lot 4): the service that keeps its connection off screen, and the
+        // native builder of its notifications.
+        MailWatchBridge.attach(webView)
+        // A web message listener, not a JavaScript interface: only the app's own origin, top frame
+        // only. A debug build may load the dev server, whose origin is the developer's machine.
+        MailWatchBridge.register(webView, applicationContext, if (BuildConfig.DEBUG) setOf("*") else setOf("http://tauri.localhost"))
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
         holdDrawAcrossTurns(webView)
     }
@@ -1106,6 +1112,9 @@ class MainActivity : TauriActivity() {
         // the audio mode and a wake lock for a call that no longer exists.
         CallBridge.detach(webView)
         CallForegroundService.stopForPageGone(this)
+        // The mail watcher lives in this page too: with it gone, the service holds nothing.
+        MailWatchBridge.detach(webView)
+        MailWatchService.stopForPageGone(this)
         Log.d(
             "MainActivity",
             "onDestroy: destroying the WebView (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)"

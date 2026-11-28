@@ -457,6 +457,21 @@ describe('a tap on a notification the PAGE raised (the plugin, iOS), with X left
     expect(r.marked).toEqual([X.key, Y.key]);
   });
 
+  it('a tap on a page notification that is not a conversation (a new mail) opens what it names', () => {
+    const opened: number[] = [];
+    const opens = new Map([[42, () => opened.push(42)]]);
+    const publish = vi.fn();
+    expect(routePageNotificationTap({ notification: { id: 42 } }, posted, publish, opens)).toBe(
+      'landed'
+    );
+    expect(opened).toEqual([42]);
+    expect(publish).not.toHaveBeenCalled();
+    expect(routePageNotificationTap({ notification: { id: 7 } }, posted, publish, opens)).toBe(
+      'landed'
+    );
+    expect(publish).toHaveBeenCalledWith(Y.group);
+  });
+
   it.each([
     ['no identity', null],
     ['a notification this session did not post', 99],

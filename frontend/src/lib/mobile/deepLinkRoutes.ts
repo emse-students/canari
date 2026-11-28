@@ -19,7 +19,7 @@ import { BOOKINGS_HREF } from '$lib/bookings/routes';
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
  * `admin-agenda`, `live/<id>`, `republication-requests` (D38b), `follow-requests` (WP-F4),
- * `notifications` (WP-L8b), `bookings` (WP-N), `admin-profile-corrections`, `admin-moderation` and `admin-alumni-duplicates`
+ * `notifications` (WP-L8b), `bookings` (WP-N), `mail[/<conversation>]` (a new mail, lot 4), `admin-profile-corrections`, `admin-moderation` and `admin-alumni-duplicates`
  * (the global admins' queue notices, 2026-11-18) and
  * `form-responses/<id>` (the organiser alert for a payment over capacity). `posts` is what a payload
  * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
@@ -73,6 +73,10 @@ export function appRouteForDeepLink(u: URL): AppPath | null {
       return ADMIN_MODERATION_ROUTE;
     case 'admin-alumni-duplicates':
       return ADMIN_ALUMNI_DUPLICATES_ROUTE;
+    // A new mail (lot 4, docs/wiki/mail-client-transport.md): its conversation in the Mail tab, or the
+    // inbox when the notice named none. The page writes it ({@link mailAppLink}); the native builder carries it.
+    case 'mail':
+      return id ? `/mail/${encodeURIComponent(id)}` : '/mail';
     default:
       return null;
   }
@@ -90,4 +94,14 @@ export function proposalQueueAssociationId(u: URL): string | null {
   if (u.protocol !== MOBILE_APP_PROTOCOL || u.host !== 'proposals') return null;
   const id = decodeURIComponent(u.pathname.replace(/^\//, ''));
   return id || null;
+}
+
+/**
+ * The app link a new-mail notification opens: the conversation in the Mail tab, or the inbox when the
+ * message names no conversation. Read back by {@link appRouteForDeepLink}.
+ */
+export function mailAppLink(conversationId: string | null): string {
+  return conversationId
+    ? `${MOBILE_APP_PROTOCOL}//mail/${encodeURIComponent(conversationId)}`
+    : `${MOBILE_APP_PROTOCOL}//mail`;
 }

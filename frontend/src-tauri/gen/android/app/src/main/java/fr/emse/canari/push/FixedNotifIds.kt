@@ -51,8 +51,11 @@ object FixedNotifIds {
     /** The ongoing call's foreground service. */
     const val CALL_FOREGROUND = 0x0CA11
 
+    /** The new-mail watch's foreground service (mail lot 4). */
+    const val MAIL_WATCH_FOREGROUND = 0x0BA11
+
     /** Every id above: none may be handed to a conversation. */
-    val ALL: Set<Int> = setOf(OUTBOX_NUDGE, WAKE_UNAVAILABLE, NEW_DEVICE, BACKGROUND_FAILURE, WORKER_FOREGROUND, GROUP_SUMMARY, CALL_FOREGROUND)
+    val ALL: Set<Int> = setOf(OUTBOX_NUDGE, WAKE_UNAVAILABLE, NEW_DEVICE, BACKGROUND_FAILURE, WORKER_FOREGROUND, GROUP_SUMMARY, CALL_FOREGROUND, MAIL_WATCH_FOREGROUND)
 
     /** The first id at or after [candidate] that is not a fixed one. */
     fun skipReserved(candidate: Int): Int {

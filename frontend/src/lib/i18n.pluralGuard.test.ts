@@ -45,6 +45,8 @@ const ALLOWED: Record<string, string> = {
     'the group button shows only once two people or more are chosen',
   group_default_name_more:
     'used only past three others, and counts all but two: never fewer than two',
+  mail_notif_summary_title:
+    'posted only beyond MAX_SINGLE_NOTICES (5) new mails: never fewer than six',
 };
 
 const BARE = /\{count\}\s+[^\W\d_]{3,}/i;

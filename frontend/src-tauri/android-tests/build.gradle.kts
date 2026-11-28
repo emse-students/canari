@@ -43,6 +43,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/camera")
         // The keyboard announcement to the page (keyboard-and-send-motion.md), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/keyboard")
+        // The mail watch service's transition table and the new-mail notice's link allowlist (mail lot 4), same rule.
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/mail")
         // The generation guard of the launcher shortcuts' late icon upgrades (sharing.md), same rule.
         kotlin.srcDir("../plugins/tauri-plugin-gallery/android/src/main/java/pure")
         // The restore key's WebAuthn origin, pinned against the server's form (account-restore.md).

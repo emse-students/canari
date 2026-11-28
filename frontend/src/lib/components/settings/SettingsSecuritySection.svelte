@@ -4,6 +4,7 @@
   import { slide } from 'svelte/transition';
   import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
+  import SettingsAlumniLinkRow from './SettingsAlumniLinkRow.svelte';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
   import { type PinOperationProgress } from '$lib/utils/chat/pinChange';
@@ -214,6 +215,8 @@
           <span class="hidden sm:inline">{m.profile_pin_change_btn()}</span>
         </button>
       </div>
+
+      <SettingsAlumniLinkRow />
 
       {#if biometricAvailable}
         <div

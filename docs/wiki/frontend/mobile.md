@@ -4504,7 +4504,7 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
   ([above](#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01), "Android takes
   the same road")
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
-  2026-10-20): the ONLY foreground service this app declares, declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
+  2026-10-20): the ONLY foreground service this app declared until mail lot 4 added `MailWatchService` (`specialUse`, [mail-client-transport](../mail-client-transport.md#as-built---lot-4)); declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
   while its JavaScript kept running; the service keeps both for the call's life, draws the
   `CallStyle` notification and owns the audio OUTPUT (the mode is Chromium's when Chromium set it).
   Started by the page through `window.canariCall` (`CallBridge.kt`) with a plain `startService`

@@ -48,7 +48,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 vi.mock('$lib/mls-client/tabLeader', () => ({ getIsTabLeader: () => false }));
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
 const { useMessaging } = await import('./useMessaging.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 const { handleSystemEvent } = await import('$lib/mls-client/messagePipeline/systemMessageHandler');
 const { applyReactionFrame } = await import('$lib/mls-client/messagePipeline/reactionFrame');
 const { readMarkTarget, readWatermarkFrameData, readersOf, watermarkFor } =

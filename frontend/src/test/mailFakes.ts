@@ -205,7 +205,14 @@ export class FakeZimbra {
   requests: FakeZimbraRequest[] = [];
   streams: FakeStream[] = [];
 
-  constructor(public answer: (request: FakeZimbraRequest) => FakeZimbraAnswer) {}
+  /**
+   * `answer` may return a PROMISE: the request is then held until it settles - a blocking
+   * `WaitSetRequest` the test releases when it chooses (lot 4). A held answer on a stream closed
+   * meanwhile is dropped, as a server's answer on a closed connection is.
+   */
+  constructor(
+    public answer: (request: FakeZimbraRequest) => FakeZimbraAnswer | Promise<FakeZimbraAnswer>
+  ) {}
 
   /** The SOAP requests received, by name, in order. */
   get soapNames(): string[] {
@@ -217,22 +224,33 @@ export class FakeZimbra {
     stream.onWrite = (raw) => {
       const request = FakeZimbra.parse(raw);
       this.requests.push(request);
-      const answer = this.answer(request);
-      const payload =
-        answer.body instanceof Uint8Array
-          ? answer.body
-          : bytes(typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body));
-      const head = bytes(
-        `HTTP/1.1 ${answer.status ?? 200} X\r\nContent-Length: ${payload.length}\r\n\r\n`
-      );
-      const out = new Uint8Array(head.length + payload.length);
-      out.set(head, 0);
-      out.set(payload, head.length);
-      stream.push(out);
+      const answered = this.answer(request);
+      if (answered instanceof Promise) {
+        void answered.then((answer) => {
+          if (!stream.ended) FakeZimbra.send(stream, answer);
+        });
+        return;
+      }
+      FakeZimbra.send(stream, answered);
     };
     this.streams.push(stream);
     return stream;
   };
+
+  /** Writes `answer` on `stream` as one HTTP/1.1 response. */
+  private static send(stream: FakeStream, answer: FakeZimbraAnswer): void {
+    const payload =
+      answer.body instanceof Uint8Array
+        ? answer.body
+        : bytes(typeof answer.body === 'string' ? answer.body : JSON.stringify(answer.body));
+    const head = bytes(
+      `HTTP/1.1 ${answer.status ?? 200} X\r\nContent-Length: ${payload.length}\r\n\r\n`
+    );
+    const out = new Uint8Array(head.length + payload.length);
+    out.set(head, 0);
+    out.set(payload, head.length);
+    stream.push(out);
+  }
 
   private static parse(raw: string): FakeZimbraRequest {
     const split = raw.indexOf('\r\n\r\n');

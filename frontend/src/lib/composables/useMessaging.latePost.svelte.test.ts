@@ -31,7 +31,8 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 /** A salon's notification level is a server read; every salon is `all` here. */
 vi.mock('$lib/notifications/preferencesApi', async (orig) => ({
-  ...(await orig<typeof import('$lib/notifications/preferencesApi')>()),
+  // The account's settings answered with the default (`test/answeredPreferences.ts`).
+  ...(await (await import('../../test/answeredPreferences')).answeringTheDefault(orig)),
   fetchChannelNotificationLevel: async () => 'all' as const,
 }));
 
@@ -45,6 +46,7 @@ vi.mock('$lib/utils/viewport', async (orig) => ({
 }));
 
 const { useMessaging } = await import('./useMessaging.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { InboundReaction } from '$lib/utils/chat/reactionNotification';

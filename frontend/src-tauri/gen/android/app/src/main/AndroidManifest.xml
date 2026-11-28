@@ -70,6 +70,11 @@
          agrees with CALLS_COMPILED. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- THE NEW-MAIL WATCH (mail lot 4, D11): MailWatchService holds the foreground while the
+         account's "Notifications de nouveaux mails" switch is on and its mailbox open, so the page's
+         watcher keeps its connection off screen. specialUse: see MailWatchService.kt; Play reviews the
+         declaration (owner action). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -435,6 +440,15 @@
             android:name="fr.emse.canari.CallForegroundService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <service
+            android:name="fr.emse.canari.MailWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps one connection open to the user's school mailbox (Zimbra wait set) to notify new mail, while the user's in-app switch is on" />
+        </service>
 
         <!-- Default icon and channel for FCM notifications -->
         <meta-data

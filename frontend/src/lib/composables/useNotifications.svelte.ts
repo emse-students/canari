@@ -132,6 +132,12 @@ export function useNotifications() {
    * notified about, overwritten in place because the id is a pure function of the conversation.
    */
   const notifTargetsById = new SvelteMap<number, string>();
+  /**
+   * Notification id -> what a tap opens, for a page notification that is not a conversation's (a new
+   * school mail, mail lot 4). Routed by the SAME listener as the table above, so neither answers
+   * "not ours" for the other's taps. One entry per mail notified, overwritten by a repost.
+   */
+  const notifOpensById = new SvelteMap<number, () => void>();
   let notifTapListenerArmed = false;
   let notifIdentityMissingAnnounced = false;
 
@@ -172,10 +178,15 @@ export function useNotifications() {
         // routes and selects. A `goto` here, on a layout where the conversation is an overlay (a
         // phone, or a narrow window), drained the overlay the landing had just opened
         // (`shareLanding.ts`, 2026-10-27). A tap routed nowhere says so to the resume's hold.
-        const outcome = routePageNotificationTap(action, notifTargetsById, (target) => {
-          console.log(`[NOTIF] Tap on ${target}: landing published`);
-          notifNav.navigate(target);
-        });
+        const outcome = routePageNotificationTap(
+          action,
+          notifTargetsById,
+          (target) => {
+            console.log(`[NOTIF] Tap on ${target}: landing published`);
+            notifNav.navigate(target);
+          },
+          notifOpensById
+        );
         if (outcome === 'no-identity') {
           // ANNOUNCED ONCE PER SESSION. The cause is a property of the platform, not of the tap,
           // so repeating it per tap says nothing new and buries what does.
@@ -999,7 +1010,60 @@ export function useNotifications() {
     }
   }
 
+  /**
+   * Routes a tap on the page notification `id` (posted by the plugin on iOS or a desktop) to `open`,
+   * through the one tap listener this session has - armed here if no chat notification armed it yet.
+   */
+  function routeNotificationTapTo(id: number, open: () => void): void {
+    notifOpensById.set(id, open);
+    armNotificationTapListener();
+  }
+
+  /**
+   * Raises a NEW SCHOOL MAIL's banner on the web and a Tauri desktop or iPhone (mail lot 4) - here,
+   * because this composable is the ONE builder those engines have (`singleBuilder.test.ts`); Android
+   * posts it natively (`MailWatchBridge.kt`). A tap runs `open`: through the one tap listener on
+   * Tauri, through the banner's own click on the web.
+   *
+   * @returns whether a banner was raised (`false`: the permission is not granted).
+   */
+  async function sendMailNotification(notice: {
+    notifId: number;
+    tag: string;
+    title: string;
+    body: string;
+    open: () => void;
+  }): Promise<boolean> {
+    if (isTauriRuntime()) {
+      if (!(await isPermissionGranted())) return false;
+      routeNotificationTapTo(notice.notifId, notice.open);
+      await sendNotification({
+        id: notice.notifId,
+        title: notice.title,
+        body: notice.body,
+        // Never Android (its mail notices are native), but one shape for every Tauri post.
+        largeBody: notice.body,
+        icon: NOTIFICATION_ICON,
+      });
+      return true;
+    }
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+    const shown = new Notification(notice.title, { body: notice.body, tag: notice.tag });
+    shown.onclick = () => {
+      try {
+        window.focus();
+      } catch (err) {
+        Log.d('NOTIF', `the window could not take the focus (${String(err)})`);
+      }
+      notice.open();
+      shown.close();
+    };
+    return true;
+  }
+
   return {
+    sendMailNotification,
+    routeNotificationTapTo,
     playNotificationTone,
     playSendTone,
     playReceiveTone,

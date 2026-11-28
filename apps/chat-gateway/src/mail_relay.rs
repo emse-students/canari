@@ -38,10 +38,13 @@ use crate::state::AppState;
 
 // ── The caps, in one place ───────────────────────────────────────────────────────────────────────
 
-/// Concurrent relay connections one account may hold. A client keeps ONE persistent TLS
-/// connection (keep-alive) and opens a second only while the first is being replaced, so four
-/// covers two devices with room for a reconnect each.
-pub const MAX_MAIL_CONNECTIONS_PER_ACCOUNT: usize = 4;
+/// Concurrent relay connections one account may hold. Since mail lot 4 a web client holds TWO
+/// persistent TLS connections - the screens' one (keep-alive) and the new-mail watcher's (its
+/// blocking wait and its delta reads, `mailWatcher.ts`) - and opens a third, briefly, to release
+/// its wait set after a stop closed the watcher's. Two clients (two browsers, or a browser and a
+/// second tab's screens) with a reconnect each on both connections is 2 x (2 + 2) = 8. The cap
+/// bounds what one account can cost the relay; it is not a rate limit.
+pub const MAX_MAIL_CONNECTIONS_PER_ACCOUNT: usize = 8;
 /// Concurrent relay connections on this process, all accounts together.
 pub const MAX_MAIL_CONNECTIONS: usize = 400;
 /// Bytes one connection may carry, both directions together. Past it the relay ends the
