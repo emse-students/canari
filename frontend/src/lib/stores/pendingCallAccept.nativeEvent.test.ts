@@ -65,7 +65,7 @@ describe('canari:call-accept', () => {
     stop();
   });
 
-  it('at the PIN gate the answer is held, then acted on at the catch-up', async () => {
+  it('at the PIN gate the answer is handed over at once - the session shows the call, its join waits', async () => {
     const handler = vi.fn();
     setPendingCallAcceptHandler(handler);
     nativeFileHolding({ groupId: 'g', callId: 'c', acceptedAt: Date.now() });
@@ -73,10 +73,8 @@ describe('canari:call-accept', () => {
 
     window.dispatchEvent(new CustomEvent(NATIVE_CALL_ACCEPT_EVENT));
     await settle();
-    expect(handler).not.toHaveBeenCalled();
-
-    setSessionCaughtUp(true);
     expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith('the answer was recorded');
     stop();
   });
 

@@ -6,6 +6,7 @@ import {
   setPendingCallAcceptHandler,
   setSessionCaughtUp,
   takePendingCallAccept,
+  whenSessionCaughtUp,
 } from './pendingCallAccept';
 import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
 
@@ -24,57 +25,70 @@ afterEach(() => {
   setPendingCallAcceptHandler(null);
 });
 
-describe('a native answer is acted on once the session has caught up', () => {
-  it('held until the catch-up, then handed over once', () => {
+describe('a native answer is handed to the session at once - the catch-up is not its gate', () => {
+  it('handed over as soon as it is recorded, before any catch-up', () => {
     const handler = vi.fn();
     setPendingCallAcceptHandler(handler);
     setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
-
-    setSessionCaughtUp(true);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith('the session caught up');
-  });
-
-  it('acted on at once when the session is already caught up', () => {
-    const handler = vi.fn();
-    setPendingCallAcceptHandler(handler);
-    setSessionCaughtUp(true);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
     expect(handler).toHaveBeenCalledWith('the answer was recorded');
   });
 
-  it('a socket that closed waits for the next catch-up', () => {
+  it('an answer drained before the session registered is handed over at the registration', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
     const handler = vi.fn();
     setPendingCallAcceptHandler(handler);
-    setSessionCaughtUp(true);
-    setSessionCaughtUp(false);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith('the session registered its handler');
   });
 
-  it('a catch-up that ended on a dropped socket is no catch-up, nor a stale one', () => {
-    const handler = vi.fn();
+  it('a catch-up hands nothing over a second time', () => {
+    const handler = vi.fn((_why: string) => takePendingCallAccept());
     setPendingCallAcceptHandler(handler);
     setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-
-    // The socket dropped during the fetch: the catch-up's end must not act, nor leave the flag
-    // true for the reconnect to inherit.
-    markConnectionCaughtUp(false);
-    expect(handler).not.toHaveBeenCalled();
-
-    // The reconnect's own catch-up decides.
-    markConnectionCaughtUp(true);
+    setSessionCaughtUp(true);
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('a stale true flag is cleared by a catch-up on a dropped socket', () => {
-    const handler = vi.fn();
-    setPendingCallAcceptHandler(handler);
+  it('drops an answer recorded too long ago', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 10 * 60_000 });
+    expect(takePendingCallAccept()).toBeNull();
+  });
+});
+
+describe('whenSessionCaughtUp - one proof the join waits for', () => {
+  it('resolves at once when the session is caught up', async () => {
     setSessionCaughtUp(true);
+    await expect(whenSessionCaughtUp()).resolves.toBeUndefined();
+  });
+
+  it('waits for the catch-up, and a socket that closed waits for the next one', async () => {
+    let done = false;
+    void whenSessionCaughtUp().then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    setSessionCaughtUp(true);
+    await Promise.resolve();
+    expect(done).toBe(true);
+
+    setSessionCaughtUp(false);
+    let next = false;
+    void whenSessionCaughtUp().then(() => (next = true));
+    await Promise.resolve();
+    expect(next).toBe(false);
+  });
+
+  it('a catch-up that ended on a dropped socket is no catch-up, nor a stale one', async () => {
+    setSessionCaughtUp(true);
+    // The socket dropped during the fetch: the flag must not stay true for the reconnect to inherit.
     markConnectionCaughtUp(false);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
+    let done = false;
+    void whenSessionCaughtUp().then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    // The reconnect's own catch-up decides.
+    markConnectionCaughtUp(true);
+    await Promise.resolve();
+    expect(done).toBe(true);
   });
 
   it('the session reports the socket state at the end of the catch-up, not a constant', () => {
@@ -82,11 +96,6 @@ describe('a native answer is acted on once the session has caught up', () => {
     expect(session).toMatch(
       /onConnectionCaughtUp: \(\) => \{\s*markConnectionCaughtUp\(isWsConnected\);/
     );
-  });
-
-  it('drops an answer recorded too long ago', () => {
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 10 * 60_000 });
-    expect(takePendingCallAccept()).toBeNull();
   });
 });
 

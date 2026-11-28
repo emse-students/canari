@@ -78,6 +78,7 @@ afterAll(adoptTransitionAnimations());
 function fakeService(state: CallState) {
   return {
     callState: writable<CallState>(state),
+    noteCallScreenShown: vi.fn(),
     remoteStream: writable<MediaStream | null>(null),
     remoteStreams: writable(new Map<string, MediaStream>()),
     isGroupCall: writable(false),

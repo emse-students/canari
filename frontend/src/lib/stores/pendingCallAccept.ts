@@ -17,8 +17,12 @@
  * waits for the caller's MLS `call_invite`, a transport frame the server delivers only to a device
  * ONLINE when it was sent (calls.md, "An answer from the ring joins on the ring's facts").
  *
- * WHEN IT IS ACTED ON: once the session's socket is up AND its post-connect catch-up is done
- * ({@link setSessionCaughtUp}), whichever of that and the intent comes second.
+ * WHEN IT IS ACTED ON: AT ONCE - as soon as an intent is held and the session has registered its
+ * handler, whichever comes second. The handler shows the call screen straight away and holds only
+ * the JOIN until the call's own group is proven current (`services/callGroupCurrent.ts`); it no
+ * longer waits for the catch-up of every conversation (owner, 2026-11-28: 10.7 s of a 1.8.2 answer
+ * were other conversations' frames - calls.md, "The answer joins on its own group").
+ * {@link whenSessionCaughtUp} is one of the proofs that join waits for.
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -43,34 +47,56 @@ const MAX_PENDING_AGE_MS = 2 * 60_000;
 let pending: PendingCallAccept | null = null;
 let handler: ((why: string) => void) | null = null;
 let caughtUp = false;
+/** Waiters of {@link whenSessionCaughtUp}, released the next time the session reads caught up. */
+let caughtUpWaiters: Array<() => void> = [];
 
 /**
  * Registers THE one handler that acts on an intent (`useChatSession`: `answerFromSystemSurface`).
- * A later registration replaces the earlier: there is one session.
+ * A later registration replaces the earlier: there is one session. An intent drained before the
+ * handler existed is handed to it now.
  */
 export function setPendingCallAcceptHandler(fn: ((why: string) => void) | null): void {
   handler = fn;
+  if (fn) actIfReady('the session registered its handler');
 }
 
-/** Hands a held intent to the handler when the session is caught up. */
+/** Hands a held intent to the handler, if the session has registered one. */
 function actIfReady(why: string): void {
-  if (!pending || !caughtUp) return;
+  if (!pending) return;
   if (!handler) {
-    appendLog(`[CallAccept] WARN call=${pending.callId} ready (${why}) but no session handles it`);
+    // The ordinary order of a cold start that drains before the session exists: the registration
+    // hands it over (`setPendingCallAcceptHandler`).
+    appendLog(`[CallAccept] call=${pending.callId} held (${why}) until the session registers`);
     return;
   }
+  appendLog(
+    `[CallAccept] timing: answer handed to the session ${Date.now() - pending.acceptedAt} ms after the native tap (${why})`
+  );
   handler(why);
 }
 
 /**
  * Records whether the session's socket is up and caught up (`ConnectionDeps.onCaughtUp` sets it,
- * a closed socket clears it). Becoming caught up acts on a held intent.
+ * a closed socket clears it). Becoming caught up releases {@link whenSessionCaughtUp}.
  */
 export function setSessionCaughtUp(value: boolean): void {
   if (caughtUp === value) return;
   caughtUp = value;
   appendLog(`[CallAccept] session caught up=${value}`);
-  if (value) actIfReady('the session caught up');
+  if (!value) return;
+  const released = caughtUpWaiters;
+  caughtUpWaiters = [];
+  for (const resolve of released) resolve();
+}
+
+/**
+ * Resolves once the session's socket is up and its post-connect catch-up is done - at once when it
+ * already is. One of the proofs a call answered on the ring joins on (`callGroupCurrent.ts`): every
+ * group, the call's included, has absorbed what the server held when the socket opened.
+ */
+export function whenSessionCaughtUp(): Promise<void> {
+  if (caughtUp) return Promise.resolve();
+  return new Promise((resolve) => caughtUpWaiters.push(resolve));
 }
 
 /**
@@ -91,7 +117,7 @@ export function markConnectionCaughtUp(socketOpen: boolean): void {
 export function setPendingCallAccept(intent: PendingCallAccept): void {
   pending = intent;
   appendLog(
-    `[CallAccept] pending accept recorded call=${intent.callId} caller=${intent.callerId ? 'named' : 'unknown'}`
+    `[CallAccept] pending accept recorded call=${intent.callId} caller=${intent.callerId ? 'named' : 'unknown'} ${Date.now() - intent.acceptedAt} ms after the native tap`
   );
   actIfReady('the answer was recorded');
 }

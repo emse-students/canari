@@ -75,7 +75,7 @@ describe('an answer given on the ring', () => {
 
     service.answerFromSystemSurface('the socket connected');
 
-    expect(accept).toHaveBeenCalledWith('group-1', 'call-1');
+    expect(accept).toHaveBeenCalledWith('group-1', 'call-1', undefined, { awaitCallGroup: true });
     expect(service.currentCallId).toBe('call-1');
     expect(service.currentGroupId).toBe('group-1');
     expect(service.incomingCallerId).toBe('peer@example.org');
@@ -107,7 +107,7 @@ describe('an answer given on the ring', () => {
 
     service.answerFromSystemSurface('the answer was recorded');
 
-    expect(accept).toHaveBeenCalledWith('group-1', 'call-1');
+    expect(accept).toHaveBeenCalledWith('group-1', 'call-1', undefined, { awaitCallGroup: true });
   });
 
   it('is not rung again by an invite of the same call arriving after the join began', async () => {

@@ -70,7 +70,7 @@
   import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { screenAwakeHolder } from '$lib/mobile/screenAwake';
 
   let {
@@ -82,6 +82,10 @@
   } = $props();
 
   const call = useCallModel(() => callService);
+
+  // AN ANSWER FROM THE RING TIMES ITS SCREEN: the first moment the user sees the call, measured from
+  // the native tap (`CallService.noteCallScreenShown`; silent for a call that did not come from it).
+  onMount(() => callService.noteCallScreenShown());
   const fullScreen = $derived(callView.showsFullScreen);
 
   // Back minimises; the call is never ended by a navigation gesture. The chevron and Escape go

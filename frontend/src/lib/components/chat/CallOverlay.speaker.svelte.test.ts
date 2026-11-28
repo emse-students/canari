@@ -74,6 +74,7 @@ class FakeStream {
 function fakeService(state: CallState, hasVideo: boolean) {
   return {
     callState: writable<CallState>(state),
+    noteCallScreenShown: vi.fn(),
     remoteStream: writable<MediaStream | null>(null),
     remoteStreams: writable(new Map<string, MediaStream>()),
     isGroupCall: writable(false),

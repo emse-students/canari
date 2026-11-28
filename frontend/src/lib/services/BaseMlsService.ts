@@ -2851,6 +2851,17 @@ export abstract class BaseMlsService implements IMlsService {
     });
   }
 
+  /** @inheritdoc */
+  leadGroup(groupId: string): () => void {
+    return this.messageScheduler.leadGroup(groupId);
+  }
+
+  /** @inheritdoc */
+  whenGroupFrameApplied(groupId: string): Promise<void> {
+    if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
+    return this.messageScheduler.whenGroupFrameApplied(groupId);
+  }
+
   /**
    * Waits for the scheduler to finish `groupId`'s frames, then re-reads the evidence. Armed ONLY
    * while the group still has frames: an idle group waiting on the pull or the socket is woken by
@@ -3976,6 +3987,10 @@ export abstract class BaseMlsService implements IMlsService {
       // there, so that row is never listed again before it is acknowledged.
       if (!this.messageScheduler.draining) this.issueOwedPull('pull ended');
     }
+    // THE LISTING LANDING IS AN EVENT FOR `whenGroupDrained` TOO: a group with nothing queued reads
+    // drained from here, not from the end of the whole drain below - which is every OTHER group's
+    // work (a call answered on the ring waits for its own group only, calls.md).
+    this.wakeGroupDrainedWaiters('mailbox listed');
     await this.settleMailbox();
     // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
     // was listed whole reads drained only now (the start-up sync runs before the first full pull).

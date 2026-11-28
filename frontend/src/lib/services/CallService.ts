@@ -25,7 +25,9 @@ import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
-import { takePendingCallAccept } from '$lib/stores/pendingCallAccept';
+import { takePendingCallAccept, whenSessionCaughtUp } from '$lib/stores/pendingCallAccept';
+import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
+import { waitForCallGroupCurrent, type CallGroupWait } from './callGroupCurrent';
 import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
@@ -415,6 +417,14 @@ export class CallService {
   private ringWindowOpen = false;
   /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms`. */
   private tapAt: number | null = null;
+  /**
+   * Epoch ms of the NATIVE tap that answered this call on a system surface (the intent's
+   * `acceptedAt`), or `null` for an answer in the page. The origin of the `[CallAccept] timing:`
+   * lines that say where an answer from the ring spends its time.
+   */
+  private nativeTapAt: number | null = null;
+  /** The join's wait for the call's own group ({@link waitForCallGroupCurrent}), while it runs. */
+  private callGroupWait: CallGroupWait | null = null;
   /**
    * `performance.now()` when the ring started: on the caller once the ring LEFT (the server's
    * fan-out answered, then the invite - the setup before it is the app's time, not the human's), on
@@ -980,9 +990,11 @@ export class CallService {
    * permission, blocks) and is applied AGAIN by the room token this join asks for - a closed window
    * or a block set since is its `410`/`403`, an answer, not a guess.
    *
-   * Called by `pendingCallAccept.ts` once BOTH an intent is held and the session's socket has
-   * caught up (`ConnectionDeps.onCaughtUp`), whichever comes second; the intent is taken once
-   * ({@link takePendingCallAccept}).
+   * Called by `pendingCallAccept.ts` AS SOON AS an intent is held and this service is registered,
+   * whichever comes second; the intent is taken once ({@link takePendingCallAccept}). The call
+   * screen shows at once, connecting; only the join waits, and only for the call's OWN group to be
+   * proven current ({@link waitForCallGroupCurrent}) - never for the catch-up of every conversation,
+   * which was 10.7 s of a 1.8.2 answer (calls.md, "The answer joins on its own group").
    *
    * @param why What called it, for the log.
    */
@@ -1002,7 +1014,8 @@ export class CallService {
     );
     if (state === 'incoming' && this.currentCallId === intent.callId) {
       // The invite did reach this device (it was online when it left): the same call, answered.
-      void this.acceptCall(intent.groupId, intent.callId);
+      this.nativeTapAt = intent.acceptedAt;
+      void this.acceptCall(intent.groupId, intent.callId, undefined, { awaitCallGroup: true });
       return;
     }
     if (state === 'ended') this.cleanup();
@@ -1018,12 +1031,33 @@ export class CallService {
     this.currentGroupId = intent.groupId;
     this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
     this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
+    this.nativeTapAt = intent.acceptedAt;
     this.callState.set('incoming');
     this.ringStartAt = performance.now();
     appendLog(
       `[Call] joining call=${intent.callId} from the system-surface answer - no invite awaited`
     );
-    void this.acceptCall(intent.groupId, intent.callId);
+    void this.acceptCall(intent.groupId, intent.callId, undefined, { awaitCallGroup: true });
+  }
+
+  /**
+   * ` (N ms after the native tap)` for an answer given on a system surface, empty otherwise - the
+   * suffix of every step line, so one reading of the log says where the time between the tap and the
+   * media went.
+   */
+  private sinceNativeTap(): string {
+    return this.nativeTapAt === null
+      ? ''
+      : ` (${Date.now() - this.nativeTapAt} ms after the native tap)`;
+  }
+
+  /**
+   * Said by the call screen when it mounts (`CallOverlay`): for an answer from the ring, the first
+   * moment the user sees the call - the measure of "the screen shows at once".
+   */
+  public noteCallScreenShown(): void {
+    if (this.nativeTapAt === null) return;
+    appendLog(`[CallAccept] timing: call screen shown${this.sinceNativeTap()}`);
   }
 
   /**
@@ -1411,8 +1445,19 @@ export class CallService {
     return seq === this.callSetupSeq && state !== 'idle' && state !== 'ended';
   }
 
-  /** Accepts an incoming call after the user taps accept. */
-  public async acceptCall(groupId: string, callId: string, video?: boolean) {
+  /**
+   * Accepts an incoming call after the user taps accept.
+   *
+   * @param opts.awaitCallGroup the answer came from a system surface, possibly while this device is
+   *   still catching up: the screen goes to `incall` (connecting) at once, and the setup waits for
+   *   the call's own group to be proven current first ({@link waitForCallGroupCurrent}).
+   */
+  public async acceptCall(
+    groupId: string,
+    callId: string,
+    video?: boolean,
+    opts: { awaitCallGroup?: boolean } = {}
+  ) {
     if (get(this.callState) !== 'incoming') return;
 
     this.currentGroupId = groupId;
@@ -1432,6 +1477,23 @@ export class CallService {
       }
       this.callState.set('incall');
       this.markAnswered('this device answered');
+      if (opts.awaitCallGroup) {
+        appendLog(`[CallAccept] timing: call screen asked for${this.sinceNativeTap()}`);
+        // THE KEYS AND THE "ANSWERED" NOTICE NEED THE CALL'S GROUP AT ITS CURRENT EPOCH, and nothing
+        // else the session catches up on changes them. The whole setup waits for that one proof -
+        // the token, the ICE servers and the microphone too, so nothing reaches the server or the
+        // hardware before MLS is up for this session (`whenMlsReady`).
+        const wait = waitForCallGroupCurrent(
+          { mls: this.mlsService, whenMlsReady, whenSessionCaughtUp, log: appendLog },
+          groupId,
+          callId
+        );
+        this.callGroupWait = wait;
+        await this.timedStep('call-group-current', () => wait.proof);
+        this.callGroupWait = null;
+        this.assertSetupLive(seq, 'after its group was proven current');
+        appendLog(`[CallAccept] timing: the join starts${this.sinceNativeTap()}`);
+      }
       // FOUR STEPS SIDE BY SIDE, joined before the room: none needs another's result. Serial, they
       // were 1.2-2.6 s of "connecting" (Android 1.5.3, 2026-10-31). Each logs its own duration.
       // - The token is where the server refuses (a block set while the call rang, a closed window),
@@ -1465,6 +1527,9 @@ export class CallService {
       this.installBackgroundHandler();
       await this.timedStep('join', () => this.connectSignalling(callId, seq));
       this.assertSetupLive(seq, 'after the join');
+      if (opts.awaitCallGroup) {
+        appendLog(`[CallAccept] timing: joined the room${this.sinceNativeTap()}`);
+      }
       this.syncCallPresence(true);
     } catch (e) {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
@@ -1532,6 +1597,10 @@ export class CallService {
     // and the relay's `PeerLeft`), and a second pass would write a second "call ended" message.
     const state = get(this.callState);
     if (state === 'idle' || state === 'ended') return;
+    // A join still waiting for its group ends with the call, not with the summary's cleanup: its lead
+    // on the drain would otherwise outlive the call by the summary's length.
+    this.callGroupWait?.stop();
+    this.callGroupWait = null;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = state === 'calling';
     // Typed, and only for a call nobody answered: incoming = a ring this device refused; calling =
@@ -1732,7 +1801,11 @@ export class CallService {
     this.e2eProven.set(false);
     this.clearRingTimer();
     this.clearResumeTimer();
+    // A join still waiting for its group stops here: its lead on the drain ends with the call.
+    this.callGroupWait?.stop();
+    this.callGroupWait = null;
     this.tapAt = null;
+    this.nativeTapAt = null;
     this.ringStartAt = null;
     this.answeredAt = null;
     this.ringMs = null;
@@ -4278,7 +4351,7 @@ export class CallService {
       this.connectMs = performance.now() - this.answeredAt;
     }
     appendLog(
-      `[Call] E2E proven: this device encrypted a frame and decrypted one from ${this.groupCall ? 'every participant' : 'the peer'} (connect_ms=${this.connectMs === null ? '-' : Math.round(this.connectMs)})`
+      `[Call] E2E proven: this device encrypted a frame and decrypted one from ${this.groupCall ? 'every participant' : 'the peer'} (connect_ms=${this.connectMs === null ? '-' : Math.round(this.connectMs)})${this.sinceNativeTap()}`
     );
   }
 

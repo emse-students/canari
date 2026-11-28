@@ -1783,6 +1783,21 @@ export interface IMlsService {
    */
   whenGroupDrained(groupId: string): Promise<void>;
   /**
+   * Applies `groupId`'s queued frames ahead of every other group's until the returned release is
+   * called (idempotent). Order within the group is unchanged. For a decision that needs ONE group
+   * current while a catch-up applies everybody's - a call answered on the native ring, whose media
+   * keys are that group's `exportSecret` (calls.md, "The answer joins on its own group").
+   */
+  leadGroup(groupId: string): () => void;
+  /**
+   * Resolves once the NEXT frame of `groupId` has been applied - the event at which a fact only that
+   * group's frames can change (its epoch) is worth reading again. AN EVENT, NEVER A POLL, and it
+   * never resolves while nothing of the group arrives, so it is always raced with a wait that does.
+   *
+   * @throws {GroupDrainAbandonedError} (as a rejection) once the service is destroyed.
+   */
+  whenGroupFrameApplied(groupId: string): Promise<void>;
+  /**
    * Tells the service the local conversation store is now authoritative.
    *
    * A frame that arrived before the restore finished was left in the server queue with nothing to

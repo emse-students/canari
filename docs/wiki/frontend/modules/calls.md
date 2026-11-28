@@ -746,13 +746,13 @@ when the native handover says an answer waits, `canari:call-accept` -
 - **A link navigates and never answers**: `hooks.client.ts` reads no answer from a URL, whoever
   opened it (a parameter that looks like one is logged and ignored).
 
-`pendingCallAccept.ts` then HOLDS the intent until the session has caught up and acts on it once.
-"Caught up" is a named signal, `ConnectionDeps.onCaughtUp`, fired by `openGatewayConnection` after
-the post-connect catch-up (`settleUnresolvedCommits` then `fetchPendingMessages`), never on the
-socket merely opening - so the join derives its keys from a group that has absorbed what was queued.
-A closed socket clears it, and the next catch-up acts on what is held. The file carries the native
-instant of the tap (`acceptedAt`); an entry without one is no answer, so a replayed intent is never
-stamped fresh on drain.
+`pendingCallAccept.ts` then hands the intent to the session AT ONCE - as soon as it is held and
+`CallService` has registered, whichever comes second - and the call screen shows, connecting. Until
+1.8.4 it held the intent until the session's WHOLE catch-up (`ConnectionDeps.onCaughtUp`); the join
+now waits only for the call's own group to be proven current
+([below](#the-answer-joins-on-its-own-group-184-2026-11-28)). The file carries the native instant
+of the tap (`acceptedAt`); an entry without one is no answer, so a replayed intent is never stamped
+fresh on drain.
 
 `CallService.answerFromSystemSurface` takes the intent and joins: the same call already past
 `incoming` (a duplicate answer) - nothing, logged at debug; already ringing the same call (the invite
@@ -762,8 +762,8 @@ and `acceptCall` runs. An invite that does arrive afterwards meets the call it a
 (`yieldToOrAnswerBusy`: same callId, ignored).
 
 **One clock exists, and it decides nothing the server decides.** `MAX_PENDING_AGE_MS` (2 min from
-the native tap) bounds how long a held tap may wait for a session that never catches up; whether the
-call can still be joined is the room token's answer alone. A sibling device answering after this one
+the native tap) bounds how long a drained tap may wait for a session to register; whether the call
+can still be joined is the room token's answer alone. A sibling device answering after this one
 gets the `410`: the answering device asks for its token BEFORE it ends the ring as `answered`.
 
 **Two shapes rejected.**
@@ -776,12 +776,68 @@ gets the `410`: the answering device asks for its token BEFORE it ends the ring 
   already said.
 
 **Covered by** `CallService.p2p.test.ts` ("an answer on the native ring, no invite ever delivered":
-the real gate and the real `acceptCall` - room token first, then the answered frame and the socket;
-a `410` toasts and starts nothing; a duplicate starts nothing), `CallService.answerFromRing.test.ts`,
-`pendingCallAccept.test.ts` (held until the catch-up; no instant, no answer; a link never answers -
-only the native drain records one), `initializeConnection.test.ts` (the catch-up signal fires after
-the settle and the fetch), `calls.service.spec.ts` (the `410` once the ring ended, the sibling case)
-and the text pins in `incomingCallScreen.test.ts` (the nonce, the private file, no answer in a link).
+the real gate and the real `acceptCall` - the screen at once, then the room token once the group is
+current, then the answered frame and the socket; a `410` toasts and starts nothing; a duplicate
+starts nothing; a hang-up during the wait asks nothing), `CallService.answerFromRing.test.ts`,
+`pendingCallAccept.test.ts` (handed over at once; no instant, no answer; a link never answers - only
+the native drain records one), `initializeConnection.test.ts` (the catch-up signal fires after the
+settle and the fetch), `calls.service.spec.ts` (the `410` once the ring ended, the sibling case) and
+the text pins in `incomingCallScreen.test.ts` (the nonce, the private file, no answer in a link).
+
+### The answer joins on its own group (1.8.4, 2026-11-28)
+
+**The reading (owner's Android, 1.8.2, 2026-11-27).** Answer tapped on the ring of a phone resumed
+from the background: the answer reached the page about 0.8 s after the tap, then waited **10.7 s**
+for `onCaughtUp` - a pull of 180 frames of other conversations and a 7.8 s drain, then a second,
+empty pull owed behind it (the first had been listed on a link the reconnect replaced) - before the
+setup's own 2.3 s. The call screen appeared only then, after the conversation the link opened.
+
+**What the join needs.** The media keys are the call conversation's `exportSecret` at its current
+epoch, and the "answered" notice is sent in that group. No frame of another conversation changes
+either. So:
+
+- **The screen at once (A1).** `pendingCallAccept.ts` hands the intent over as soon as the session
+  registered its handler; `answerFromSystemSurface` sets the ring's facts (caller from the push,
+  name and avatar from the local cache, `resolveCallPeers`) and `acceptCall(..., { awaitCallGroup:
+  true })` goes to `incall` - the full screen, `connecting` - before anything is awaited. A hang-up
+  from that screen ends the wait.
+- **The join on its own group (B1).** `services/callGroupCurrent.ts` waits for the FIRST of three
+  proofs, each an event, none a clock: `epoch-reached` - once MLS is up (`whenMlsReady`) the
+  delivery service's `activeEpoch` for the group is read (`getGroupServerStatus`), and the local
+  epoch is compared to it now and after each frame of the group the scheduler applies
+  (`whenGroupFrameApplied`); `group-drained` - `whenGroupDrained`, now woken when the pull's LISTING
+  lands, not only at the end of the whole drain (a group with nothing queued is drained from that
+  moment), deferred past an incomplete listing by `untilListedWhole`; `session-caught-up` - the old
+  gate, reached after `group-drained` on every complete catch-up, and alone only when the listing
+  failed: then the join goes ahead as it always did and says `WARN group ... NOT proven current`.
+- **A group behind is served first.** While the wait runs the group LEADS the drain
+  (`MlsPerGroupScheduler.leadGroup`): its frames, in their own order and tier order, are picked
+  before any other bucket's, and the round-robin resumes where it was. Nothing across groups
+  depended on the round-robin's order; a frame a commit holds back stays held back. The lead ends
+  with the wait - a proof, a hang-up (`endCall`) or the cleanup.
+- **The whole setup waits, not only the keys.** The token, the ICE servers and the microphone could
+  start during the wait, but they would then run before MLS is up on a cold start (the PIN): the
+  wait is about one round trip once MLS is up, and nothing reaches the server or the hardware for a
+  session that is not there.
+
+**Why the epoch is a proof.** Every accepted commit advances the server's `activeEpoch` under its
+lock (`baseEpoch == activeEpoch`), so a local epoch at or past it has no commit left to apply, and
+`exportSecret` there is what every member at that epoch derives. A group this device does not hold
+is never proven this way (the drain decides). A commit landing after the read is the race every
+join had before, unchanged.
+
+**Measured where.** The `[CallAccept] timing:` lines, each in ms after the native tap: the intent
+recorded, handed to the session, the call screen asked for and shown (`CallOverlay` mount), the
+join started, the room joined; `[Call] timing: group ... current (<proof>) after N ms`; and the
+`E2E proven` line carries the same suffix. `connect_ms` now includes the wait.
+
+**Covered by** `callGroupCurrent.test.ts` (each proof; an epoch behind reached at the frame that
+brings it, never before; a group not held; an unknown server epoch; an incomplete listing deferred;
+the WARN; a stop releases the lead once; a client ended), `mlsPerGroupScheduler.leadGroup.test.ts`
+(the lead first in its own order, both modes; release and counted holders; the frame event and its
+abandon), `BaseMlsService.groupDrained.test.ts` (drained at the listing, before another group's
+frames are applied), `CallService.p2p.test.ts` and `pendingCallAccept*.test.ts`. **Owed:** the
+reading in [backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
 
 ### A decline on the ring reaches the caller (2026-10-30)
 

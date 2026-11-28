@@ -143,6 +143,25 @@ describe('whenGroupDrained', () => {
     expect(drained).toBe(true);
   });
 
+  it("resolves when the listing lands, not when OTHER groups' frames are all applied", async () => {
+    // A call answered on the ring waits for its own group (calls.md, "The answer joins on its own
+    // group"): another conversation's frame still queued - here never drained - holds the pull's
+    // settle, and must not hold the group whose listing already proved it has nothing queued.
+    const svc = liveService();
+    inner(svc).messageScheduler.enqueue(frameOf('g-other'));
+    let callGroup = false;
+    let pullDone = false;
+    void svc.whenGroupDrained('g-call').then(() => (callGroup = true));
+    void inner(svc)
+      .fetchPendingMessages()
+      .then(() => (pullDone = true));
+    await flushMacrotask();
+
+    expect(callGroup).toBe(true);
+    expect(pullDone).toBe(false);
+    expect(svc.isGroupDrained('g-other')).toBe(false);
+  });
+
   it('asked from INSIDE one of the group frames, resolves only once that frame has returned', async () => {
     const svc = liveService();
     Object.assign(svc, { mailboxEmptiedByAPull: true });

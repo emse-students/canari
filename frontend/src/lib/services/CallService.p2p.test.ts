@@ -582,8 +582,23 @@ class FakeTransform {
 /** The microphone track: an `EventTarget`, since the service watches its `mute` / `unmute` (WP-C-BG-I). */
 const fakeTrack = () =>
   Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
+/**
+ * The call group's drained proof (`callGroupCurrent.ts`), held by each test that answers on the ring:
+ * resolved when the test says the group is current. Replaced per test.
+ */
+let callGroupDrained = Promise.withResolvers<void>();
+
 const fakeMls = {
   getDeviceId: () => 'device-1',
+  // THE CALL GROUP'S PROOFS (callGroupCurrent.ts): the server's epoch is unknown here, so the drain
+  // (or the session's catch-up) decides - a test answering on the ring resolves `callGroupDrained`.
+  getGroupServerStatus: vi.fn(async () => 'error' as const),
+  getEpoch: vi.fn(() => 0),
+  getLocalGroups: vi.fn(() => [] as string[]),
+  leadGroup: vi.fn(() => () => {}),
+  whenGroupFrameApplied: vi.fn(() => new Promise<void>(() => {})),
+  whenGroupDrained: vi.fn(() => callGroupDrained.promise),
+  isGroupDrained: vi.fn(() => false),
   // The conversation's MLS tree: this device is alice's; bob and carol are the other members.
   getGroupMemberIdentities: vi.fn(async () => ['alice:device-1', 'bob:device-b', 'carol:device-c']),
   // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
@@ -5434,17 +5449,26 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     return gate;
   }
 
-  it('waits for the catch-up, then asks the room token and joins', async () => {
+  beforeEach(() => {
+    callGroupDrained = Promise.withResolvers<void>();
+  });
+
+  it('shows the call at once, waits for its own group only, then asks the room token and joins', async () => {
     const service = new CallService(fakeMls);
     order.length = 0;
     vi.mocked(fakeMls.sendMessage).mockClear();
-    const gate = await answeredOnTheRing(service);
+    vi.mocked(fakeMls.leadGroup).mockClear();
+    await answeredOnTheRing(service);
     await settle();
-    // The socket is not caught up yet: nothing asked, nothing sent.
+    // THE SCREEN AT ONCE: the call is on, connecting - and the group leads the drain.
+    expect(get(service.callState)).toBe('incall');
+    expect(fakeMls.leadGroup).toHaveBeenCalledWith('group-1');
+    // The group is not proven current yet: nothing asked, nothing sent.
     expect(order).toHaveLength(0);
-    expect(get(service.callState)).toBe('idle');
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
 
-    gate.setSessionCaughtUp(true);
+    // The group drained - the session's whole catch-up has NOT ended, and is not waited for.
+    callGroupDrained.resolve();
     await settle();
 
     expect(order[0]).toBe('api:/api/calls/room-token');
@@ -5453,14 +5477,52 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(service.incomingCallerId).toBe('peer@example.org');
   });
 
+  it("the session's catch-up still proves it, said at WARN when the group was not listed whole", async () => {
+    const service = new CallService(fakeMls);
+    order.length = 0;
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const gate = await answeredOnTheRing(service);
+    await settle();
+    expect(order).toHaveLength(0);
+
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(
+      vi
+        .mocked(appendLog)
+        .mock.calls.some(([l]) => String(l).includes('WARN group group-1 NOT proven current'))
+    ).toBe(true);
+  });
+
+  it('a hang-up during the wait ends it: nothing asked, the lead released', async () => {
+    const release = vi.fn();
+    vi.mocked(fakeMls.leadGroup).mockReturnValueOnce(release);
+    const service = new CallService(fakeMls);
+    order.length = 0;
+    await answeredOnTheRing(service);
+    await settle();
+
+    service.endCall();
+    await settle();
+    expect(release).toHaveBeenCalledTimes(1);
+
+    callGroupDrained.resolve();
+    await settle();
+    expect(order.filter((o) => o === 'api:/api/calls/room-token')).toHaveLength(0);
+    expect(FakeSocket.instances).toHaveLength(0);
+  });
+
   it('joins nothing when the room token says the ring is over (410)', async () => {
     server.roomTokenStatus = 410;
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
     const service = new CallService(fakeMls);
     vi.mocked(fakeMls.sendMessage).mockClear();
-    const gate = await answeredOnTheRing(service);
-    gate.setSessionCaughtUp(true);
+    await answeredOnTheRing(service);
+    callGroupDrained.resolve();
     await settle();
 
     expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
@@ -5471,7 +5533,7 @@ describe('an answer on the native ring, no invite ever delivered', () => {
   it('a second answer of the call being joined starts nothing and accuses nothing', async () => {
     const service = new CallService(fakeMls);
     const gate = await answeredOnTheRing(service);
-    gate.setSessionCaughtUp(true);
+    callGroupDrained.resolve();
     await settle();
     const { appendLog } = await import('$lib/utils/sessionLog');
     vi.mocked(appendLog).mockClear();
