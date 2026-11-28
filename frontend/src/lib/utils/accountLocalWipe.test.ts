@@ -147,8 +147,10 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    // Six steps, plus the seed step's question whether another account lives here.
-    expect(invokeMock).toHaveBeenCalledTimes(7);
+    // Seven steps, plus the seed step's question whether another account lives here.
+    expect(invokeMock).toHaveBeenCalledTimes(8);
+    // The mail watch's native state (its cursor file, lot 4).
+    expect(invokeMock).toHaveBeenCalledWith('mail_watch_forget', { userId: 'user-a' });
     // The account's MLS states - its parked one, and the slot only when its record names it.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.

@@ -1,7 +1,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
-import { postAndroidMailNotice } from '$lib/mobile/androidMailWatch';
+import { postAndroidMailNotice, postAndroidMailSummary } from '$lib/mobile/androidMailWatch';
 import { mailAppLink } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
@@ -80,9 +80,40 @@ export async function askMailNotificationPermission(): Promise<boolean> {
   }
 }
 
-/** Posts one notification per new mail. Never throws: each failure is logged on its own. */
+/**
+ * How many new mails one read notifies one by one. Beyond it (a mailbox opened after a week away, a
+ * list that floods it) ONE summary says how many: a shade of forty notices is noise, never service
+ * (charter principle 3).
+ */
+export const MAX_SINGLE_NOTICES = 5;
+
+/** The summary notice of `count` new mails: it opens the inbox. */
+export function mailSummaryNotice(count: number): MailNotice {
+  return {
+    itemId: 0,
+    title: m.mail_notif_summary_title({ count }),
+    body: m.mail_notif_summary_body(),
+    publicTitle: m.mail_notif_public_title(),
+    route: '/mail',
+    link: mailAppLink(null),
+  };
+}
+
+/** Posts the notifications of one read. Never throws: each failure is logged on its own. */
 export async function postMailNotices(fresh: readonly NewMail[]): Promise<void> {
   const notices = fresh.map(mailNotice).filter((n): n is MailNotice => n !== null);
+  if (notices.length > MAX_SINGLE_NOTICES) {
+    Log.i('MAIL-WATCH', `${notices.length} new mails - one summary notice`);
+    try {
+      await postSummary(mailSummaryNotice(notices.length), notices.length);
+    } catch (err) {
+      Log.w(
+        'MAIL-WATCH',
+        `ERROR: the summary of ${notices.length} mails was not posted (${String(err)})`
+      );
+    }
+    return;
+  }
   Log.i('MAIL-WATCH', `${notices.length} new mail notification(s) to post`);
   for (const notice of notices) {
     try {
@@ -104,21 +135,39 @@ async function postOne(notice: MailNotice): Promise<void> {
     });
     return;
   }
-  // The web, a desktop and an iPhone: the app's ONE banner builder raises it (`useNotifications`).
+  await raise(notice, `mail:${notice.itemId}`, `canari-mail-${notice.itemId}`);
+}
+
+async function postSummary(notice: MailNotice, count: number): Promise<void> {
+  if (isAndroidTauriRuntime()) {
+    postAndroidMailSummary({
+      count,
+      title: notice.title,
+      body: notice.body,
+      publicTitle: notice.publicTitle,
+      link: notice.link,
+    });
+    return;
+  }
+  // One id for every summary: a second flood REPLACES the first summary, never stacks a second.
+  await raise(notice, 'mail:summary', 'canari-mail-summary');
+}
+
+/** The web, a desktop and an iPhone: the app's ONE banner builder raises it (`useNotifications`). */
+async function raise(notice: MailNotice, idKey: string, tag: string): Promise<void> {
   const { globalNotifs } = await import('$lib/stores/globalChatSingleton.svelte');
   const raised = await globalNotifs.sendMailNotification({
-    notifId: stableNotifId(`mail:${notice.itemId}`),
-    tag: `canari-mail-${notice.itemId}`,
+    notifId: stableNotifId(idKey),
+    tag,
     title: notice.title,
     body: notice.body,
     open: () => openMailRoute(notice),
   });
-  if (!raised)
-    Log.i('MAIL-WATCH', `item ${notice.itemId} not notified - notifications are not allowed`);
+  if (!raised) Log.i('MAIL-WATCH', `${idKey} not notified - notifications are not allowed`);
 }
 
-/** Opens the thread a tapped new-mail notification names, in the Mail tab (every platform's tap). */
+/** Opens the thread (or the inbox) a tapped new-mail notification names, in the Mail tab. */
 function openMailRoute(notice: MailNotice): void {
-  Log.d('MAIL-WATCH', `item ${notice.itemId} tapped - opening its conversation`);
+  Log.d('MAIL-WATCH', `item ${notice.itemId} tapped - opening the Mail tab`);
   void goto(resolve(internalPath(notice.route)));
 }

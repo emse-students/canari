@@ -126,6 +126,15 @@ export class MailSession {
     return this.current;
   }
 
+  /**
+   * The session's generation: it moves at every sign-out, closed account and new sign-in. A reader
+   * that captured it compares before acting on what it read (the new-mail watcher writes its cursor
+   * and notifies only while it is unchanged, mail lot 4).
+   */
+  get generation(): number {
+    return this.epoch;
+  }
+
   /** Calls `listener` at every state change; returns the unsubscribe. */
   onState(listener: (state: MailSessionState) => void): () => void {
     this.listeners.add(listener);

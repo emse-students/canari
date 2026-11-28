@@ -332,6 +332,12 @@ export async function wipeDeletedAccountLocalData(
       });
       console.log(`${tag} native database: ${removed} file(s) removed`);
     });
+    // The new-mail watcher's native state (`mail_watch.rs`): the cursor file of this account only.
+    await step('the native mail watch state', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('mail_watch_forget', { userId });
+      console.log(`${tag} native mail watch state removed`);
+    });
     // Every MLS state of the account (`mls_account_state.rs`): its parked directory, and the slot
     // ONLY when the slot's owner record names it - never another account's.
     await step('the parked MLS state', async () => {

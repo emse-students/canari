@@ -6,7 +6,10 @@ import fr.emse.canari.mail.MailWatchCommand
 import fr.emse.canari.mail.MailWatchEffect
 import fr.emse.canari.mail.MailWatchSpec
 import fr.emse.canari.mail.decideMailWatch
+import fr.emse.canari.mail.MailBridgeOp
+import fr.emse.canari.mail.mailBridgeMessageAccepted
 import fr.emse.canari.mail.mailNoticeOf
+import fr.emse.canari.mail.mailSummaryOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,6 +65,32 @@ class MailWatchTest {
         assertEquals(MailNoticeRefusal.ITEM_ID, refusal(mailNoticeOf(1L shl 40, "Ada", "s", "Nouveau mail", "fr.emse.canari://mail")))
         assertEquals(MailNoticeRefusal.TEXT, refusal(mailNoticeOf(1, " ", "s", "Nouveau mail", "fr.emse.canari://mail")))
         assertEquals(MailNoticeRefusal.TEXT, refusal(mailNoticeOf(1, "Ada", "s", "", "fr.emse.canari://mail")))
+    }
+
+    @Test
+    fun `a summary counts at least one mail and opens the Mail tab only`() {
+        assertEquals(12, mailSummaryOf(12, "12 nouveaux mails", "Dans ta boîte", "Nouveau mail", "fr.emse.canari://mail").getOrThrow().count)
+        assertEquals(MailNoticeRefusal.ITEM_ID, refusal(mailSummaryOf(0, "t", "b", "p", "fr.emse.canari://mail")))
+        assertEquals(MailNoticeRefusal.LINK, refusal(mailSummaryOf(3, "t", "b", "p", "https://evil.example")))
+        assertEquals(MailNoticeRefusal.TEXT, refusal(mailSummaryOf(3, "", "b", "p", "fr.emse.canari://mail")))
+    }
+
+    @Test
+    fun `the bridge acts only on the app's top frame`() {
+        val app = setOf("http://tauri.localhost")
+        assertTrue(mailBridgeMessageAccepted(true, "http://tauri.localhost", app))
+        assertTrue(!mailBridgeMessageAccepted(false, "http://tauri.localhost", app))
+        assertTrue(!mailBridgeMessageAccepted(true, "null", app))
+        assertTrue(!mailBridgeMessageAccepted(true, null, app))
+        assertTrue(!mailBridgeMessageAccepted(false, "http://10.0.0.2:5173", setOf("*")))
+        assertTrue(mailBridgeMessageAccepted(true, "http://10.0.0.2:5173", setOf("*")))
+    }
+
+    @Test
+    fun `the bridge knows four ops and nothing else`() {
+        assertEquals(MailBridgeOp.STOP, MailBridgeOp.of("stop"))
+        assertEquals(MailBridgeOp.SUMMARY, MailBridgeOp.of("summary"))
+        assertEquals(null, MailBridgeOp.of("eval"))
     }
 
     private fun refusal(result: Result<*>): MailNoticeRefusal? = (result.exceptionOrNull() as? MailNoticeError)?.refusal

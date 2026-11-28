@@ -1085,7 +1085,7 @@ nothing and looks like a dead WebView rather than a wrong name.
 
 ## MAIL-N. A new school mail is notified once, and the switch's battery cost is measured - owed on BOTH phones (mail lot 4)
 
-**Proves** what no gate here reaches for D11 ([mail-client-transport](mail-client-transport.md#as-built---lot-4)): Partage's answer to a REAL change, the foreground service on Android, and the background refresh on iOS. Tests prove the watcher against a fake Zimbra only.
+**Proves** what no gate here reaches for D11 ([mail-client-transport](mail-client-transport.md#as-built---lot-4)): the foreground service on Android, and the background refresh on iOS. Partage's answer to a real change was measured on 2026-11-28 (two wakes per mail sent, the fake now speaks that shape); the tests still prove the watcher against a fake Zimbra only.
 
 **Precondition:** a build carrying lot 4. `mail_mode` must be `on` on the estate the phone points at. A test account must have an eligible school mailbox signed in with "remember" ticked. Turn "Notifications de nouveaux mails" on in Settings > Notifications.
 
@@ -1102,6 +1102,7 @@ nothing and looks like a dead WebView rather than a wrong name.
    1. Turn the switch on and background the app.
    2. Send a mail, then wait for a background refresh. In Xcode you can force one with `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"fr.emse.canari.mailRefresh"]`.
    3. **Pass:** one notification with the sender and subject; `[CanariMail] refresh ended: done success=1` in the log.
+   4. **Cold launch (unverified until read here):** kill the app, send a mail, force a refresh. Read whether the page loads and answers within the task's budget (`refresh ended` before the expiration line). A FAIL means an iPhone notifies only when the app was still in memory; write it in [mail-client-transport](mail-client-transport.md#as-built---lot-4).
 
 **Where to look:**
 - Android: `adb logcat -s MailWatchService MailWatchBridge` and the page's `[MAIL-WATCH]` lines (`the mailbox changed - reading the delta`).

@@ -7476,6 +7476,8 @@
   "mail_error_incompatible": "Cette version de Canari ne peut pas parler au serveur mail de l'école. Mets l'application à jour.",
   "mail_error_wait_lost": "La surveillance des nouveaux mails s'est interrompue. Elle reprend d'elle-même.",
   "mail_notif_public_title": "Nouveau mail",
+  "mail_notif_summary_title": "{count} nouveaux mails",
+  "mail_notif_summary_body": "Dans ta boîte de réception",
   "mail_watch_ongoing_title": "Réception des mails",
   "mail_watch_ongoing_text": "Canari attend tes nouveaux mails de l'école.",
   "mail_notif_setting_label": "Notifications de nouveaux mails",

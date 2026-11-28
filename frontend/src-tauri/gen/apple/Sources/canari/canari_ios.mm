@@ -1494,6 +1494,8 @@ static void CanariObserveCallIdleTimer(void) {
 /// activation was absent when the call screen posted its hold), at the end of a page load, and at
 /// every activation. Each handler keeps its own `static handler != nil` guard, so a second call
 /// registers nothing twice. The first point that found the WebView is logged once.
+static void CanariMailRefreshPageAppeared(void);
+
 static void CanariRegisterCallPageHandlers(NSString *where) {
   static BOOL registered = NO;
   if (CanariFindWebView() == nil) {
@@ -1502,6 +1504,9 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
     }
     return;
   }
+  // The same moments the WebView may have just come to exist: a background refresh waiting for a
+  // page (a cold launch by the system) runs now.
+  CanariMailRefreshPageAppeared();
   CanariObserveCallProximity();
   CanariObserveCallIdleTimer();
   if (!registered) {
@@ -2281,6 +2286,29 @@ static void CanariSubmitMailRefresh(void) {
   }
 }
 
+/// A refresh the system started before any WebView existed (a cold launch in the background): run
+/// when the page appears (`CanariMailRefreshPageAppeared`), bounded by the task's own budget - its
+/// expiration handler clears it. Main queue only.
+static void (^g_pendingMailRefresh)(void) = nil;
+
+/// The page exists now: a refresh waiting for it runs. Main queue only.
+static void CanariMailRefreshPageAppeared(void) {
+  if (g_pendingMailRefresh == nil || CanariFindWebView() == nil) return;
+  void (^run)(void) = g_pendingMailRefresh;
+  g_pendingMailRefresh = nil;
+  NSLog(@"[CanariMail] the page appeared - the waiting refresh runs");
+  run();
+}
+
+/// The page's answer to one refresh. The script AWAITS the hook's readiness
+/// (`__canariMailRefreshReady`, or the `canari:mail-refresh-ready` event `mailWatch.svelte.ts`
+/// dispatches once its facts are read): a page still starting is waited for, never answered "absent".
+static NSString *const kCanariMailRefreshScript =
+    @"if (window.__canariMailRefreshReady !== true) {"
+     "  await new Promise((r) => window.addEventListener('canari:mail-refresh-ready', () => r(), { once: true }));"
+     "}"
+     "return await window.__canariMailRefresh();";
+
 /// Registers the refresh's launch handler. MUST run before the app finishes launching (same rule as
 /// `CanariRegisterBackgroundTasks`): called from `canari_ios_bootstrap`.
 static void CanariRegisterMailRefreshTask(void) {
@@ -2299,6 +2327,7 @@ static void CanariRegisterMailRefreshTask(void) {
                         };
                         task.expirationHandler = ^{
                           dispatch_async(dispatch_get_main_queue(), ^{
+                            g_pendingMailRefresh = nil;
                             complete(NO, @"expired");
                           });
                         };
@@ -2306,26 +2335,35 @@ static void CanariRegisterMailRefreshTask(void) {
                           complete(YES, @"not-wanted");
                           return;
                         }
-                        WKWebView *webView = CanariFindWebView();
-                        if (webView == nil) {
-                          complete(NO, @"no-page");
+                        void (^ask)(void) = ^{
+                          WKWebView *webView = CanariFindWebView();
+                          if (webView == nil) {
+                            complete(NO, @"no-page");
+                            return;
+                          }
+                          [webView callAsyncJavaScript:kCanariMailRefreshScript
+                                             arguments:@{}
+                                               inFrame:nil
+                                        inContentWorld:WKContentWorld.pageWorld
+                                     completionHandler:^(id result, NSError *error) {
+                                       if (error != nil) {
+                                         complete(NO, @"page-error");
+                                         return;
+                                       }
+                                       BOOL done = [result isKindOfClass:[NSString class]] &&
+                                                   ([result isEqualToString:@"done"] ||
+                                                    [result isEqualToString:@"off"]);
+                                       complete(done, done ? @"page-done" : @"page-not-done");
+                                     }];
+                        };
+                        if (CanariFindWebView() == nil) {
+                          // A cold launch: the page does not exist yet. Asked when it appears, within
+                          // this task's budget (the expiration handler above ends the wait).
+                          NSLog(@"[CanariMail] refresh waits for the page");
+                          g_pendingMailRefresh = ask;
                           return;
                         }
-                        [webView callAsyncJavaScript:
-                                     @"return window.__canariMailRefresh ? await window.__canariMailRefresh() : 'absent';"
-                                           arguments:@{}
-                                             inFrame:nil
-                                      inContentWorld:WKContentWorld.pageWorld
-                                   completionHandler:^(id result, NSError *error) {
-                                     if (error != nil) {
-                                       complete(NO, @"page-error");
-                                       return;
-                                     }
-                                     BOOL done = [result isKindOfClass:[NSString class]] &&
-                                                 ([result isEqualToString:@"done"] ||
-                                                  [result isEqualToString:@"off"]);
-                                     complete(done, done ? @"page-done" : @"page-not-done");
-                                   }];
+                        ask();
                       }];
   NSLog(@"[CanariMail] refresh handler registered");
 }

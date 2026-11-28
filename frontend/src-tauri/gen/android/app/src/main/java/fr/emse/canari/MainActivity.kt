@@ -372,7 +372,9 @@ class MainActivity : TauriActivity() {
         // The new-mail watch (lot 4): the service that keeps its connection off screen, and the
         // native builder of its notifications.
         MailWatchBridge.attach(webView)
-        webView.addJavascriptInterface(MailWatchBridge.JsInterface(applicationContext), "canariMail")
+        // A web message listener, not a JavaScript interface: only the app's own origin, top frame
+        // only. A debug build may load the dev server, whose origin is the developer's machine.
+        MailWatchBridge.register(webView, applicationContext, if (BuildConfig.DEBUG) setOf("*") else setOf("http://tauri.localhost"))
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
         holdDrawAcrossTurns(webView)
     }

@@ -1,6 +1,7 @@
 import { Log } from '$lib/utils/Log';
 import { Http1Connection, type HttpRequest, type HttpResponse } from './http1';
 import type { PlaintextStream } from './tlsConnection';
+import { MailTransportError } from './transport';
 
 /**
  * ZIMBRA JSON SOAP OVER THE MAIL CLIENT'S OWN TLS (docs/wiki/mail-client.md D2).
@@ -96,6 +97,8 @@ export class ZimbraSoapClient {
   private stream: PlaintextStream | null = null;
   /** The open in flight, shared by every call that needs a connection meanwhile: one, never two. */
   private opening: Promise<Http1Connection> | null = null;
+  /** Moved by {@link close}: an open that resolves after it belongs to a closed client. */
+  private generation = 0;
 
   constructor(private readonly openStream: StreamOpener) {}
 
@@ -133,9 +136,15 @@ export class ZimbraSoapClient {
 
   /** Ends the connection, if one is open. */
   close(): void {
+    this.generation++;
     this.stream?.close();
     this.stream = null;
     this.connection = null;
+    this.opening = null;
+  }
+
+  private settleOpening(opening: Promise<Http1Connection>): void {
+    if (this.opening === opening) this.opening = null;
   }
 
   /** The open connection, or a new one when there is none or it is spent. */
@@ -148,15 +157,24 @@ export class ZimbraSoapClient {
     }
     this.connection = null;
     this.stream = null;
-    this.opening = this.openStream()
-      .then((stream) => {
-        this.stream = stream;
-        this.connection = new Http1Connection(stream, MAIL_HOST);
-        return this.connection;
-      })
-      .finally(() => {
-        this.opening = null;
-      });
-    return this.opening;
+    const generation = this.generation;
+    const opening = this.openStream().then((stream) => {
+      if (generation !== this.generation) {
+        // CLOSED WHILE IT OPENED (the watcher stopped mid-connect): the new stream is closed at
+        // once, and the call that waited for it fails as a transport closed by us.
+        stream.close();
+        Log.d('MAIL-SOAP', 'a connection opened after the client was closed - closed at once');
+        throw new MailTransportError('closed', 'the client was closed while it opened');
+      }
+      this.stream = stream;
+      this.connection = new Http1Connection(stream, MAIL_HOST);
+      return this.connection;
+    });
+    this.opening = opening;
+    void opening.then(
+      () => this.settleOpening(opening),
+      () => this.settleOpening(opening)
+    );
+    return opening;
   }
 }

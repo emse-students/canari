@@ -7467,6 +7467,8 @@
   "mail_error_incompatible": "This version of Canari cannot talk to the school mail server. Update the app.",
   "mail_error_wait_lost": "Watching for new mail stopped. It resumes by itself.",
   "mail_notif_public_title": "New mail",
+  "mail_notif_summary_title": "{count} new mails",
+  "mail_notif_summary_body": "In your inbox",
   "mail_watch_ongoing_title": "Receiving mail",
   "mail_watch_ongoing_text": "Canari is waiting for your new school mail.",
   "mail_notif_setting_label": "New mail notifications",

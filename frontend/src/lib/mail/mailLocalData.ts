@@ -1,5 +1,6 @@
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
+import { forgetNativeMailWatch } from './mailWatchCursor';
 
 /**
  * WHAT THE MAIL CLIENT KEEPS ON THE DEVICE, AND THE ONE ERASURE THAT MAY TOUCH IT
@@ -35,5 +36,7 @@ export function eraseMailLocalData(userId: string, store: Storage = localStorage
     removed.push(key);
   }
   Log.i('MAIL', `the mailbox is closed: ${removed.length} mail entries erased on this device`);
+  // The apps keep the watcher's cursor in a native file (`mail_watch.rs`): erased with the rest.
+  void forgetNativeMailWatch(userId);
   return removed;
 }

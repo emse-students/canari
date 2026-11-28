@@ -7,8 +7,15 @@ vi.mock('$lib/mobile/androidMailWatch', () => ({
   startAndroidMailService: vi.fn(() => true),
   stopAndroidMailService: vi.fn(),
 }));
-vi.mock('$lib/stores/appVersionCheck.svelte', () => ({ serverMailMode: () => 'on' }));
-vi.mock('$lib/utils/appForeground', () => ({ onAppScreenChange: () => () => {} }));
+vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
+  serverMailMode: () => 'on',
+  serverMailModeKnown: () => true,
+}));
+const screen = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/utils/appForeground', () => ({
+  onAppScreenChange: () => () => {},
+  isAppOnScreen: () => screen.on,
+}));
 vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => false,
   isIosTauriRuntime: () => false,
@@ -24,6 +31,8 @@ import type { MailSessionState } from './mailSession';
 import {
   backgroundRefresh,
   backgroundRefreshWanted,
+  eraseCursorOnceStopped,
+  mailTabOnScreen,
   pauseUntilRetry,
   watcherShouldRun,
 } from './mailWatch.svelte';
@@ -43,6 +52,7 @@ const client = { userId: 'u1' } as unknown as MailClient;
 const facts = (over: Partial<Parameters<typeof watcherShouldRun>[0]> = {}) => ({
   client,
   mailOn: true,
+  mailKnown: true,
   wanted: true,
   state: 'ready' as MailSessionState['kind'],
   eligible: true,
@@ -80,12 +90,57 @@ describe('backgroundRefreshWanted (the iOS flag)', () => {
     expect(backgroundRefreshWanted(facts({ state: 'signed_out' }), null)).toBeNull();
   });
 
-  it('cleared by the switch off, the server off, a mail sign-out or a closed account', () => {
+  it('cleared only by a fact READ: the switch off, the server off, a mail sign-out, a closed account', () => {
     expect(backgroundRefreshWanted(facts({ wanted: false }), 'ready')).toBe(false);
     expect(backgroundRefreshWanted(facts({ mailOn: false }), 'ready')).toBe(false);
-    expect(backgroundRefreshWanted(facts({ client: null }), 'ready')).toBe(false);
     expect(backgroundRefreshWanted(facts({ state: 'signed_out' }), 'ready')).toBe(false);
     expect(backgroundRefreshWanted(facts({ state: 'closed' }), 'ready')).toBe(false);
+  });
+
+  it('left alone (null) while a fact is still UNKNOWN: no server answer yet, no client yet', () => {
+    expect(backgroundRefreshWanted(facts({ mailKnown: false, mailOn: false }), 'ready')).toBeNull();
+    expect(backgroundRefreshWanted(facts({ mailKnown: false }), null)).toBeNull();
+    expect(backgroundRefreshWanted(facts({ client: null }), 'ready')).toBeNull();
+  });
+});
+
+describe('mailTabOnScreen (no notice for a mail seen landing)', () => {
+  it('true only on the Mail tab, with the app on screen', () => {
+    screen.on = true;
+    window.history.replaceState(null, '', '/mail/-12');
+    expect(mailTabOnScreen()).toBe(true);
+    window.history.replaceState(null, '', '/mail');
+    expect(mailTabOnScreen()).toBe(true);
+    window.history.replaceState(null, '', '/mailbox-elsewhere');
+    expect(mailTabOnScreen()).toBe(false);
+    window.history.replaceState(null, '', '/chat');
+    expect(mailTabOnScreen()).toBe(false);
+    window.history.replaceState(null, '', '/mail');
+    screen.on = false;
+    expect(mailTabOnScreen()).toBe(false);
+    screen.on = true;
+  });
+});
+
+describe('the switch turned off (I1)', () => {
+  it('erases the cursor only once the run has stopped, so a run still reading cannot write it back', async () => {
+    const order: string[] = [];
+    let stop!: () => void;
+    const stopped = new Promise<void>((r) => (stop = r));
+    const store = {
+      read: vi.fn(),
+      write: vi.fn(),
+      erase: vi.fn(async (u: string) => {
+        order.push(`erase ${u}`);
+      }),
+    };
+    const erased = eraseCursorOnceStopped(stopped, 'u1', store);
+    await Promise.resolve();
+    expect(store.erase).not.toHaveBeenCalled();
+    order.push('stopped');
+    stop();
+    await erased;
+    expect(order).toEqual(['stopped', 'erase u1']);
   });
 });
 

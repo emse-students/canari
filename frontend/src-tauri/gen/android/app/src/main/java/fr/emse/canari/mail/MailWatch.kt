@@ -94,3 +94,34 @@ fun mailNoticeOf(itemId: Long, title: String, body: String, publicTitle: String,
 
 /** A refused notice, typed by its [refusal]. */
 class MailNoticeError(val refusal: MailNoticeRefusal) : IllegalArgumentException("mail notice refused: $refusal")
+
+/** The tag of the ONE notice standing for a flood of new mails (more than the page notifies singly). */
+const val MAIL_SUMMARY_TAG = "canari_mail_summary"
+
+/** The tag of the shade's group summary that bundles the single notices (Android draws it as a stack). */
+const val MAIL_GROUP_SUMMARY_TAG = "canari_mail_group"
+
+/** The summary of [count] new mails: it opens the inbox. */
+data class MailSummary(val count: Int, val title: String, val body: String, val publicTitle: String, val link: String)
+
+/** The summary of the page's fields, or why it is refused - the same text and link rules as [mailNoticeOf]. */
+fun mailSummaryOf(count: Long, title: String, body: String, publicTitle: String, link: String): Result<MailSummary> {
+    if (count < 1 || count > Int.MAX_VALUE) return Result.failure(MailNoticeError(MailNoticeRefusal.ITEM_ID))
+    return mailNoticeOf(0, title, body, publicTitle, link).map { MailSummary(count.toInt(), it.title, it.body, it.publicTitle, it.link) }
+}
+
+/** What the page's bridge may ask, one JSON message each (`androidMailWatch.ts`). */
+enum class MailBridgeOp(val wire: String) {
+    START("start"), STOP("stop"), NOTIFY("notify"), SUMMARY("summary");
+
+    companion object {
+        fun of(wire: String): MailBridgeOp? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/**
+ * Whether a bridge message may be acted on: from the TOP frame only, whatever the origin rule let
+ * through - a frame inside the page (a mail's sandbox) never drives the service or posts a notice.
+ */
+fun mailBridgeMessageAccepted(isMainFrame: Boolean, origin: String?, allowedOrigins: Set<String>): Boolean =
+    isMainFrame && origin != null && ("*" in allowedOrigins || origin in allowedOrigins)

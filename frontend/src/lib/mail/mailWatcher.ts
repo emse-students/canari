@@ -1,16 +1,27 @@
 import { Log } from '$lib/utils/Log';
-import type { MailApi } from './mailApi';
-import { classifyMailFailure, type MailErrorKind } from './mailErrors';
+import { classifyMailFailure, MailError, type MailErrorKind } from './mailErrors';
 import type { MailSession, MailSoap } from './mailSession';
 import type { MessageSummary } from './mailTypes';
 import {
   itemNumber,
+  platformCursorStore,
   readMailWatchCursor,
   writeMailWatchCursor,
+  type MailCursorStore,
   type MailWatchCursor,
 } from './mailWatchCursor';
-import { parseCreatedWaitSet, parseWaitSetAnswer, type WaitSetHandle } from './zimbraParse';
-import { createWaitSetRequest, destroyWaitSetRequest, waitSetRequest } from './zimbraRequests';
+import {
+  parseCreatedWaitSet,
+  parseMessagePage,
+  parseWaitSetAnswer,
+  type WaitSetHandle,
+} from './zimbraParse';
+import {
+  createWaitSetRequest,
+  destroyWaitSetRequest,
+  searchRequest,
+  waitSetRequest,
+} from './zimbraRequests';
 
 /**
  * THE NEW-MAIL WATCHER (docs/wiki/mail-client.md D11, docs/wiki/mail-client-transport.md#as-built---lot-4).
@@ -20,9 +31,10 @@ import { createWaitSetRequest, destroyWaitSetRequest, waitSetRequest } from './z
  * - **"Has anything changed?"** is the SERVER's answer: a wait set (`CreateWaitSetRequest`) on the
  *   account's messages, and a `WaitSetRequest` that blocks on the server until they change. Measured
  *   on Partage 2026-11-27: `NoOpRequest wait=1` is refused there (no SOAP session is ever created),
- *   the wait set is accepted and blocks until its timeout (twenty empty 60 s waits in a row, each
- *   answered in 63 s). Its answer to a REAL change is Zimbra's documented one and is still owed a
- *   reading on Partage: no mail arrived during the probe, and the probe sends none.
+ *   the wait set is accepted, blocks until its timeout (twenty empty 60 s waits in a row, each
+ *   answered in 63 s), and wakes on ANY change of the mailbox (measured 2026-11-28: a mail sent to
+ *   oneself woke it twice, ~0.1 s for the Sent copy - an empty inbox delta - and ~0.4 s for the
+ *   delivery, whose delta held exactly that mail).
  * - **"What is new to me?"** is the DEVICE's durable answer: the cursor (`mailWatchCursor.ts`), the
  *   highest inbox item id already considered. The inbox read by id, newest first, stops at the first
  *   id at or below it - the ids are handed out in increasing order, so that id is the PROOF that
@@ -78,43 +90,60 @@ export interface DeltaRead {
   cursor: MailWatchCursor;
 }
 
+/** One Zimbra SOAP call with the session's token, over whichever connection the reader holds. */
+export type MailCall = (body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+/** The search of one page of the inbox, newest id first, after `after` when given. */
+function inboxPage(limit: number, after?: string): Record<string, unknown> {
+  return searchRequest('message', {
+    folderId: INBOX_FOLDER_ID,
+    query: '',
+    offset: 0,
+    limit,
+    sortBy: 'idDesc',
+    ...(after !== undefined ? { after } : {}),
+  });
+}
+
+/** Thrown when the session moved (signed out, closed, signed in again) while a delta was read. */
+function superseded(): MailError {
+  return new MailError('not_signed_in', 'session-moved-during-delta');
+}
+
 /**
  * Reads what is new in the inbox since the cursor, and WRITES THE NEW CURSOR before it returns. No
- * cursor for this mailbox takes a baseline - the newest inbox id - and notifies nothing: mail that
- * was there before the watcher is not news.
+ * cursor for this mailbox takes a baseline - the newest numeric inbox id - and notifies nothing: mail
+ * that was there before the watcher is not news.
+ *
+ * Pages follow the ids (`after`, Zimbra's cursor), never an offset: a mail arriving or deleted
+ * mid-read cannot shift a page. `current` is checked before the cursor is written: a session that
+ * moved meanwhile (another sign-in, a sign-out) writes nothing and throws `not_signed_in`.
+ *
+ * @returns `fresh` empty and nothing written when the cursor could not be written (logged): the
+ * mail is then announced by the next read rather than twice.
  */
 export async function readNewInboxMail(
-  api: Pick<MailApi, 'messages'>,
+  call: MailCall,
   userId: string,
   account: string,
-  store: Storage = localStorage
+  store: MailCursorStore,
+  current: () => boolean = () => true
 ): Promise<DeltaRead> {
-  const cursor = readMailWatchCursor(userId, account, store);
+  const cursor = await readMailWatchCursor(userId, account, store);
   if (cursor === null) {
-    const newest = await api.messages({
-      folderId: INBOX_FOLDER_ID,
-      query: '',
-      offset: 0,
-      limit: 1,
-      sortBy: 'idDesc',
-    });
+    const newest = parseMessagePage(await call(inboxPage(DELTA_PAGE_SIZE)), 0);
     const top = newest.items.map((m) => itemNumber(m.id)).find((n) => n !== null) ?? 0;
     const taken = { account: account.toLowerCase(), highest: top };
-    writeMailWatchCursor(userId, taken, store);
-    Log.i('MAIL-WATCH', `baseline taken at item ${top} - nothing notified`);
+    if (!current()) throw superseded();
+    const written = await writeMailWatchCursor(userId, taken, store);
+    Log.i('MAIL-WATCH', `baseline taken at item ${top} (written: ${written}) - nothing notified`);
     return { baseline: true, fresh: [], cursor: taken };
   }
   const above: MessageSummary[] = [];
-  let offset = 0;
+  let after: string | undefined;
   let proven = false;
   for (;;) {
-    const page = await api.messages({
-      folderId: INBOX_FOLDER_ID,
-      query: '',
-      offset,
-      limit: DELTA_PAGE_SIZE,
-      sortBy: 'idDesc',
-    });
+    const page = parseMessagePage(await call(inboxPage(DELTA_PAGE_SIZE, after)), 0);
     for (const item of page.items) {
       const n = itemNumber(item.id);
       if (n === null) continue;
@@ -125,17 +154,25 @@ export async function readNewInboxMail(
       above.push(item);
     }
     if (proven || !page.hasMore) break;
-    if (page.items.length === 0) {
-      // A page that says "more" and holds nothing cannot advance the offset: the read stops here
+    const last = page.items[page.items.length - 1];
+    if (!last) {
+      // A page that says "more" and holds nothing gives no id to read after: the read stops here
       // rather than ask the same page forever, and says so.
       Log.w('MAIL-WATCH', 'ERROR: an inbox page said more and held nothing - the read stops there');
       break;
     }
-    offset += page.items.length;
+    after = last.id;
   }
   const highest = above.reduce((top, m) => Math.max(top, itemNumber(m.id) ?? 0), cursor.highest);
   const next = { account: cursor.account, highest };
-  if (highest !== cursor.highest) writeMailWatchCursor(userId, next, store);
+  if (!current()) throw superseded();
+  if (highest !== cursor.highest && !(await writeMailWatchCursor(userId, next, store))) {
+    Log.w(
+      'MAIL-WATCH',
+      'ERROR: the cursor was not written - nothing notified, the next read retries'
+    );
+    return { baseline: false, fresh: [], cursor };
+  }
   const fresh = above
     .filter((m) => m.flags.unread)
     .map(({ id, conversationId, from, subject, date }) => ({
@@ -145,6 +182,8 @@ export async function readNewInboxMail(
       subject,
       date,
     }));
+  // An empty delta is ORDINARY: every change of the mailbox wakes the wait (a mail sent lands in
+  // Sent and wakes it first, measured 2026-11-28), so this line stays at debug.
   Log.d(
     'MAIL-WATCH',
     `delta: ${above.length} above the cursor, ${fresh.length} unread, cursor ${cursor.highest} -> ${highest}`
@@ -177,15 +216,21 @@ const ENDS_THE_RUN: ReadonlySet<MailErrorKind> = new Set<MailErrorKind>([
 /** What the watcher needs, injected so a test drives it with `FakeZimbra`. */
 export interface MailWatcherDeps {
   userId: string;
-  session: Pick<MailSession, 'callOver' | 'state'>;
-  api: Pick<MailApi, 'messages'>;
-  /** A NEW connection for the blocking wait (see `MailSession.callOver`). */
+  session: Pick<MailSession, 'call' | 'callOver' | 'state' | 'generation'>;
+  /** A NEW connection for the run: its wait AND its delta reads (see `MailSession.callOver`). */
   openWaitChannel(): Pick<MailSoap, 'call' | 'close'>;
-  /** Posts one notification per new unread message. Never throws (it logs its own failures). */
+  /** Posts the notifications of new unread messages. Never throws (it logs its own failures). */
   notify(fresh: NewMail[]): Promise<void>;
   /** Resolves after `ms`, or earlier when `signal` aborts or the controller's events say "retry now". */
   pause(ms: number, signal: AbortSignal): Promise<void>;
-  store?: Storage;
+  /**
+   * Told when a run ends BY ITSELF - its session ended, the mailbox refused - never after
+   * {@link MailWatcher.stop}: the controller releases what it held for the run (the Web Lock, the
+   * Android service) and starts a new one only when its facts say so.
+   */
+  onRunEnded?(reason: string): void;
+  /** Where the cursor is kept (the platform's by default). */
+  store?: MailCursorStore;
 }
 
 /** How one {@link MailWatcher.checkOnce} ended (the iOS background refresh reports it to the system). */
@@ -197,15 +242,24 @@ function readyAccount(session: Pick<MailSession, 'state'>): string | null {
   return state.kind === 'ready' ? state.account.address : null;
 }
 
+/** One run's connection, and whether {@link MailWatcher.stop} closed it. */
+interface RunChannel {
+  soap: Pick<MailSoap, 'call' | 'close'>;
+  closed: boolean;
+}
+
 export class MailWatcher {
   private run: AbortController | null = null;
-  /** The run's own connection, closed by {@link stop} to end a wait in flight. */
-  private channel: Pick<MailSoap, 'call' | 'close'> | null = null;
+  /** The run's own connection, closed by {@link stop} to end a wait or a read in flight. */
+  private channel: RunChannel | null = null;
   private running: Promise<void> | null = null;
   /** The delta in flight: the loop and a background check never read and write the cursor at once. */
   private delta: Promise<unknown> = Promise.resolve();
+  private readonly store: MailCursorStore;
 
-  constructor(private readonly deps: MailWatcherDeps) {}
+  constructor(private readonly deps: MailWatcherDeps) {
+    this.store = deps.store ?? platformCursorStore();
+  }
 
   /** Whether a run is going on. */
   get active(): boolean {
@@ -216,19 +270,25 @@ export class MailWatcher {
   start(): void {
     if (this.run) return;
     const run = new AbortController();
-    const channel = this.deps.openWaitChannel();
+    const channel: RunChannel = { soap: this.deps.openWaitChannel(), closed: false };
     this.run = run;
     this.channel = channel;
     Log.i('MAIL-WATCH', 'watching for new mail');
-    this.running = this.loop(run.signal, channel).finally(() => {
+    const settle = (ended: string) => {
       if (this.run === run) {
         this.run = null;
         this.channel = null;
       }
+      if (!run.signal.aborted) this.deps.onRunEnded?.(ended);
+    };
+    this.running = this.loop(run.signal, channel).then(settle, (err: unknown) => {
+      // The loop catches every failure it can classify; reaching here is a defect, said as one.
+      Log.w('MAIL-WATCH', `ERROR: the run ended on an unexpected throw (${String(err)})`);
+      settle('an unexpected throw');
     });
   }
 
-  /** Ends the run (closing its connection ends a wait in flight) and waits until it has. */
+  /** Ends the run (closing its connection ends a wait or a read in flight) and waits until it has. */
   async stop(reason: string): Promise<void> {
     const run = this.run;
     if (!run) return;
@@ -237,8 +297,10 @@ export class MailWatcher {
     this.run = null;
     this.channel = null;
     run.abort();
-    // A wait blocks on the server for up to a minute: closing its connection ends it now.
-    channel?.close();
+    if (channel) {
+      channel.closed = true;
+      channel.soap.close();
+    }
     await this.running;
   }
 
@@ -253,7 +315,7 @@ export class MailWatcher {
       return 'not_ready';
     }
     try {
-      await this.readAndNotify(account);
+      await this.readAndNotify((body) => this.deps.session.call(body), account);
       return 'done';
     } catch (err) {
       const failure = classifyMailFailure(err);
@@ -262,79 +324,86 @@ export class MailWatcher {
     }
   }
 
-  /** The delta, then its notifications - one at a time (see {@link delta}). */
-  private readAndNotify(account: string): Promise<void> {
+  /**
+   * The delta, then its notifications - one at a time (see {@link delta}). Nothing is written or
+   * notified once the session's generation moved, or its mailbox changed, since the read began.
+   */
+  private readAndNotify(call: MailCall, account: string): Promise<void> {
+    const { session } = this.deps;
+    const generation = session.generation;
+    const current = () => session.generation === generation && readyAccount(session) === account;
     const next = this.delta.then(async () => {
-      const read = await readNewInboxMail(
-        this.deps.api,
-        this.deps.userId,
-        account,
-        this.deps.store
-      );
-      if (read.fresh.length > 0) await this.deps.notify(read.fresh);
+      const read = await readNewInboxMail(call, this.deps.userId, account, this.store, current);
+      if (read.fresh.length === 0) return;
+      if (!current()) {
+        Log.i('MAIL-WATCH', 'the session moved after the read - nothing notified');
+        return;
+      }
+      await this.deps.notify(read.fresh);
     });
     this.delta = next.catch(() => undefined);
     return next;
   }
 
-  private async loop(
-    signal: AbortSignal,
-    channel: Pick<MailSoap, 'call' | 'close'>
-  ): Promise<void> {
+  /** One run; resolves with why it ended. */
+  private async loop(signal: AbortSignal, channel: RunChannel): Promise<string> {
     const { session } = this.deps;
+    const call: MailCall = (body) => session.callOver(channel.soap, body);
     let handle: WaitSetHandle | null = null;
     let readDelta = true;
     let failures = 0;
+    // Whether a wait on the CURRENT wait set has blocked and answered normally: a wait set lost or
+    // cancelled before that is a failure of the ladder, never a free re-creation (a server that
+    // cancels every new wait set would otherwise be asked again with no bound on the rate).
+    let healthy = false;
     try {
       while (!signal.aborted) {
         const account = readyAccount(session);
         if (!account) {
           Log.i('MAIL-WATCH', `the mailbox is ${session.state.kind} - the run ends`);
-          return;
+          return `the mailbox is ${session.state.kind}`;
         }
         try {
           if (!handle) {
-            handle = parseCreatedWaitSet(
-              await session.callOver(channel, createWaitSetRequest(account))
-            );
+            handle = parseCreatedWaitSet(await call(createWaitSetRequest(account)));
+            healthy = false;
             Log.d('MAIL-WATCH', 'wait set created');
             readDelta = true;
           }
           if (readDelta) {
-            await this.readAndNotify(account);
+            await this.readAndNotify(call, account);
             readDelta = false;
           }
-          if (signal.aborted) return;
+          if (signal.aborted) break;
           const answer = parseWaitSetAnswer(
-            await session.callOver(
-              channel,
-              waitSetRequest(handle.waitSet, handle.seq, WAIT_TIMEOUT_SECONDS)
-            )
+            await call(waitSetRequest(handle.waitSet, handle.seq, WAIT_TIMEOUT_SECONDS))
           );
-          if (signal.aborted) return;
-          failures = 0;
+          if (signal.aborted) break;
           if (answer.canceled) {
-            Log.i('MAIL-WATCH', 'the server cancelled the wait set - another is created');
             handle = null;
+            failures = await this.lostWaitSet('cancelled by the server', healthy, failures, signal);
+            readDelta = true;
             continue;
           }
+          failures = 0;
+          healthy = true;
           handle = { waitSet: handle.waitSet, seq: answer.seq };
           if (answer.changed) {
             Log.d('MAIL-WATCH', 'the mailbox changed - reading the delta');
             readDelta = true;
           }
         } catch (err) {
-          if (signal.aborted) return;
+          if (signal.aborted) break;
           const failure = classifyMailFailure(err);
           if (failure.kind === 'wait_lost') {
-            // The server's own answer that the wait set is gone: another, at once - a proof, not a guess.
-            Log.i('MAIL-WATCH', 'the wait set lapsed on the server - another is created');
             handle = null;
+            failures = await this.lostWaitSet('lapsed on the server', healthy, failures, signal);
+            readDelta = true;
             continue;
           }
           if (ENDS_THE_RUN.has(failure.kind)) {
             Log.i('MAIL-WATCH', `the run ends: ${failure.kind} (${failure.code})`);
-            return;
+            return `${failure.kind} (${failure.code})`;
           }
           failures++;
           // The delta is read again after any failure: the wait set may have lapsed meanwhile.
@@ -347,27 +416,56 @@ export class MailWatcher {
           await this.deps.pause(delay, signal);
         }
       }
+      return 'stopped';
     } finally {
       await this.release(channel, handle);
     }
   }
 
-  /** Releases the wait set on the server while the session still can, then closes the connection. */
-  private async release(
-    channel: Pick<MailSoap, 'call' | 'close'>,
-    handle: WaitSetHandle | null
-  ): Promise<void> {
+  /**
+   * A wait set the server dropped (`wait_lost`, or `canceled`): another at once when the last one
+   * had blocked normally - the server's own answer, a proof - or after the ladder's next rung when it
+   * had not. Returns the failure count to carry on with.
+   */
+  private async lostWaitSet(
+    why: string,
+    healthy: boolean,
+    failures: number,
+    signal: AbortSignal
+  ): Promise<number> {
+    if (healthy) {
+      Log.i('MAIL-WATCH', `the wait set was ${why} - another is created`);
+      return failures;
+    }
+    const count = failures + 1;
+    const delay = retryDelayMs(count);
+    Log.w(
+      'MAIL-WATCH',
+      `the wait set was ${why} before any wait blocked - retry ${count} in at most ${delay} ms`
+    );
+    await this.deps.pause(delay, signal);
+    return count;
+  }
+
+  /**
+   * Releases the wait set on the server while the session still can, then closes the connection. A
+   * connection {@link stop} closed cannot carry it: a spare one does, closed after.
+   */
+  private async release(channel: RunChannel, handle: WaitSetHandle | null): Promise<void> {
     if (!handle || !readyAccount(this.deps.session)) {
-      channel.close();
+      channel.soap.close();
       return;
     }
+    const via = channel.closed ? this.deps.openWaitChannel() : channel.soap;
     try {
-      await this.deps.session.callOver(channel, destroyWaitSetRequest(handle.waitSet));
+      await this.deps.session.callOver(via, destroyWaitSetRequest(handle.waitSet));
+      Log.d('MAIL-WATCH', 'wait set released');
     } catch (err) {
       // It lapses on the server by itself; the line says it was not released.
       Log.d('MAIL-WATCH', `the wait set was not released (${classifyMailFailure(err).kind})`);
     } finally {
-      channel.close();
+      via.close();
+      channel.soap.close();
     }
   }
 }

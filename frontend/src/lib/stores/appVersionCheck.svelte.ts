@@ -158,6 +158,15 @@ export function serverMailMode(): MailMode {
 }
 
 /**
+ * Whether {@link serverMailMode} is a READ fact (an `/api/version` answer arrived this session) rather
+ * than its default. A decision that would undo something on `off` waits for this (mail lot 4: the
+ * iOS background refresh flag is never cleared on a default).
+ */
+export function serverMailModeKnown(): boolean {
+  return lastCheck !== null;
+}
+
+/**
  * The retention durations the server applies to new content, with WHEN they were read: the last LIVE
  * `/api/version` answer of this process (`live: true`), else the one this session read earlier
  * (`live: false` - the privacy page then shows "valeurs du <date>" rather than presenting it as

@@ -72,6 +72,13 @@ export interface SearchOptions {
    * Zimbra hands ids out in increasing order, so a page in that order is ITS proof of where to stop.
    */
   sortBy?: 'dateDesc' | 'idDesc';
+  /**
+   * Pages AFTER this item, in the order above (Zimbra's `cursor`), instead of by `offset`: the
+   * new-mail watcher reads by id from the last id it saw, so a mail arriving or leaving mid-read never
+   * shifts a page (measured on Partage 2026-11-28: the page after the cursor starts right below it,
+   * never overlaps the one before).
+   */
+  after?: string;
 }
 
 /**
@@ -127,6 +134,9 @@ export function searchRequest(types: 'conversation' | 'message', options: Search
       sortBy: options.sortBy ?? 'dateDesc',
       offset: options.offset,
       limit: options.limit,
+      ...(options.after !== undefined
+        ? { cursor: { id: options.after, sortVal: options.after } }
+        : {}),
     },
   };
 }

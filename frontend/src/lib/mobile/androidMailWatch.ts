@@ -9,11 +9,14 @@ import { Log } from '$lib/utils/Log';
  * "Notifications de nouveaux mails" switch is on and its mailbox open, `MailWatchService.kt` holds one,
  * with the persistent notification Android requires (the Thunderbird / K-9 model, owner 2026-11-27).
  *
- * The bridge is `window.canariMail` (`MailWatchBridge.kt`, registered by `MainActivity`):
- * - `start(json)` - enter the foreground, `json` the persistent notification's Paraglide text;
- * - `stop(reason)` - leave it;
- * - `notify(json)` - post ONE new-mail notification natively: its tap is a deep link
- *   (`fr.emse.canari://mail/<conversation>`), which the plugin's notifications cannot carry.
+ * The bridge is `window.canariMail` (`MailWatchBridge.kt`), a WEB MESSAGE LISTENER rather than a
+ * JavaScript interface: Android delivers a message only from the app's own origin in the TOP frame,
+ * so no frame inside the page (a mail's sandbox) can drive it. Each message is one JSON `op`:
+ * - `start` - enter the foreground, with the persistent notification's Paraglide text;
+ * - `stop` - leave it (always sent: the native side ignores a stop with nothing held);
+ * - `notify` - post ONE new-mail notification natively: its tap is a deep link
+ *   (`fr.emse.canari://mail/<conversation>`), which the plugin's notifications cannot carry;
+ * - `summary` - post the ONE notice that stands for a flood of new mails.
  *
  * Outcomes come back as ONE DOM event, {@link NATIVE_MAIL_EVENT}: `started`, `failed` (with a
  * `code`: `off-screen` when Android refused to start it from the background - the next return on
@@ -43,50 +46,65 @@ export interface AndroidMailNotice {
   link: string;
 }
 
-/** What `MainActivity` registers as `window.canariMail`. */
+/** One new-mail summary (more than `MAX_SINGLE_NOTICES` at once). Mirrors `MailSummary.kt`. */
+export interface AndroidMailSummary {
+  count: number;
+  title: string;
+  body: string;
+  publicTitle: string;
+  link: string;
+}
+
+/** What `MainActivity` registers as `window.canariMail`: a web message port, one JSON op each. */
 interface CanariMailBridge {
-  start(json: string): void;
-  stop(reason: string): void;
-  notify(json: string): void;
+  postMessage(message: string): void;
 }
 
 /** The bridge, or `null` off Android (or in a build that registers none). */
 export function androidMailBridge(): CanariMailBridge | null {
   if (typeof window === 'undefined') return null;
   const bridge = (window as unknown as { canariMail?: CanariMailBridge }).canariMail;
-  return bridge ?? null;
+  return bridge && typeof bridge.postMessage === 'function' ? bridge : null;
+}
+
+/** Sends one op; `false` when there is no bridge. */
+function send(op: string, payload: Record<string, unknown>): boolean {
+  const bridge = androidMailBridge();
+  if (!bridge) return false;
+  bridge.postMessage(JSON.stringify({ op, ...payload }));
+  return true;
 }
 
 /** Asks the service to hold the foreground. `false` when there is no bridge (said at error level). */
 export function startAndroidMailService(spec: MailWatchSpec): boolean {
-  const bridge = androidMailBridge();
-  if (!bridge) {
-    Log.w(
-      'MAIL-WATCH',
-      'ERROR: no window.canariMail on Android - the watch cannot survive the background'
-    );
-    return false;
-  }
   Log.i('MAIL-WATCH', 'asking the mail watch service to start');
-  bridge.start(JSON.stringify(spec));
-  return true;
+  if (send('start', { title: spec.title, text: spec.text })) return true;
+  Log.w(
+    'MAIL-WATCH',
+    'ERROR: no window.canariMail on Android - the watch cannot survive the background'
+  );
+  return false;
 }
 
-/** Asks the service to leave the foreground. Idempotent on the native side. */
+/** Asks the service to leave the foreground. ALWAYS sent; idempotent on the native side. */
 export function stopAndroidMailService(reason: string): void {
-  const bridge = androidMailBridge();
-  if (!bridge) return;
   Log.i('MAIL-WATCH', `asking the mail watch service to stop (${reason})`);
-  bridge.stop(reason);
+  if (!send('stop', { reason })) Log.d('MAIL-WATCH', 'no window.canariMail - nothing to stop');
 }
 
 /** Posts one notice natively. `false` when there is no bridge. */
 export function postAndroidMailNotice(notice: AndroidMailNotice): boolean {
-  const bridge = androidMailBridge();
-  if (!bridge) {
-    Log.w('MAIL-WATCH', `ERROR: no window.canariMail - item ${notice.itemId} not notified`);
-    return false;
-  }
-  bridge.notify(JSON.stringify(notice));
-  return true;
+  if (send('notify', { ...notice })) return true;
+  Log.w('MAIL-WATCH', `ERROR: no window.canariMail - item ${notice.itemId} not notified`);
+  return false;
+}
+
+/** Posts the summary of a flood natively. `false` when there is no bridge. */
+export function postAndroidMailSummary(summary: AndroidMailSummary): boolean {
+  if (send('summary', { ...summary })) return true;
+  Log.w(
+    'MAIL-WATCH',
+    `ERROR: no window.canariMail - the summary of ${summary.count} mails not posted`
+  );
+  return false;
 }

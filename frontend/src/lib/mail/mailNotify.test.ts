@@ -30,7 +30,7 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
   sendNotification: vi.fn(),
 }));
 
-import { mailNotice, postMailNotices } from './mailNotify';
+import { MAX_SINGLE_NOTICES, mailNotice, postMailNotices } from './mailNotify';
 import type { NewMail } from './mailWatcher';
 
 /**
@@ -97,16 +97,13 @@ describe('postMailNotices', () => {
   it('on Android, hands each notice to the native builder - never the plugin', async () => {
     runtime.android = true;
     runtime.tauri = true;
-    const notify = vi.fn();
-    (window as unknown as { canariMail: unknown }).canariMail = {
-      start: vi.fn(),
-      stop: vi.fn(),
-      notify,
-    };
+    const postMessage = vi.fn();
+    (window as unknown as { canariMail: unknown }).canariMail = { postMessage };
     const plugin = await import('@tauri-apps/plugin-notification');
     await postMailNotices([mail(), mail({ id: '11516', conversationId: '-11516' })]);
-    expect(notify).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(notify.mock.calls[0][0])).toEqual({
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
+      op: 'notify',
       itemId: 11515,
       title: 'La Prof',
       body: 'Examen de jeudi',
@@ -114,6 +111,46 @@ describe('postMailNotices', () => {
       link: 'fr.emse.canari://mail/-11515',
     });
     expect(plugin.sendNotification).not.toHaveBeenCalled();
+  });
+
+  it(`beyond ${MAX_SINGLE_NOTICES} mails, ONE summary says how many and opens the inbox`, async () => {
+    const flood = Array.from({ length: MAX_SINGLE_NOTICES + 1 }, (_, i) =>
+      mail({ id: String(200 + i), conversationId: `-${200 + i}` })
+    );
+    await postMailNotices(flood);
+    const raised = builder.raised as Raised[];
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toMatchObject({
+      tag: 'canari-mail-summary',
+      title: `${MAX_SINGLE_NOTICES + 1} nouveaux mails`,
+      body: 'Dans ta boîte de réception',
+    });
+    raised[0].open();
+    expect(nav.goto).toHaveBeenCalledWith(expect.stringMatching(/(^|\/)mail$/));
+    // Exactly the cap is still one notice each.
+    builder.raised = [];
+    await postMailNotices(flood.slice(0, MAX_SINGLE_NOTICES));
+    expect(builder.raised).toHaveLength(MAX_SINGLE_NOTICES);
+  });
+
+  it('on Android, the summary goes to the native builder as one op', async () => {
+    runtime.android = true;
+    runtime.tauri = true;
+    const postMessage = vi.fn();
+    (window as unknown as { canariMail: unknown }).canariMail = { postMessage };
+    const flood = Array.from({ length: MAX_SINGLE_NOTICES + 2 }, (_, i) =>
+      mail({ id: String(300 + i) })
+    );
+    await postMailNotices(flood);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
+      op: 'summary',
+      count: MAX_SINGLE_NOTICES + 2,
+      title: `${MAX_SINGLE_NOTICES + 2} nouveaux mails`,
+      body: 'Dans ta boîte de réception',
+      publicTitle: 'Nouveau mail',
+      link: 'fr.emse.canari://mail',
+    });
   });
 
   it('elsewhere, the ONE banner builder raises it, keyed by the message, and a tap opens its thread', async () => {
