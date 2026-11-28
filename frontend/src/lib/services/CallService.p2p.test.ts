@@ -611,6 +611,7 @@ const fakeMls = {
   whenGroupFrameApplied: vi.fn(() => callGroup.frame.promise),
   whenGroupDrained: vi.fn(() => new Promise<void>(() => {})),
   isGroupDrained: vi.fn(() => false),
+  fetchPendingMessages: vi.fn(async (_groups?: readonly string[]) => {}),
   // The conversation's MLS tree: this device is alice's; bob and carol are the other members.
   getGroupMemberIdentities: vi.fn(async () => ['alice:device-1', 'bob:device-b', 'carol:device-c']),
   // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
@@ -5451,7 +5452,7 @@ describe('an answer on the native ring, no invite ever delivered', () => {
   beforeEach(async () => {
     callGroup = { local: 0, server: 1, frame: Promise.withResolvers<void>() };
     const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
-    setMlsReady(true);
+    setMlsReady(true, fakeMls);
   });
 
   afterEach(async () => {
@@ -5461,6 +5462,9 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     gate.setPendingCallAcceptHandler(null);
     const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
     setMlsReady(false);
+    vi.mocked(fakeMls.isGroupDrained).mockReturnValue(false);
+    const { setCallGroupRepair } = await import('$lib/composables/session/callGroupRepair');
+    setCallGroupRepair(null);
   });
 
   async function answeredOnTheRing(service: CallService) {
@@ -5587,6 +5591,96 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     await settle();
 
     expect(sentCallFrames().filter((c) => c.hangup)).toHaveLength(1);
+  });
+
+  it('a hangup from someone other than the caller drops nothing: our notice still tells them', async () => {
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    await answeredOnTheRing(service);
+    await settle();
+    service.endCall();
+    await settle();
+
+    await service.handleCallSignal(
+      'carol@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true, deviceId: 'device-c' },
+      'me@example.org',
+      'device-1'
+    );
+    applyCallGroupFrame(1);
+    await settle();
+
+    expect(sentCallFrames().filter((c) => c.hangup)).toHaveLength(1);
+    expect((await logLines()).some((l) => l.includes('ends nothing for everyone'))).toBe(true);
+  });
+
+  it('P1 - the invite of a call hung up during the wait never rings again (no ghost ring)', async () => {
+    const service = new CallService(fakeMls);
+    await answeredOnTheRing(service);
+    await settle();
+    service.endCall();
+    await settle();
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { callId: 'room-1', offerSdp: 'START', ringTimeoutMs: 60_000, deviceId: 'device-peer' },
+      'me@example.org',
+      'device-1'
+    );
+    await settle();
+
+    expect(get(service.callState)).not.toBe('incoming');
+    expect(
+      (await logLines()).some((l) => l.includes('not rung - this device already ended that call'))
+    ).toBe(true);
+  });
+
+  it('a group proven STUCK fails the call visibly: a toast, the repair asked, nothing sent in it', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const { setCallGroupRepair } = await import('$lib/composables/session/callGroupRepair');
+    const repair = vi.fn();
+    setCallGroupRepair(repair);
+    // Drained at 0 while the server holds 1, and the pull the wait asks for changes nothing.
+    vi.mocked(fakeMls.isGroupDrained).mockReturnValue(true);
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    order.length = 0;
+    await answeredOnTheRing(service);
+    await settle();
+
+    expect(fakeMls.fetchPendingMessages).toHaveBeenCalledWith(['group-1']);
+    expect(showToast).toHaveBeenCalledWith(m.call_group_stuck(), 'error');
+    expect(repair).toHaveBeenCalledWith('group-1');
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(order).toContain('api:/api/calls/ring-end');
+    expect(get(service.callState)).not.toBe('incall');
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(
+      (await logLines()).some(
+        (l) => l.includes('ERROR call=room-1 not joined') && l.includes('local=0 server=1')
+      )
+    ).toBe(true);
+  });
+
+  it('P3 - an answer on a client MLS is not ready on is handed back to the session once, never looped', async () => {
+    const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
+    setMlsReady(true, { another: 'client' });
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    await answeredOnTheRing(service);
+    await settle();
+
+    const lines = await logLines();
+    expect(lines.some((l) => l.includes("handed back to the session's call service"))).toBe(true);
+    expect(lines.some((l) => l.includes('already handed back once - set aside'))).toBe(true);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('idle');
   });
 
   it('the session ending under the wait is no failure: no toast, nothing sent', async () => {

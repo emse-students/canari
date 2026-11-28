@@ -16,21 +16,30 @@
  * - A local epoch ABOVE the server's proves nothing (a commit of ours staged and not accepted, an
  *   external rejoin whose commit is still in flight): said at WARN, and the server's epoch is read
  *   again on the next event.
- * - "Drained" is NOT a proof - applied is not current: it is an EVENT on which the epoch is read
- *   again. A drained group still below the server is a contradiction, said at WARN, and waited on.
- *   The one exception is a server that answers WITHOUT an epoch (a build predating the field): then
- *   a held group drained on this link is the only fact there is, and it is accepted, said.
- * - A server epoch that cannot be READ (no answer, an error) is said ONCE at WARN with its cause, and
- *   read again on the next pull or connection event - never on a timer. The wait goes on until the
- *   epoch is reached or the call ends (the user hangs up; the room token's `410` ends it once the
- *   ring window has closed).
+ * - "Drained" is NOT a proof - applied is not current. The one exception is a server that answers
+ *   WITHOUT an epoch (a build predating the field): then a held group drained on this link is the
+ *   only fact there is, and it is accepted, said.
+ *
+ * WHEN THE FACTS DISAGREE AND NOTHING IS COMING, THE WAIT ASKS: the server's epoch unreadable, or
+ * the group drained at an epoch other than the server's, ISSUES a pull for the group
+ * (`fetchPendingMessages`) and reads everything again at its end. One pull per state of the facts:
+ * a state that held across a complete pull this wait asked for is an ANSWER, not a wait -
+ * {@link CallGroupStuckError}, below the server (or not held at all), or the server's epoch still
+ * unreadable. A state ahead of the server waits for its commit to settle, which wakes the wait.
  *
  * THE EVENTS the facts are re-read on, each a waiter REMOVED when the wait moves on or stops: a
- * frame of the group applied (`whenGroupFrameApplied`), a pull ending (`whenGroupDrained`, which
- * resolves or ends incomplete), a connection's catch-up ending (`whenNextCatchUp`). No clock.
+ * frame of the group applied or a commit of it settled (`whenGroupFrameApplied`), a pull ending
+ * (`whenGroupDrained`, which resolves or ends incomplete), a connection's catch-up ending
+ * (`whenNextCatchUp`), and the end of a pull the wait issued. No clock.
  *
- * A GROUP BEHIND IS SERVED FIRST: while the wait runs the group leads the drain
- * (`IMlsService.leadGroup`). The lead ends with the wait, whichever way it ends.
+ * THE WAYS OUT, and only these: the proof; {@link CallGroupStuckError} (the call fails, visibly);
+ * {@link CallGroupWait.stop} (the user hung up, or the caller's hangup ended the call); the session
+ * ending (a sign-out, an account switch, the client destroyed or replaced).
+ *
+ * NOTHING IS READ BEFORE MLS IS UP, and then on the client MLS is up ON: a wait whose client is not
+ * the session's (`clientIsCurrent`) ends as {@link CallGroupClientReplacedError}. A group behind is
+ * served first: from then on the group LEADS the drain (`IMlsService.leadGroup`); the lead ends with
+ * the wait, whichever way it ends, or earlier ({@link CallGroupWait.releaseLead}).
  */
 import { GroupDrainAbandonedError, type IMlsService } from '$lib/mls-client';
 import { MlsSessionEndedError } from '$lib/composables/session/mlsReadiness';
@@ -51,6 +60,43 @@ export class CallGroupSessionEndedError extends Error {
   }
 }
 
+/**
+ * The wait was built on a client the session no longer uses: MLS came up on ANOTHER client (a
+ * login replaced the one captured at mount). A session end for this wait; its answer belongs to the
+ * session's own call service.
+ */
+export class CallGroupClientReplacedError extends CallGroupSessionEndedError {
+  constructor(groupId: string) {
+    super(
+      groupId,
+      new Error('MLS is ready on another client than the one the call was answered on')
+    );
+    this.name = 'CallGroupClientReplacedError';
+  }
+}
+
+/**
+ * THE GROUP CANNOT BE PROVEN CURRENT, AND THAT IS AN ANSWER: a complete pull this wait asked for
+ * ended and the facts did not move - the group drained below the server's epoch (or not held at
+ * all), or the server's epoch still unreadable. The call fails, visibly, and the group's repair is
+ * asked for.
+ */
+export class CallGroupStuckError extends Error {
+  constructor(
+    readonly groupId: string,
+    /** This device's epoch for the group, `null` when it does not hold it. */
+    readonly localEpoch: number | null,
+    /** The server's epoch, `null` when it could not be read. */
+    readonly serverEpoch: number | null,
+    readonly why: string
+  ) {
+    super(
+      `group ${groupId.slice(0, 8)} cannot be proven current: ${why} (local=${localEpoch ?? 'none'} server=${serverEpoch ?? 'unread'})`
+    );
+    this.name = 'CallGroupStuckError';
+  }
+}
+
 /** What the wait reads; injected so the ordering is tested without a client. */
 export interface CallGroupCurrentDeps {
   mls: Pick<
@@ -62,9 +108,12 @@ export interface CallGroupCurrentDeps {
     | 'whenGroupDrained'
     | 'isGroupDrained'
     | 'leadGroup'
+    | 'fetchPendingMessages'
   >;
   /** Resolves once MLS is initialised for the session (`mlsReadiness.ts`). */
   whenMlsReady(signal?: AbortSignal): Promise<void>;
+  /** Whether {@link mls} is the client MLS is ready on - read once, when it is. */
+  clientIsCurrent(): boolean;
   /** Resolves at the next end of a connection's catch-up (`pendingCallAccept.ts`). */
   whenNextCatchUp(signal?: AbortSignal): Promise<void>;
   log(line: string): void;
@@ -76,7 +125,8 @@ export interface CallGroupWait {
   readonly mlsReady: Promise<void>;
   /**
    * Resolves with the proof. Rejects with {@link CallSetupAbandonedError} when {@link stop} came
-   * first, and with {@link CallGroupSessionEndedError} when the session ended under it.
+   * first, {@link CallGroupStuckError} when the group cannot be proven current, and
+   * {@link CallGroupSessionEndedError} when the session ended under it.
    */
   readonly proof: Promise<CallGroupProof>;
   /** Whether {@link proof} has settled, either way. */
@@ -116,12 +166,13 @@ export function waitForCallGroupCurrent(
   const startedAt = performance.now();
   const since = () => Math.round(performance.now() - startedAt);
   log(`[Call] keys of call=${callId} wait for its group ${short} to be current`);
-  const releaseGroupLead = mls.leadGroup(groupId);
-  let leading = true;
+  /** The lead's release once taken; `undefined` before, `null` once given up (never taken again). */
+  let releaseGroupLead: (() => void) | null | undefined;
   const releaseLead = () => {
-    if (!leading) return;
-    leading = false;
-    releaseGroupLead();
+    const release = releaseGroupLead;
+    releaseGroupLead = null;
+    if (!release) return;
+    release();
     log(`[Call] group ${short} no longer leads the drain`);
   };
   /** Aborted by {@link stop}: every waiter of the wait is removed with it. */
@@ -131,6 +182,9 @@ export function waitForCallGroupCurrent(
     if (stopped.signal.aborted) return;
     releaseLead();
     stopped.abort(new CallSetupAbandonedError(`waiting for group ${short}`));
+  };
+  const throwIfStopped = () => {
+    if (stopped.signal.aborted) throw stopped.signal.reason;
   };
 
   const mlsReady = deps.whenMlsReady(stopped.signal);
@@ -143,7 +197,8 @@ export function waitForCallGroupCurrent(
     const signal = round.signal;
     const onStop = () => round.abort(stopped.signal.reason);
     stopped.signal.addEventListener('abort', onStop, { once: true });
-    // An incomplete listing is a pull event like a complete one: the epoch is what decides.
+    // An incomplete listing is a pull event like a complete one: the facts are what decide. A
+    // drained group waits for no pull here - the loop issues one when the facts call for it.
     const pull = mls.isGroupDrained(groupId)
       ? new Promise<never>(() => {})
       : mls.whenGroupDrained(groupId, signal).then(
@@ -165,22 +220,40 @@ export function waitForCallGroupCurrent(
     }
   };
 
+  /** Issues a pull for the group and waits for ITS end - the one event a stuck state lacks. */
+  const pullAndWait = async (why: string): Promise<void> => {
+    log(`[Call] group ${short}: ${why} - a pull is asked for it, and its end read`);
+    try {
+      await mls.fetchPendingMessages([groupId]);
+    } catch (e: unknown) {
+      if (sessionEnded(e)) throw e;
+      log(`[Call] WARN group ${short}: the pull asked for it failed: ${String(e)}`);
+    }
+    throwIfStopped();
+  };
+
   const run = async (): Promise<CallGroupProof> => {
     await mlsReady;
+    throwIfStopped();
+    if (!deps.clientIsCurrent()) throw new CallGroupClientReplacedError(groupId);
+    if (releaseGroupLead === undefined) releaseGroupLead = mls.leadGroup(groupId);
     /** The server's epoch: a number, `none` (it sent none), or `unread` (to read on a pull/connection). */
     let target: number | 'none' | 'unread' = 'unread';
+    let unreadCause = '';
     let readTarget = true;
     let unreadableSaid = false;
     let lastSaid: string | null = null;
-    let event: WaitEvent | null = null;
+    /** The state of the facts a pull THIS WAIT issued was asked for: one pull per state. */
+    let pulledFor: string | null = null;
     for (;;) {
-      if (stopped.signal.aborted) throw stopped.signal.reason;
+      throwIfStopped();
       if (readTarget) {
         readTarget = false;
         const status = await mls.getGroupServerStatus(groupId);
-        if (stopped.signal.aborted) throw stopped.signal.reason;
+        throwIfStopped();
         if (status === 'absent' || status === 'error') {
           target = 'unread';
+          unreadCause = status;
           if (!unreadableSaid) {
             unreadableSaid = true;
             log(
@@ -195,11 +268,12 @@ export function waitForCallGroupCurrent(
         }
       }
       const held = mls.getLocalGroups().includes(groupId);
+      const local = held ? mls.getEpoch(groupId) : null;
+      const drained = mls.isGroupDrained(groupId);
+      const state = `${local}/${target}`;
       if (typeof target === 'number') {
-        const local = held ? mls.getEpoch(groupId) : null;
-        const said = `${local}/${target}`;
-        if (said !== lastSaid) {
-          lastSaid = said;
+        if (state !== lastSaid) {
+          lastSaid = state;
           log(
             `[Call] group ${short} ${held ? `at epoch ${local}` : 'not held here'}, the server's is ${target}`
           );
@@ -210,17 +284,50 @@ export function waitForCallGroupCurrent(
           }
         }
         if (local === target) return 'epoch-reached';
-        if (local !== null && local > target) readTarget = true;
-        else if (event !== 'frame' && event !== 'catch-up' && mls.isGroupDrained(groupId)) {
-          log(
-            `[Call] WARN group ${short} drained at epoch ${local ?? 'none'} while the server holds ${target} - waiting for the commits that close the gap`
-          );
-        }
-      } else if (target === 'none' && held && mls.isGroupDrained(groupId)) {
+      } else if (target === 'none' && held && drained) {
         return 'drained-no-server-epoch';
       }
-      event = await nextEvent();
-      if (target === 'unread' && (event === 'pull' || event === 'catch-up')) readTarget = true;
+      const below = typeof target === 'number' && (local === null || local < target);
+      // A STATE THAT HELD ACROSS A COMPLETE PULL THIS WAIT ASKED FOR IS AN ANSWER.
+      if (pulledFor === state && drained) {
+        if (target === 'unread') {
+          throw new CallGroupStuckError(
+            groupId,
+            local,
+            null,
+            `the server's epoch is still unreadable (${unreadCause}) after a complete pull`
+          );
+        }
+        if (below) {
+          throw new CallGroupStuckError(
+            groupId,
+            local,
+            target as number,
+            held
+              ? 'drained below the server after a complete pull'
+              : 'not held after a complete pull'
+          );
+        }
+      }
+      if (
+        pulledFor !== state &&
+        (target === 'unread' || (typeof target === 'number' && drained && local !== target))
+      ) {
+        pulledFor = state;
+        await pullAndWait(
+          target === 'unread'
+            ? `the server's epoch is unread (${unreadCause})`
+            : `drained at epoch ${local ?? 'none'} while the server holds ${target}`
+        );
+        readTarget = true;
+        continue;
+      }
+      const event = await nextEvent();
+      // The server's epoch moves only with a commit: re-read on what can carry one - any event when
+      // ahead (our commit settling), a pull or a connection when it could not be read.
+      if (typeof target === 'number' && local !== null && local > target) readTarget = true;
+      else if (target === 'unread' && (event === 'pull' || event === 'catch-up')) readTarget = true;
+      else if (typeof target === 'number' && event !== 'frame') readTarget = true;
     }
   };
 
@@ -239,16 +346,26 @@ export function waitForCallGroupCurrent(
         log(`[Call] the wait for group ${short} stopped after ${since()} ms - the call ended`);
         throw e;
       }
+      if (e instanceof CallGroupSessionEndedError) {
+        log(`[Call] the wait for group ${short} ended after ${since()} ms: ${e.message}`);
+        throw e;
+      }
       if (sessionEnded(e)) {
         log(`[Call] the wait for group ${short} ended after ${since()} ms - the session ended`);
         throw new CallGroupSessionEndedError(groupId, e);
+      }
+      if (e instanceof CallGroupStuckError) {
+        log(`[Call] ERROR ${e.message}, after ${since()} ms`);
+        throw e;
       }
       log(`[Call] ERROR the wait for group ${short} failed after ${since()} ms: ${String(e)}`);
       throw e;
     }
   );
-  // The proof is awaited by the caller; `mlsReady` too, but only on paths that reach it.
+  // Both are awaited by the caller only on the paths that reach them: a wait stopped before MLS is
+  // up rejects both, and neither may surface as an unhandled rejection.
   mlsReady.catch(() => {});
+  proof.catch(() => {});
   return {
     mlsReady,
     proof,

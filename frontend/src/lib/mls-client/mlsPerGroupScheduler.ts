@@ -440,8 +440,9 @@ export class MlsPerGroupScheduler {
   }
 
   /**
-   * Resolves once the NEXT frame of `groupId` has been applied (its handler returned) - an
-   * EVENT for a caller re-reading a fact that only that group's frames can change, such as its
+   * Resolves once the NEXT frame of `groupId` has been applied (its handler returned), or the next
+   * commit of it run under the mutex has settled ({@link runCommitUnderMlsLock}) - an EVENT for a
+   * caller re-reading a fact that only that group's frames and commits can change, such as its
    * epoch. Never resolves on its own while nothing of the group arrives: pair it with a wait that
    * does ({@link waitUntilGroupIdle}, or the service's drained proof). Rejected with the abandon
    * reason once the owning client ended ({@link abandonGroupIdleWaiters}).
@@ -569,6 +570,9 @@ export class MlsPerGroupScheduler {
       return await fn();
     } finally {
       release();
+      // The commit SETTLED (merged or cleared): the group's state may have moved without a frame -
+      // our own accepted commit is merged here, never through the queue.
+      this.notifyGroupFrameApplied(groupId);
     }
   }
 

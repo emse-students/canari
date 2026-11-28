@@ -1,6 +1,7 @@
 import {
   MlsSessionEndedError,
   abandonMlsReadyWaiters,
+  mlsReadyClient,
   setMlsReady,
   whenMlsReady,
 } from './mlsReadiness';
@@ -31,5 +32,13 @@ describe('whenMlsReady', () => {
   it('resolves at once when MLS is up, whatever the signal', async () => {
     setMlsReady(true);
     await expect(whenMlsReady(new AbortController().signal)).resolves.toBeUndefined();
+  });
+
+  it('names the client it is ready on, and none once not ready', () => {
+    const client = { id: 'session client' };
+    setMlsReady(true, client);
+    expect(mlsReadyClient()).toBe(client);
+    setMlsReady(false);
+    expect(mlsReadyClient()).toBeNull();
   });
 });

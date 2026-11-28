@@ -602,6 +602,7 @@
   "call_e2e_verifying": "Vérification du chiffrement...",
   "call_e2e_bypassed": "Appel interrompu : le chiffrement de bout en bout n'a pas pu être appliqué à cet appel, rien de plus n'a été transmis.",
   "call_e2e_setup_failed": "Appel interrompu : le chiffrement de bout en bout n'a pas pu être mis en place, rien n'a été transmis en clair.",
+  "call_group_stuck": "Impossible de rejoindre l'appel : la conversation n'est pas à jour sur cet appareil. Elle est en cours de réparation.",
   "call_over": "Cet appel est terminé.",
   "call_busy": "Votre contact est déjà en appel.",
   "call_unavailable": "Cet appel ne peut pas être passé.",

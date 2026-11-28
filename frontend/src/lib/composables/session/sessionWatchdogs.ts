@@ -18,6 +18,7 @@ import { makeRecoveryDeps } from './sessionAuth';
 import { rejoinBehindDistributionGroup } from '$lib/utils/graine/distributionGroup';
 import { ChannelService } from '$lib/services/ChannelService';
 import { commitRateLimitRemainingMs } from '$lib/mls-client/commitRateLimit';
+import { setCallGroupRepair } from './callGroupRepair';
 
 /**
  * Timer-based safety net for a stuck epoch gap. The pipeline's own escalation is REACTIVE
@@ -163,6 +164,18 @@ function escalateStuckGap(
  */
 export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   if (ctx.timers.syncWatchdog !== null) clearInterval(ctx.timers.syncWatchdog);
+  // A CALL'S GROUP PROVEN STUCK takes the same ladders as a stuck gap: forget + re-add for a held
+  // group behind (`escalateStuckGap`), re-add for one this device does not hold.
+  setCallGroupRepair((groupId) => {
+    const deps = makeRecoveryDeps(ctx, cb);
+    if (deps.mlsService.getLocalGroups().includes(groupId)) {
+      escalateStuckGap(groupId, deps, cb.log);
+      return;
+    }
+    requestReAdd(groupId, deps).catch((e: unknown) =>
+      cb.log(`[Call] re-add of the call's group ${groupId.slice(0, 8)} failed: ${String(e)}`)
+    );
+  });
   // Per-start, not module-global: a re-start is a new session (or a reconnection), and it owes the
   // groups it inherits an immediate look rather than the tail of the previous run's sweep clock.
   let lastSweepAt = 0;

@@ -1791,8 +1791,9 @@ export interface IMlsService {
    */
   leadGroup(groupId: string): () => void;
   /**
-   * Resolves once the NEXT frame of `groupId` has been applied - the event at which a fact only that
-   * group's frames can change (its epoch) is worth reading again. AN EVENT, NEVER A POLL, and it
+   * Resolves once the NEXT frame of `groupId` has been applied, or the next commit of it settled
+   * (merged or cleared: our own accepted commit is merged outside the queue) - the event at which a
+   * fact only that group's frames and commits can change (its epoch) is worth reading again. AN EVENT, NEVER A POLL, and it
    * never resolves while nothing of the group arrives, so it is always raced with a wait that does.
    *
    * @throws {GroupDrainAbandonedError} (as a rejection) once the service is destroyed.

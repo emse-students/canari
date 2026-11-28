@@ -561,6 +561,7 @@
   "call_e2e_verifying": "Checking encryption...",
   "call_e2e_bypassed": "Call ended: end-to-end encryption could not be applied to this call, so nothing more was sent.",
   "call_e2e_setup_failed": "Call ended: end-to-end encryption could not be set up, so nothing was sent unencrypted.",
+  "call_group_stuck": "Could not join the call: this conversation is not up to date on this device. It is being repaired.",
   "call_over": "This call is over.",
   "call_busy": "Your contact is already in a call.",
   "call_unavailable": "This call cannot be placed.",

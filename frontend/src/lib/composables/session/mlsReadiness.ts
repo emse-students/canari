@@ -22,6 +22,8 @@ export class MlsSessionEndedError extends Error {
 }
 
 let ready = false;
+/** The client MLS was made ready ON ({@link setMlsReady}), or `null` while it is not ready. */
+let readyClient: unknown = null;
 let waiters: { resolve: () => void; reject: (error: Error) => void }[] = [];
 
 /**
@@ -47,13 +49,26 @@ export function whenMlsReady(signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Records whether MLS is up for the session. Called by the one writer of `isLoggedIn`. */
-export function setMlsReady(isReady: boolean): void {
+/**
+ * Records whether MLS is up for the session, and on which client. Called by the one writer of
+ * `isLoggedIn`, with the session's client when it flips to ready.
+ */
+export function setMlsReady(isReady: boolean, client: unknown = null): void {
   ready = isReady;
+  readyClient = isReady ? client : null;
   if (!isReady) return;
   const released = waiters;
   waiters = [];
   for (const waiter of released) waiter.resolve();
+}
+
+/**
+ * The client MLS is ready on, or `null`. A caller that captured a client BEFORE readiness (a call
+ * service built at mount, a login since replaced the client) compares it with this one: holding
+ * another is holding a client the session no longer uses.
+ */
+export function mlsReadyClient(): unknown {
+  return readyClient;
 }
 
 /**

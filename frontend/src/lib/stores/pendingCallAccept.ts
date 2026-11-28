@@ -156,6 +156,17 @@ export function setPendingCallAccept(intent: PendingCallAccept): void {
 }
 
 /**
+ * Gives back an intent a call service TOOK and cannot join on: it was built over a client the
+ * session replaced (`CallGroupClientReplacedError`), so the session's own call service must take it.
+ * Not a new answer - the intent is the one the native drain recorded, unchanged, so a link still
+ * answers nothing (`a link never answers a call`). Its caller hands an intent back at most once.
+ */
+export function handBackPendingCallAccept(intent: PendingCallAccept, why: string): void {
+  appendLog(`[CallAccept] accept of call=${intent.callId} handed back - ${why}`);
+  setPendingCallAccept(intent);
+}
+
+/**
  * Whether an answer from the native ring waits for `callId` - read, not taken. The in-app ring asks
  * before it restarts on the app's return: that return IS the answer's (`utils/callRing.ts`).
  */

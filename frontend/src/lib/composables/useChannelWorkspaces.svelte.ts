@@ -96,6 +96,7 @@ import {
 } from '$lib/utils/graine/salonSendGate';
 import { abandonMlsReadyWaiters, whenMlsReady } from '$lib/composables/session/mlsReadiness';
 import { abandonCatchUpWaiters } from '$lib/stores/pendingCallAccept';
+import { setCallGroupRepair } from '$lib/composables/session/callGroupRepair';
 import {
   readWorkspaceSnapshot,
   serializeWorkspaceSnapshot,
@@ -1566,6 +1567,8 @@ export function useChannelWorkspaces() {
     // A call's wait for its group re-reads on the next catch-up: never the next account's.
     const catchUps = abandonCatchUpWaiters('signed out');
     if (catchUps > 0) log(`[CallAccept] signed out: ${catchUps} catch-up wait(s) abandoned`);
+    // A call's stuck group found after this is not this account's to repair.
+    setCallGroupRepair(null);
     // A gesture this tab handed to the main tab belongs to the session that just ended: never run
     // for the next one (`tabCommitDelegation.ts`).
     const handedOver = abandonDelegatedCommits('signed out');

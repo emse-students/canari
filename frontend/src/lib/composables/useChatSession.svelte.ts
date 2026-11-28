@@ -230,7 +230,7 @@ export function useChatSession() {
     setIsLoggedIn: (v) => {
       isLoggedIn = v;
       // The one writer of the flag is the one writer of the awaitable form (`mlsReadiness.ts`).
-      setMlsReady(v);
+      setMlsReady(v, v ? mlsHolder.current() : null);
       publishDelegationReadiness();
     },
     isWsConnected: () => isWsConnected,
@@ -560,9 +560,10 @@ export function useChatSession() {
       callService?.retireFromPageRing();
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
-      // An answer given on the ring joins once the socket's catch-up is done, whichever of the two
-      // comes second (`pendingCallAccept.ts`; calls.md, "An answer from the ring joins on the
-      // ring's facts").
+      // An answer given on the ring is handed to this service as soon as both it and the service
+      // exist, whichever comes second: the call screen shows at once, and only its keys wait for the
+      // call's own group to be proven current (`pendingCallAccept.ts`, `callGroupCurrent.ts`;
+      // calls.md, "The answer joins on its own group").
       setPendingCallAcceptHandler((why) => callService?.answerFromSystemSurface(why));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */

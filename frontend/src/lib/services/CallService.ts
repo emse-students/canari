@@ -25,10 +25,22 @@ import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
-import { takePendingCallAccept, whenNextCatchUp } from '$lib/stores/pendingCallAccept';
-import { MlsSessionEndedError, whenMlsReady } from '$lib/composables/session/mlsReadiness';
 import {
+  handBackPendingCallAccept,
+  takePendingCallAccept,
+  whenNextCatchUp,
+  type PendingCallAccept,
+} from '$lib/stores/pendingCallAccept';
+import {
+  MlsSessionEndedError,
+  mlsReadyClient,
+  whenMlsReady,
+} from '$lib/composables/session/mlsReadiness';
+import { repairStuckCallGroup } from '$lib/composables/session/callGroupRepair';
+import {
+  CallGroupClientReplacedError,
   CallGroupSessionEndedError,
+  CallGroupStuckError,
   waitForCallGroupCurrent,
   type CallGroupWait,
 } from './callGroupCurrent';
@@ -431,9 +443,23 @@ export class CallService {
   private callGroupWait: CallGroupWait | null = null;
   /**
    * Hangup notices held behind their group's proof after their call ended here ({@link endCall}),
-   * by call id: each leaves at the proof, or is dropped by {@link dropHeldHangup}.
+   * by call id: each leaves at the proof, or is dropped by {@link dropHeldHangup}. `caller` and
+   * `group` say whose hangup ends that call for everyone.
    */
-  private readonly heldHangups = new Map<string, CallGroupWait>();
+  private readonly heldHangups = new Map<
+    string,
+    { wait: CallGroupWait; caller: string | null; group: boolean }
+  >();
+  /** The system-surface answer this service is joining ({@link answerFromSystemSurface}), if any. */
+  private systemAnswer: PendingCallAccept | null = null;
+  /** Answers handed back to the session's own call service once (a replaced client), by call id. */
+  private readonly answersHandedBack = new Set<string>();
+  /**
+   * Every call this service ended, for the session (`endCall`): an invite of one still queued
+   * behind its hangup - the ghost ring of an answer from the ring hung up during the wait - is
+   * never admitted again. Call ids are unique per call, so the set needs no clock.
+   */
+  private readonly endedCallIds = new Set<string>();
   /** The call screen shapes already timed for this call ({@link noteCallScreenShown}). */
   private screenShapesTimed = new Set<string>();
   /**
@@ -860,9 +886,7 @@ export class CallService {
     if (callMsg.hangup) {
       // The call's own end, from another device: a notice of ours still held for it says nothing
       // more to anyone.
-      if (signalDeviceId !== currentDeviceId) {
-        this.dropHeldHangup(callMsg.callId, `${senderId}'s hangup already ended the call`);
-      }
+      if (signalDeviceId !== currentDeviceId) this.dropHeldHangupOnEnd(senderNorm, callMsg);
       if (this.currentCallId === callMsg.callId) {
         if (group && !this.groupHangupEnds(senderNorm, callMsg)) return;
         // Remote origin. A device that was IN the 1:1 call writes its record from its own facts
@@ -918,6 +942,12 @@ export class CallService {
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
       if (senderNorm === userNorm) {
         appendLog('[Call] ignoring invite from own account on another device');
+        return;
+      }
+      // A CALL THIS DEVICE ALREADY ENDED never rings again: its invite still queued behind the
+      // answer (an answer from the ring, hung up while the group caught up) is history.
+      if (this.endedCallIds.has(callMsg.callId)) {
+        appendLog(`[Call] invite ${callMsg.callId} not rung - this device already ended that call`);
         return;
       }
       // The server's kill switch (`calls_mode`, B12): with calls closed the server refuses every
@@ -1031,6 +1061,7 @@ export class CallService {
     if (state === 'incoming' && this.currentCallId === intent.callId) {
       // The invite did reach this device (it was online when it left): the same call, answered.
       this.nativeTapAt = intent.acceptedAt;
+      this.systemAnswer = intent;
       void this.acceptCall(intent.groupId, intent.callId, undefined, { awaitCallGroup: true });
       return;
     }
@@ -1048,6 +1079,7 @@ export class CallService {
     this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
     this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
     this.nativeTapAt = intent.acceptedAt;
+    this.systemAnswer = intent;
     this.callState.set('incoming');
     this.ringStartAt = performance.now();
     appendLog(
@@ -1085,11 +1117,34 @@ export class CallService {
    * wait stops with it. A call with no held notice is a no-op.
    */
   private dropHeldHangup(callId: string, why: string): void {
-    const wait = this.heldHangups.get(callId);
-    if (!wait) return;
+    const held = this.heldHangups.get(callId);
+    if (!held) return;
     this.heldHangups.delete(callId);
     appendLog(`[Call] hangup notice of ${callId} dropped - ${why}`);
-    wait.stop();
+    held.wait.stop();
+  }
+
+  /**
+   * A hangup frame met a notice of ours still held for its call: dropped only when that frame
+   * ENDED the call for everyone - the 1:1 peer's hangup, or in a group call the caller's that ends
+   * the ring for all (`groupHangupEndsRecord`). Any other member leaving a group call ends nothing,
+   * and our notice still tells the others we left.
+   */
+  private dropHeldHangupOnEnd(senderNorm: string, callMsg: canari.ICallMsg): void {
+    const callId = callMsg.callId;
+    const held = callId ? this.heldHangups.get(callId) : undefined;
+    if (!callId || !held) return;
+    const fromCaller = held.caller !== null && senderNorm === held.caller;
+    const ends =
+      fromCaller &&
+      (!held.group || groupHangupEndsRecord(callEndReasonFromWire(callMsg.endReason)));
+    if (!ends) {
+      appendLog(
+        `[Call] hangup of ${callId} from ${senderNorm} ends nothing for everyone - our held notice stays`
+      );
+      return;
+    }
+    this.dropHeldHangup(callId, `${senderNorm}'s hangup already ended the call`);
   }
 
   /**
@@ -1522,7 +1577,15 @@ export class CallService {
         // ICE servers and the microphone wait only for MLS to be up for this session, so nothing
         // reaches the server or the hardware for a session that is not there (a cold start's PIN).
         const wait = waitForCallGroupCurrent(
-          { mls: this.mlsService, whenMlsReady, whenNextCatchUp, log: appendLog },
+          {
+            mls: this.mlsService,
+            whenMlsReady,
+            // The client MLS came up on must be this service's: a login may have replaced the one
+            // this service was built over at mount.
+            clientIsCurrent: () => mlsReadyClient() === this.mlsService,
+            whenNextCatchUp,
+            log: appendLog,
+          },
           groupId,
           callId
         );
@@ -1590,6 +1653,36 @@ export class CallService {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
       // and a step that failed BECAUSE it ended (its socket closed under it) is no failure to show.
       if (e instanceof CallSetupAbandonedError) return;
+      // THE GROUP CANNOT BE PROVEN CURRENT - an answer, not a wait: the call fails visibly, the
+      // group's repair is asked for, and nothing is sent in a group at an epoch nobody else holds
+      // (the server's ring-end still stops the rings).
+      if (e instanceof CallGroupStuckError) {
+        appendLog(`[Call] ERROR call=${callId} not joined - ${e.message}`);
+        repairStuckCallGroup(e.groupId);
+        if (!this.setupLive(seq)) return;
+        showToast(m.call_group_stuck(), 'error');
+        void this.endServerRing(groupId, callId, 'ended');
+        this.endCall(false, undefined, false, true);
+        return;
+      }
+      // ANSWERED ON A CLIENT THE SESSION NO LONGER USES: the answer is handed back, once, to the
+      // session's own call service (the one built over the client MLS came up on).
+      if (e instanceof CallGroupClientReplacedError) {
+        const answer = this.systemAnswer;
+        if (this.setupLive(seq)) this.cleanup();
+        if (answer && !this.answersHandedBack.has(answer.callId)) {
+          this.answersHandedBack.add(answer.callId);
+          appendLog(
+            `[Call] call=${callId} answered on a replaced client - handed back to the session's call service`
+          );
+          handBackPendingCallAccept(answer, 'answered on a replaced client');
+        } else {
+          appendLog(
+            `[Call] ERROR call=${callId} answered on a replaced client, already handed back once - set aside`
+          );
+        }
+        return;
+      }
       // THE SESSION ENDED UNDER THE WAIT (a sign-out, an account switch): no failure to show, and
       // nothing sent through a client that is gone - the screen simply closes.
       if (e instanceof CallGroupSessionEndedError || e instanceof MlsSessionEndedError) {
@@ -1659,6 +1752,7 @@ export class CallService {
     // and the relay's `PeerLeft`), and a second pass would write a second "call ended" message.
     const state = get(this.callState);
     if (state === 'idle' || state === 'ended') return;
+    if (callId) this.endedCallIds.add(callId);
     // A KEY WAIT STILL RUNNING is taken off the call here, not by the summary's cleanup. If a hangup
     // notice is to leave, it is held behind that wait's proof - sent at the group's current epoch,
     // never at one the caller may have left - and the wait goes on for it alone; otherwise it stops.
@@ -1719,11 +1813,15 @@ export class CallService {
         appendLog(
           `[Call] hangup notice of ${callId} held until its group is proven current - the screen and the record do not wait`
         );
-        this.heldHangups.set(callId, pendingWait);
+        this.heldHangups.set(callId, {
+          wait: pendingWait,
+          caller: this.incomingCallerId,
+          group: this.groupCall || this.incomingKind === 'group',
+        });
       }
       /** Whether the held notice is still owed: not dropped, never sent twice. */
       const stillHeld = () => {
-        if (this.heldHangups.get(callId) !== pendingWait) return false;
+        if (this.heldHangups.get(callId)?.wait !== pendingWait) return false;
         this.heldHangups.delete(callId);
         return true;
       };
@@ -1899,6 +1997,7 @@ export class CallService {
     this.callGroupWait = null;
     this.tapAt = null;
     this.nativeTapAt = null;
+    this.systemAnswer = null;
     this.screenShapesTimed.clear();
     this.ringStartAt = null;
     this.answeredAt = null;

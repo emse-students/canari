@@ -146,3 +146,25 @@ describe.each(['web', 'tauri'] as const)(
     });
   }
 );
+
+describe('a commit settling is an event of its group', () => {
+  it('wakes the group frame waiters, merged or cleared, and only that group', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const seen: string[] = [];
+    void scheduler.whenGroupFrameApplied('call').then(() => seen.push('call'));
+    void scheduler.whenGroupFrameApplied('other').then(() => seen.push('other'));
+
+    await scheduler.runCommitUnderMlsLock('call', async () => 'merged');
+    await Promise.resolve();
+    expect(seen).toEqual(['call']);
+
+    void scheduler.whenGroupFrameApplied('call').then(() => seen.push('call again'));
+    await expect(
+      scheduler.runCommitUnderMlsLock('call', async () => {
+        throw new Error('refused');
+      })
+    ).rejects.toThrow('refused');
+    await Promise.resolve();
+    expect(seen).toEqual(['call', 'call again']);
+  });
+});
