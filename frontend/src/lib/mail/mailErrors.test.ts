@@ -1,11 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HttpProtocolError } from './http1';
-import { classifyMailFailure, faultKind, MailError } from './mailErrors';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+  AUTH_FAULT_KINDS,
+  classifyMailFailure,
+  FAULT_KINDS,
+  faultKind,
+  MailError,
+} from './mailErrors';
 import { ZimbraFault, ZimbraUnreadableAnswer } from './soapClient';
 import { MailTlsError, MailTlsLoadError } from './tlsConnection';
 import { MailTransportError } from './transport';
 
 /** D7: every failure typed by its class and code, never by its message. */
+
+describe('the fault table and its contract', () => {
+  it('is libs/contracts/mail-fault-kinds.json, which the Android native watcher is held to too', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, '../../../../libs/contracts/mail-fault-kinds.json'),
+        'utf8'
+      )
+    ) as { call: Record<string, string>; auth: Record<string, string> };
+    expect(FAULT_KINDS).toEqual(contract.call);
+    expect(AUTH_FAULT_KINDS).toEqual(contract.auth);
+  });
+});
 
 describe('faultKind', () => {
   it('maps every Zimbra fault code this client names', () => {

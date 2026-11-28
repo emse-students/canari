@@ -5,6 +5,8 @@ import {
   announceAndroidPageReplaced,
   armAndroidMailWatch,
   claimAndroidMailWatch,
+  forgetAndroidMailWatch,
+  releaseAndroidMailWatch,
 } from './androidMailWatch';
 
 /**
@@ -54,6 +56,18 @@ describe('the native watcher bridge (lot 4b)', () => {
       { op: 'page' },
       { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw' },
     ]);
+  });
+
+  it('a forget and a release are one op each (review B1, minor 3)', () => {
+    bridge();
+    forgetAndroidMailWatch('u1');
+    releaseAndroidMailWatch();
+    expect(sent).toEqual([{ op: 'forget', userId: 'u1' }, { op: 'release' }]);
+  });
+
+  it('a forget with no bridge sends nothing and does not throw', () => {
+    expect(() => forgetAndroidMailWatch('u1')).not.toThrow();
+    expect(sent).toEqual([]);
   });
 
   it('an arm with no bridge says so at error level and sends nothing', async () => {

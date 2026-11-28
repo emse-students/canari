@@ -109,33 +109,87 @@ fun nativeInboxPageRequest(after: String?): JSONObject {
     return JSONObject().put("SearchRequest", search)
 }
 
-/** What a Zimbra fault means to the watcher: the page's `ZIMBRA_FAULT_KINDS` that it acts on. */
+/** What a Zimbra fault means to the watcher. */
 enum class NativeMailFault {
     /** The password is refused, or must be changed: the sealed copy is useless and goes. */
     BAD_CREDENTIALS,
 
-    /** The session token lapsed: sign in again from the sealed copy. */
+    /** The session token lapsed: sign in again from the sealed copy (free only after a normal wait). */
     SESSION_EXPIRED,
 
     /** The server no longer holds the wait set: create another. */
     WAIT_LOST,
 
+    /** The school closed the account (answered to the sign-in itself): D8 - copy and cursor erased. */
+    ACCOUNT_CLOSED,
+
+    /** The account is inactive, locked or pending: the run ends, nothing erased. */
+    UNAVAILABLE,
+
     /** Anything else: retried at the ladder's rate. */
     OTHER,
 }
+
+/** Who answered a fault: the sign-in itself (about THIS account), or any other call. */
+enum class NativeFaultOrigin { AUTH, CALL }
+
+/**
+ * THE PAGE'S FAULT TABLE (`FAULT_KINDS` in `mailErrors.ts`), code -> the page's kind, copied here
+ * because the app cannot read a repository file at run time. BOTH are held equal to
+ * `libs/contracts/mail-fault-kinds.json` (`NativeMailWatchTest`, `mailErrors.test.ts`): a code added
+ * on one side only fails a test.
+ */
+val NATIVE_PAGE_FAULT_KINDS: Map<String, String> = mapOf(
+    "account.AUTH_FAILED" to "bad_credentials",
+    "account.CHANGE_PASSWORD" to "password_change_required",
+    "account.ACCOUNT_INACTIVE" to "account_unavailable",
+    "account.NO_SUCH_ACCOUNT" to "not_found",
+    "account.MAINTENANCE_MODE" to "maintenance",
+    "service.AUTH_REQUIRED" to "session_expired",
+    "service.AUTH_EXPIRED" to "session_expired",
+    "mail.NO_SUCH_MSG" to "not_found",
+    "mail.NO_SUCH_CONV" to "not_found",
+    "mail.NO_SUCH_FOLDER" to "not_found",
+    "mail.NO_SUCH_ITEM" to "not_found",
+    "mail.NO_SUCH_PART" to "not_found",
+    "mail.NO_SUCH_UPLOAD" to "not_found",
+    "mail.QUERY_PARSE_ERROR" to "invalid_query",
+    "mail.MESSAGE_TOO_BIG" to "too_large",
+    "mail.UPLOAD_REJECTED" to "too_large",
+    "mail.QUOTA_EXCEEDED" to "quota_exceeded",
+    "admin.NO_SUCH_WAITSET" to "wait_lost",
+)
+
+/** The page's `AUTH_FAULT_KINDS`: what a code means only when the sign-in itself answered it. */
+val NATIVE_PAGE_AUTH_FAULT_KINDS: Map<String, String> = mapOf(
+    "account.NO_SUCH_ACCOUNT" to "account_closed",
+)
+
+/** The page's `faultKind(code, origin)`. */
+fun pageFaultKind(code: String, origin: NativeFaultOrigin): String =
+    (if (origin == NativeFaultOrigin.AUTH) NATIVE_PAGE_AUTH_FAULT_KINDS[code] else null)
+        ?: NATIVE_PAGE_FAULT_KINDS[code] ?: "server"
 
 /** The fault's code (`Detail.Error.Code`), or `null` when the body is not a fault. */
 fun faultCodeOf(envelope: JSONObject): String? =
     envelope.optJSONObject("Body")?.optJSONObject("Fault")?.optJSONObject("Detail")?.optJSONObject("Error")
         ?.optString("Code", "")?.takeIf { it.isNotEmpty() }
 
-/** The fault code's meaning - the page's table (`mailErrors.ts`) for the codes it reads. */
-fun nativeFaultOf(code: String): NativeMailFault = when (code) {
-    "account.AUTH_FAILED", "account.CHANGE_PASSWORD" -> NativeMailFault.BAD_CREDENTIALS
-    "service.AUTH_REQUIRED", "service.AUTH_EXPIRED" -> NativeMailFault.SESSION_EXPIRED
-    "admin.NO_SUCH_WAITSET" -> NativeMailFault.WAIT_LOST
+/** What the watcher does about a fault: the page's kind for it, then the watcher's class of that kind. */
+fun nativeFaultOf(code: String, origin: NativeFaultOrigin): NativeMailFault = when (pageFaultKind(code, origin)) {
+    "bad_credentials", "password_change_required" -> NativeMailFault.BAD_CREDENTIALS
+    "session_expired" -> NativeMailFault.SESSION_EXPIRED
+    "wait_lost" -> NativeMailFault.WAIT_LOST
+    "account_closed" -> NativeMailFault.ACCOUNT_CLOSED
+    "account_unavailable" -> NativeMailFault.UNAVAILABLE
     else -> NativeMailFault.OTHER
 }
+
+/**
+ * The ONE normalisation of a mailbox address, the page's `normalized` (`mailSession.ts`): trimmed,
+ * lower case. The sealed record, the cursor and the comparison between them all go through it.
+ */
+fun nativeAddress(address: String): String = address.trim().lowercase(java.util.Locale.ROOT)
 
 /** An answer that is not what its request promises: retried, never guessed at. */
 class NativeMailUnreadable(what: String) : IllegalStateException("unreadable answer: $what")
@@ -233,13 +287,13 @@ fun nativeCursorOf(raw: String?, account: String): NativeCursor? {
         is Long -> h
         else -> return null
     }
-    if (highest < 0 || stored != account.lowercase()) return null
+    if (highest < 0 || stored != nativeAddress(account)) return null
     return NativeCursor(stored, highest)
 }
 
 /** The cursor's text, byte for byte what the page's `JSON.stringify({v, account, highest})` writes. */
 fun nativeCursorText(cursor: NativeCursor): String =
-    "{\"v\":$CURSOR_VERSION,\"account\":${JSONObject.quote(cursor.account.lowercase())},\"highest\":${cursor.highest}}"
+    "{\"v\":$CURSOR_VERSION,\"account\":${JSONObject.quote(nativeAddress(cursor.account))},\"highest\":${cursor.highest}}"
 
 /** Where reading one page of the delta leaves it. */
 data class NativeDeltaStep(
@@ -328,7 +382,7 @@ fun nativeVaultUserOf(fileName: String): String? {
 fun nativeVaultAad(userId: String): ByteArray = "canari-mail-vault:v1:$userId".toByteArray(Charsets.UTF_8)
 
 fun nativeVaultPlaintext(record: NativeVaultRecord): ByteArray =
-    JSONObject().put("account", record.account.lowercase()).put("password", record.password).toString().toByteArray(Charsets.UTF_8)
+    JSONObject().put("account", nativeAddress(record.account)).put("password", record.password).toString().toByteArray(Charsets.UTF_8)
 
 fun nativeVaultRecordOf(plaintext: ByteArray): NativeVaultRecord? {
     val o = try { JSONObject(String(plaintext, Charsets.UTF_8)) } catch (_: Exception) { return null }

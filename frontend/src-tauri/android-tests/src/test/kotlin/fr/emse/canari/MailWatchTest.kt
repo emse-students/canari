@@ -9,6 +9,7 @@ import fr.emse.canari.mail.MailWatchSpec
 import fr.emse.canari.mail.decideMailWatch
 import fr.emse.canari.mail.MailBridgeOp
 import fr.emse.canari.mail.mailBridgeMessageAccepted
+import fr.emse.canari.mail.mailBridgeOrigins
 import fr.emse.canari.mail.mailNoticeOf
 import fr.emse.canari.mail.mailSummaryOf
 import org.junit.Assert.assertEquals
@@ -64,10 +65,25 @@ class MailWatchTest {
 
     @Test
     fun `a native run that ends by itself ends the native watch only`() {
-        val ended = MailWatchCommand.NativeEnded("the password was refused")
-        assertTrue(decideMailWatch(native, ended, armed = false) is MailWatchEffect.Leave)
-        assertTrue(decideMailWatch(page, ended, armed = false) is MailWatchEffect.Ignore)
-        assertTrue(decideMailWatch(off, ended, armed = false) is MailWatchEffect.Ignore)
+        val ended = MailWatchCommand.NativeEnded("the password was refused", run = 3)
+        assertTrue(decideMailWatch(native, ended, armed = false, currentRun = 3) is MailWatchEffect.Leave)
+        assertTrue(decideMailWatch(page, ended, armed = false, currentRun = 3) is MailWatchEffect.Ignore)
+        assertTrue(decideMailWatch(off, ended, armed = false, currentRun = 3) is MailWatchEffect.Ignore)
+    }
+
+    @Test
+    fun `the end of an earlier native run does not end the run started after it`() {
+        // Review minor 2: run 3 ended, run 4 started before the end reached the service.
+        val late = MailWatchCommand.NativeEnded("the sealed copy was erased", run = 3)
+        assertTrue(decideMailWatch(native, late, armed = true, currentRun = 4) is MailWatchEffect.Ignore)
+    }
+
+    @Test
+    fun `a forget ends a native watch and leaves the page's to the page`() {
+        // Review B1: erase while NATIVE, with no page running - the service leaves.
+        assertTrue(decideMailWatch(native, MailWatchCommand.Forgotten, armed = false) is MailWatchEffect.Leave)
+        assertTrue(decideMailWatch(page, MailWatchCommand.Forgotten, armed = false) is MailWatchEffect.Ignore)
+        assertTrue(decideMailWatch(off, MailWatchCommand.Forgotten, armed = false) is MailWatchEffect.Ignore)
     }
 
     @Test
@@ -111,13 +127,29 @@ class MailWatchTest {
         assertTrue(!mailBridgeMessageAccepted(false, "http://tauri.localhost", app))
         assertTrue(!mailBridgeMessageAccepted(true, "null", app))
         assertTrue(!mailBridgeMessageAccepted(true, null, app))
-        assertTrue(!mailBridgeMessageAccepted(false, "http://10.0.0.2:5173", setOf("*")))
-        assertTrue(mailBridgeMessageAccepted(true, "http://10.0.0.2:5173", setOf("*")))
+        // No wildcard any more (review minor 8): `*` is a string like any other.
+        assertTrue(!mailBridgeMessageAccepted(true, "http://10.0.0.2:5173", setOf("*")))
     }
 
     @Test
-    fun `the bridge knows its seven ops and nothing else`() {
-        assertEquals(listOf("start", "stop", "notify", "summary", "page", "claim", "arm"), MailBridgeOp.entries.map { it.wire })
+    fun `the bridge listens to the app's origin, and to the dev server's in debug only`() {
+        assertEquals(setOf("http://tauri.localhost"), mailBridgeOrigins(debug = false, devHost = "192.168.1.20"))
+        assertEquals(
+            setOf("http://tauri.localhost", "http://127.0.0.1:1420", "http://localhost:1420"),
+            mailBridgeOrigins(debug = true, devHost = ""),
+        )
+        assertTrue("http://192.168.1.20:1420" in mailBridgeOrigins(debug = true, devHost = "192.168.1.20"))
+        // A host that would smuggle a path or a port is not added.
+        assertEquals(3, mailBridgeOrigins(debug = true, devHost = "evil.example/x").size)
+        assertEquals(3, mailBridgeOrigins(debug = true, devHost = "a:1").size)
+    }
+
+    @Test
+    fun `the bridge knows its nine ops and nothing else`() {
+        assertEquals(
+            listOf("start", "stop", "notify", "summary", "page", "claim", "arm", "forget", "release"),
+            MailBridgeOp.entries.map { it.wire },
+        )
         assertEquals(MailBridgeOp.STOP, MailBridgeOp.of("stop"))
         assertEquals(MailBridgeOp.SUMMARY, MailBridgeOp.of("summary"))
         assertEquals(null, MailBridgeOp.of("eval"))

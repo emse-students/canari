@@ -420,8 +420,10 @@ export class MailSession {
   /**
    * The remembered password, for the Android native watcher's sealed copy (lot 4b), or `null`. Only
    * from a `ready` mailbox whose password is remembered, opened under the device key held NOW, and
-   * for the open mailbox's own address - never another. The caller arms the copy only while the
-   * switch is on (`mailWatch.svelte.ts`).
+   * for the open mailbox's own address - never another. Its `account` is the open mailbox's
+   * CANONICAL address (the server's `ready.account.address`, normalised: the one form the native
+   * cursor compares), never the spelling stored beside the password. The caller arms the copy only
+   * while the switch is on (`mailWatch.svelte.ts`).
    */
   async rememberedForNativeWatch(): Promise<RememberedMailPassword | null> {
     const ready = this.current;
@@ -438,7 +440,7 @@ export class MailSession {
       Log.w('MAIL', 'ERROR: the remembered password is for another mailbox - no native copy');
       return null;
     }
-    return read.remembered;
+    return { account: normalized(ready.account.address), password: read.remembered.password };
   }
 
   /**

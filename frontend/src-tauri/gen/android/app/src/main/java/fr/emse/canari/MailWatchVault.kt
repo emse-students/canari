@@ -11,7 +11,11 @@ import fr.emse.canari.mail.nativeVaultPlaintext
 import fr.emse.canari.mail.nativeVaultRecordOf
 import fr.emse.canari.mail.nativeVaultUserOf
 import java.io.File
+import java.io.IOException
 import java.security.KeyStore
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -36,9 +40,14 @@ import javax.crypto.spec.GCMParameterSpec
  * It exists only while the user ticked "remember" AND turned the switch on: the page arms it then
  * ([arm], the bridge's `arm`), and every forget path erases it through ONE function, Rust's
  * `erase_vault` (`commands/mail_watch.rs`): a mail sign-out, an unticked "remember", a refused
- * password, the Canari sign-out, the switch off, D8 and the account deletion. The one erasure HERE is
- * the native watcher's own discovery that the server refuses the password ([eraseRefused]) - the same
- * file name ([nativeVaultFileName]), so both remove the same thing.
+ * password, the Canari sign-out, the switch off, D8 and the account deletion - AND, on Android, the
+ * bridge's `forget` ([NativeMailWatcher.forget]: the erase and the stop of every native run as ONE op).
+ * The erasures HERE ([erase]) are that op's and the native run's own discoveries (a refused password,
+ * a closed account) - the same file name ([nativeVaultFileName]), so all remove the same thing.
+ *
+ * ARM AND ERASE ARE ORDERED (review I3): both run on ONE executor ([ops]), and an erase bumps a
+ * generation an arm captured when it was SENT ([armGeneration]) - an arm queued before an erase, or
+ * racing it, finds the generation moved and seals nothing.
  *
  * ONE COPY AT A TIME: arming an account removes any other account's copy, so at most one native
  * watcher has anything to run.
@@ -51,6 +60,18 @@ object MailWatchVault {
     private const val IV_BYTES = 12
 
     private fun dir(context: Context): File = File(MlsContextLoader.tauriDataDir(context), DIR)
+
+    /** The ONE thread arms, erases and forgets run on, in the order they were sent. */
+    val ops: ExecutorService = Executors.newSingleThreadExecutor { Thread(it, "canari-mail-vault") }
+
+    private val generationLock = Any()
+    private var generation = 0L
+
+    /** The generation an arm sent NOW carries: [arm] refuses it once an erase came after. */
+    fun armGeneration(): Long = synchronized(generationLock) { generation }
+
+    /** The shared cursor file (`cursor_<id>.json`, the page's too: `commands/mail_watch.rs`). */
+    fun cursorFile(context: Context, userId: String): File = File(dir(context), "cursor_$userId.json")
 
     /** The sealed copy that is there: its account id and its file. */
     data class Armed(val userId: String, val file: File)
@@ -80,7 +101,15 @@ object MailWatchVault {
      * Seals [record] for [userId], replacing any copy (this account's or another's). Atomic: a
      * sibling file renamed over it. `false` (logged) when it was not written.
      */
-    fun arm(context: Context, userId: String, record: NativeVaultRecord): Boolean {
+    fun arm(context: Context, userId: String, record: NativeVaultRecord, sentAt: Long): Boolean = synchronized(generationLock) {
+        if (sentAt != generation) {
+            Log.i(TAG, "arm refused: a forget came after it was sent")
+            return false
+        }
+        sealUnderLock(context, userId, record)
+    }
+
+    private fun sealUnderLock(context: Context, userId: String, record: NativeVaultRecord): Boolean {
         val name = nativeVaultFileName(userId)
         if (name == null) {
             Log.e(TAG, "arm refused: an account id outside the allowlist")
@@ -116,32 +145,60 @@ object MailWatchVault {
     }
 
     /**
-     * Opens [armed]'s copy, or `null`. A copy that does not open (a lost Keystore key, a file of
-     * another account) is REMOVED and logged: it can never open again, and a watcher must not retry it.
+     * Opens [armed]'s copy, or `null`. A copy that can NEVER open is REMOVED and logged: a failed
+     * authentication tag (another account's file, a key replaced), a missing Keystore key, a truncated
+     * file or an unreadable record. Anything else (a read error, a Keystore busy) leaves the file: the
+     * next sign-in tries again (review minor 5).
      */
-    fun open(context: Context, armed: Armed): NativeVaultRecord? {
+    fun open(armed: Armed): NativeVaultRecord? {
+        val bytes = try {
+            armed.file.readBytes()
+        } catch (e: IOException) {
+            Log.e(TAG, "the sealed copy was not read (${e.javaClass.simpleName}) - kept, retried at the next sign-in")
+            return null
+        }
+        if (bytes.size <= IV_BYTES) return removeUnopenable(armed, "truncated")
         return try {
-            val bytes = armed.file.readBytes()
-            if (bytes.size <= IV_BYTES) throw IllegalStateException("a truncated sealed copy")
+            val key = existingKey() ?: return removeUnopenable(armed, "no key")
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, existingKey() ?: throw IllegalStateException("no key"), GCMParameterSpec(GCM_TAG_BITS, bytes, 0, IV_BYTES))
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, bytes, 0, IV_BYTES))
             cipher.updateAAD(nativeVaultAad(armed.userId))
             nativeVaultRecordOf(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES))
-                ?: throw IllegalStateException("an unreadable record")
+                ?: removeUnopenable(armed, "unreadable record")
+        } catch (_: AEADBadTagException) {
+            removeUnopenable(armed, "authentication failed")
         } catch (e: Exception) {
-            Log.e(TAG, "the sealed copy does not open (${e.javaClass.simpleName}) - removed")
-            armed.file.delete()
+            Log.e(TAG, "the sealed copy did not open (${e.javaClass.simpleName}) - kept, retried at the next sign-in")
             null
         }
     }
 
-    /** The server refuses the sealed password: the copy is useless, and retrying it at every boot
-     *  would only send a wrong password again. Removed; the page asks for the password next time. */
-    fun eraseRefused(context: Context, userId: String) {
-        val name = nativeVaultFileName(userId) ?: return
-        val f = File(dir(context), name)
-        if (!f.exists() || f.delete()) Log.i(TAG, "the refused sealed copy is erased")
-        else Log.e(TAG, "the refused sealed copy was NOT erased")
+    private fun removeUnopenable(armed: Armed, why: String): NativeVaultRecord? {
+        val gone = armed.file.delete()
+        Log.e(TAG, "the sealed copy can never open ($why) - removed: $gone") // log-safe: a fixed reason word and a boolean
+        return null
+    }
+
+    /**
+     * Erases [userId]'s copy, or EVERY copy when `null` (a remote revocation does not know the
+     * account), and bumps the generation so an arm sent before it seals nothing. [alsoCursor]: the
+     * account is gone (D8), its cursor goes too. Idempotent.
+     */
+    fun erase(context: Context, userId: String?, alsoCursor: Boolean): Unit = synchronized(generationLock) {
+        generation++
+        val files = dir(context).listFiles().orEmpty().filter { f ->
+            val owner = nativeVaultUserOf(f.name)
+            owner != null && (userId == null || owner == userId)
+        }
+        for (f in files) {
+            if (f.delete()) Log.i(TAG, "a sealed copy is erased")
+            else Log.e(TAG, "a sealed copy was NOT erased")
+        }
+        if (alsoCursor && userId != null) {
+            val c = cursorFile(context, userId)
+            if (c.exists() && !c.delete()) Log.e(TAG, "the closed account's cursor was NOT erased")
+        }
+        Log.i(TAG, "erase done: ${files.size} copies, cursor too: $alsoCursor") // log-safe: a count and a boolean
     }
 
     private fun existingKey(): SecretKey? {

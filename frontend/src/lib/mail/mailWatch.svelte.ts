@@ -5,6 +5,7 @@ import {
   announceAndroidPageReplaced,
   armAndroidMailWatch,
   claimAndroidMailWatch,
+  releaseAndroidMailWatch,
   startAndroidMailService,
   stopAndroidMailService,
 } from '$lib/mobile/androidMailWatch';
@@ -225,6 +226,27 @@ function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal)
     });
 }
 
+/**
+ * Arms the native watcher's sealed copy for `client`, unless the decision moved on while the
+ * remembered password was read: `stillDecided` (the page's last decision is still this one) and the
+ * session's generation (no sign-out, closed account or new sign-in since) are re-read RIGHT BEFORE
+ * the arm is sent (review I3 of #4213). The native side orders an arm against a later forget on its
+ * own executor. `true` when sent.
+ */
+export async function armNativeCopyIfCurrent(
+  client: Pick<MailClient, 'userId' | 'session'>,
+  stillDecided: () => boolean
+): Promise<boolean> {
+  const generation = client.session.generation;
+  const remembered = await client.session.rememberedForNativeWatch();
+  if (!remembered) return false;
+  if (!stillDecided() || client.session.generation !== generation) {
+    Log.d('MAIL-WATCH', 'the native copy decision moved on - this arm is not sent');
+    return false;
+  }
+  return armAndroidMailWatch(client.userId, remembered.account, remembered.password);
+}
+
 /** Writes the iOS flag the background refresh reads. Logged; a failure is said, never thrown. */
 async function writeIosFlag(on: boolean): Promise<void> {
   try {
@@ -275,6 +297,13 @@ export function watchMailNotifications(): void {
   const factsKey = (facts: WatchFacts) =>
     `${facts.mailOn}|${facts.wanted}|${facts.eligible}|${facts.state}`;
 
+  /** The page's run stopped: the native side may let a push check read again - unless a run took over. */
+  const releaseOnceStopped = (stopped: Promise<void>) => {
+    void stopped.then(() => {
+      if (!running) releaseAndroidMailWatch();
+    });
+  };
+
   const holdService = (run: boolean) => {
     if (!isAndroidTauriRuntime()) return;
     if (run && !serviceHeld) {
@@ -301,6 +330,7 @@ export function watchMailNotifications(): void {
       running = null;
       ending.lock.abort();
       stopped = ending.watcher.stop(run ? 'another mailbox' : 'a fact turned false');
+      if (isAndroidTauriRuntime()) releaseOnceStopped(stopped);
     }
     if (run && !running && facts.client) {
       const watcher = watcherOf(facts.client);
@@ -352,10 +382,7 @@ export function watchMailNotifications(): void {
       void eraseNativeMailPassword(client.userId);
       return;
     }
-    void client.session.rememberedForNativeWatch().then((remembered) => {
-      if (!remembered || lastNativeKey !== key) return;
-      armAndroidMailWatch(client.userId, remembered.account, remembered.password);
-    });
+    void armNativeCopyIfCurrent(client, () => lastNativeKey === key);
   };
 
   runEndedListener = (client, reason) => {
@@ -366,6 +393,7 @@ export function watchMailNotifications(): void {
     ended.lock.abort();
     endedBy = { client, key: factsKey(lastFacts) };
     holdService(false);
+    if (isAndroidTauriRuntime()) releaseAndroidMailWatch();
   };
 
   $effect.root(() => {

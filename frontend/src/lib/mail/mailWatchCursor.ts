@@ -1,3 +1,4 @@
+import { forgetAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
@@ -105,6 +106,8 @@ export function platformCursorStore(): MailCursorStore {
  */
 export async function forgetNativeMailWatch(userId: string): Promise<void> {
   if (!isTauriRuntime()) return;
+  // The native run stops with the copy (Android): a file erased under it is not enough.
+  forgetAndroidMailWatch(userId);
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('mail_watch_forget', { userId });
@@ -122,6 +125,8 @@ export async function forgetNativeMailWatch(userId: string): Promise<void> {
  */
 export async function eraseNativeMailPassword(userId: string): Promise<void> {
   if (!isTauriRuntime()) return;
+  // The native run stops with the copy (Android): a file erased under it is not enough.
+  forgetAndroidMailWatch(userId);
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('mail_watch_vault_erase', { userId });

@@ -472,6 +472,14 @@ data names the Canari account. **Every forget path erases it through ONE functio
 refused password, the Canari sign-out), and `mail_watch_forget` calls it with the cursor (the switch
 off, D8, the account deletion); a fact read false (the switch, the server's `mail_mode`, the mailbox
 ended, "remember" unticked) erases it from the controller too. One account's copy at a time.
+**Erasing the copy also STOPS a native run that is going**: each of those paths sends the bridge's
+`forget` unconditionally (the page cannot know whether a native run goes), and the native side erases
+the copy AND stops and joins every native run as ONE op (`NativeMailWatcher.forget`, on the vault's
+single executor, so an `arm` sent earlier is ordered before it and an `arm` racing it seals nothing).
+**A remote revocation (a device revoked, the account deleted, "sign out everywhere") does not reach
+the copy yet**: the server push that will (`{type:'mail-forget'}`, mail lot 5, calling the same
+`NativeMailWatcher.forget` from the FCM service) is not landed, so until it is, **the copy outlives a
+remote revocation until the app is next opened** on that phone (its first fact read false erases it).
 
 **Offered everywhere, with no warning (owner, 2026-11-27, the review's I2).** The exposure: on the
 web and the desktop the device key is derived from the PIN, so a stolen `localStorage` lets the
@@ -1113,10 +1121,26 @@ on. With no page there, a NATIVE watcher runs it.
   mirroring the Paraglide `mail_*` messages);
 - it reads and writes **the same cursor file** as the page (`mail_watch/cursor_<id>.json`, atomic),
   byte for byte the page's JSON - so "never twice" holds across the page and the native run;
-- before each cursor write and each notice it checks that its sealed copy is still there: every
-  forget path erases the copy, so an erased copy ends the run;
-- a password the server refuses (`account.AUTH_FAILED`, `CHANGE_PASSWORD`) erases the copy and ends
-  the run: retrying it at every boot would only send a wrong password again.
+- WHAT it decides is pure and JVM-tested (`mail/NativeMailRun.kt`, `NativeMailRunTest.kt`: the real
+  loop against a fake server); `NativeMailWatcher.kt` is only its Android ports;
+- a forget is not discovered by the run, it STOPS the run: every forget path sends `forget` (D6),
+  which erases the copy and stops and joins every native run in one op; the run ALSO re-checks the
+  copy after EVERY wait answer, before each cursor write and before each notice, so a copy erased by
+  any other route ends it at the next of these (not at the next mail);
+- **the faults are the page's table** (`NATIVE_PAGE_FAULT_KINDS`, held with the page's
+  `FAULT_KINDS` to `libs/contracts/mail-fault-kinds.json` by `NativeMailWatchTest` and
+  `mailErrors.test.ts`), with the page's sign-in rule: answered to the run's OWN sign-in,
+  `account.AUTH_FAILED` / `CHANGE_PASSWORD` erase the copy and end the run (a wrong password retried at
+  every boot is a lockout risk), `account.NO_SUCH_ACCOUNT` is D8 (the copy AND the cursor erased, the
+  run ends), `account.ACCOUNT_INACTIVE` ends the run and erases nothing;
+- a lapsed session (`service.AUTH_EXPIRED` / `AUTH_REQUIRED`) is signed in again at once ONLY after a
+  wait completed normally since the last sign-in; refused again before any wait, it is a failure on
+  the ladder - signing in in a loop is how an account gets locked;
+- the copy is opened at EACH sign-in, never held in memory for the run; a copy that can never open (a
+  failed authentication tag, a missing key, a truncated or unreadable record) is removed, any other
+  error leaves it for the next sign-in;
+- a delta page that hands back the id it was read after ends the read (logged at error level), never
+  a loop.
 
 **One watcher at a time, and the handover.** `decideMailWatch` (`mail/MailWatch.kt`) is the whole
 table, over three modes: `OFF`, `PAGE`, `NATIVE`.
@@ -1127,13 +1151,27 @@ table, over three modes: `OFF`, `PAGE`, `NATIVE`.
 | the watch is not wanted (`stop`) | ignored | leave | leave (native stopped) |
 | the page goes (activity destroyed, task removed, a new document's `page`) | ignored | NATIVE if armed, else leave | ignored |
 | boot, an update, a restart of the killed process (`Resume`) | NATIVE if armed | ignored | ignored |
-| the native run ends by itself | ignored | ignored | leave |
+| the native run ends by itself (that run's id: an earlier run's end is ignored) | ignored | ignored | leave |
+| the copy is forgotten (`forget`, done: copy erased, runs joined) | ignored | ignored | leave |
 
 **The page wins, and it claims first.** Before the page's own run starts, it sends `claim`; the
 bridge stops the native run and JOINS its thread, and only then answers `handed`
 (`claimAndroidMailWatch`). So the two never write the cursor or notify at once: the overlap is
 removed, not reconciled afterwards. A new document sends `page` (the page before it is gone), so an
-armed watch goes native until this page claims it.
+armed watch goes native until this page claims it; an old activity's WebView going after a new one
+attached is NOT the page's going (`MailWatchBridge.detach` answers whether it was the page). When the
+page's watcher stops it sends `release`, so a push check may read again.
+
+**Each run is its own handle.** A native run (the persistent watch, or one push check) carries its own
+stop flag, connection and pause, and an id: a stop acts on the handle captured at the call, so it
+never lands on a run started after it, and the service ignores the end of an earlier run
+(`NativeEnded` carries the id). The connection is published under the run's lock after re-reading the
+stop flag there, so a stop either sees it and cuts it or is seen before connecting. Redirects are
+never followed (`instanceFollowRedirects = false`).
+
+**The bridge's origins are an allowlist** (`mailBridgeOrigins`): the app's `http://tauri.localhost`,
+and in a debug build only the dev server's (`127.0.0.1:1420`, `localhost:1420`, and
+`TAURI_DEV_HOST:1420` from the build's environment) - never a wildcard.
 
 **The restarts.**
 
@@ -1143,7 +1181,9 @@ armed watch goes native until this page claims it.
   credential-encrypted storage and cannot be read before that unlock. A `specialUse` foreground
   service may start from `BOOT_COMPLETED` (the Android 15 boot restriction names other types).
 - **The process killed**: while NATIVE, the service returns `START_STICKY`, and the system's restart
-  (a null intent) is a `Resume`. A PAGE run is not sticky: a restarted process has no page.
+  (a null intent) is a `Resume`. A PAGE run is not sticky: a restarted process has no page. A
+  `Resume` that finds nothing to do still enters the foreground first and then leaves: it came
+  through `startForegroundService`, which the system punishes when no foreground follows.
 - **The page gone**: `MainActivity.onDestroy` and a removed task hand an armed watch to native.
 
 **What the native side never decides.** Whether the watch is wanted is the page's facts: the page
@@ -1167,20 +1207,34 @@ with an empty FCM data push when the mailbox changed; its handler calls `checkOn
 check and notify: the same sealed copy, the same cursor file, the same notices, no foreground
 service. It is blocking (call it from a worker thread) and answers a typed `CheckOutcome`: `DONE`,
 `NOTHING_SEALED`, `WATCHING` (the page or the persistent run watches and notifies by itself), `BUSY`
-(a check already runs), `REFUSED` (the password was refused: the copy is erased), `FAILED`. One
+(a check already runs), `REFUSED` (the password was refused: the copy is erased), `ACCOUNT_CLOSED`
+(D8: the copy and the cursor are erased), `UNAVAILABLE` (nothing erased), `FAILED`. One
 writer at a time still holds: a check does nothing while a watcher runs, a page claim waits for a
 check in flight to end, and a persistent run starting waits for it too. The persistent watch stays
 the user's separate choice ("sans aucun serveur, consomme plus de batterie").
+
+**The remote kill's entry point: `NativeMailWatcher.forget(context, userId = null)`.** The same op
+as the bridge's `forget` - the copy erased (every copy when no account is named: a revocation does
+not know which), every native run stopped and joined, the service told (`Forgotten`: a NATIVE watch
+leaves). Mail lot 5's FCM handler calls it on a `{type:'mail-forget'}` data push, sent by the server
+on a device revocation, an account deletion and "sign out everywhere" (D6 says what holds until it
+lands). Not blocking: it runs on the vault's executor.
 
 **Unverified on a phone (MAIL-N):** the restart after boot and after the process is killed, a
 `START_STICKY` restart's foreground start being allowed from the background on Android 12+ (a
 refusal is caught and logged, and the watch then resumes at the next open), the network in Doze
 while a foreground service holds it, and the battery cost. None of these is proven by a compile.
 
-**Tests.** `NativeMailWatchTest.kt` (the requests, the measured answers, the faults, the cursor file
-byte for byte, the delta, the baseline, the notice, the ladder, the copy's file name and associated
-data); `MailWatchTest.kt` (the three-mode table, the seven bridge ops); Rust `mail_watch.rs` (the one
-erasure, alone or with the cursor, never another account's); `androidMailWatch.test.ts` (a claim
-resolves only on `handed`); `mailWatch.svelte.test.ts` (`nativeWatchWanted`); `mailSession.test.ts`
-(the password handed over only from a ready, remembered mailbox with the device key held);
+**Tests.** `NativeMailRunTest.kt` (the loop against a fake server: a copy erased during a wait ends
+the run after it with nothing more asked, refused / closed / inactive at sign-in, the lapsed-session
+rule, the copy reopened at each sign-in, a page that does not advance, the wait set released after a
+stop); `NativeMailWatchTest.kt` (the requests, the measured answers, the fault table equal to the
+contract with both origins, the one address normalisation, the cursor file byte for byte, the delta,
+the baseline, the notice, the ladder, the copy's file name and associated data); `MailWatchTest.kt`
+(the three-mode table with `Forgotten` and an earlier run's end, the nine bridge ops, the origin
+allowlist); Rust `mail_watch.rs` (the one erasure, alone or with the cursor, never another
+account's); `androidMailWatch.test.ts` (a claim resolves only on `handed`, `forget` and `release`);
+`mailWatchCursorForget.test.ts` (every erase path sends `forget`); `mailWatch.svelte.test.ts`
+(`nativeWatchWanted`, no stale arm); `mailSession.test.ts` (the password handed over only from a
+ready, remembered mailbox with the device key held, under the canonical address);
 `sealedMailPassword.test.ts` (forgetting erases the native copy).

@@ -20,7 +20,10 @@ import { Log } from '$lib/utils/Log';
  * - `page` - a new document: the page before it is gone (lot 4b: the watch goes native if armed);
  * - `claim` - the page's watcher is about to run: the native run stops, JOINED, then `handed`;
  * - `arm` - seal the password for the native watcher (lot 4b): sent only with "remember" ticked AND
- *   the switch on.
+ *   the switch on;
+ * - `forget` - EVERY forget path: the sealed copy erased AND every native run stopped and joined, as
+ *   one native op (`NativeMailWatcher.forget`) - sent whatever the page believes is running;
+ * - `release` - the page's watcher stopped: a push check may read the delta again.
  *
  * Outcomes come back as ONE DOM event, {@link NATIVE_MAIL_EVENT}: `started` (`code` the mode, `page`
  * or `native`), `failed` (with a `code`: `off-screen` when Android refused to start it from the
@@ -129,6 +132,20 @@ export function armAndroidMailWatch(userId: string, account: string, password: s
   }
   Log.w('MAIL-WATCH', 'ERROR: no window.canariMail - the native watcher cannot be armed');
   return false;
+}
+
+/**
+ * Forgets the native watcher's sealed copy: erased AND every native run stopped and joined, in ONE
+ * native op ordered after any `arm` sent before it. ALWAYS sent when there is a bridge - the page
+ * cannot know whether a native run is going (review B1 of #4213).
+ */
+export function forgetAndroidMailWatch(userId: string): void {
+  if (send('forget', { userId })) Log.i('MAIL-WATCH', 'the native watcher is told to forget');
+}
+
+/** The page's watcher stopped: the native side may let a push check read the delta again. */
+export function releaseAndroidMailWatch(): void {
+  if (send('release', {})) Log.d('MAIL-WATCH', 'the page let the watch go');
 }
 
 /** Posts one notice natively. `false` when there is no bridge. */

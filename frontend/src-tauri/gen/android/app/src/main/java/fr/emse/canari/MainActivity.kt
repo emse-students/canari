@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import fr.emse.canari.mail.mailBridgeOrigins
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -374,7 +375,7 @@ class MainActivity : TauriActivity() {
         MailWatchBridge.attach(webView)
         // A web message listener, not a JavaScript interface: only the app's own origin, top frame
         // only. A debug build may load the dev server, whose origin is the developer's machine.
-        MailWatchBridge.register(webView, applicationContext, if (BuildConfig.DEBUG) setOf("*") else setOf("http://tauri.localhost"))
+        MailWatchBridge.register(webView, applicationContext, mailBridgeOrigins(BuildConfig.DEBUG, BuildConfig.MAIL_DEV_HOST))
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
         holdDrawAcrossTurns(webView)
     }
@@ -1113,8 +1114,9 @@ class MainActivity : TauriActivity() {
         CallBridge.detach(webView)
         CallForegroundService.stopForPageGone(this)
         // The mail watcher lives in this page too: with it gone, the service holds nothing.
-        MailWatchBridge.detach(webView)
-        MailWatchService.stopForPageGone(this)
+        // Only when THIS WebView was the page: a relaunched activity's page already attached, and an
+        // old page's going is not the watch's.
+        if (MailWatchBridge.detach(webView)) MailWatchService.stopForPageGone(this)
         Log.d(
             "MainActivity",
             "onDestroy: destroying the WebView (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)"

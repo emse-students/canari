@@ -1,0 +1,26 @@
+{
+  "description": "The Zimbra fault codes the mail client classifies, and the kind each means (docs/wiki/mail-client-transport.md). `call` is FAULT_KINDS (any call), `auth` is AUTH_FAULT_KINDS (only when the session's own sign-in answered it; it wins over `call`). A code in neither is `server`. Held equal to `frontend/src/lib/mail/mailErrors.ts` by `mailErrors.test.ts` and to the Android native watcher's copy (`mail/NativeMailWatch.kt`) by `NativeMailWatchTest`.",
+  "call": {
+    "account.AUTH_FAILED": "bad_credentials",
+    "account.CHANGE_PASSWORD": "password_change_required",
+    "account.ACCOUNT_INACTIVE": "account_unavailable",
+    "account.NO_SUCH_ACCOUNT": "not_found",
+    "account.MAINTENANCE_MODE": "maintenance",
+    "service.AUTH_REQUIRED": "session_expired",
+    "service.AUTH_EXPIRED": "session_expired",
+    "mail.NO_SUCH_MSG": "not_found",
+    "mail.NO_SUCH_CONV": "not_found",
+    "mail.NO_SUCH_FOLDER": "not_found",
+    "mail.NO_SUCH_ITEM": "not_found",
+    "mail.NO_SUCH_PART": "not_found",
+    "mail.NO_SUCH_UPLOAD": "not_found",
+    "mail.QUERY_PARSE_ERROR": "invalid_query",
+    "mail.MESSAGE_TOO_BIG": "too_large",
+    "mail.UPLOAD_REJECTED": "too_large",
+    "mail.QUOTA_EXCEEDED": "quota_exceeded",
+    "admin.NO_SUCH_WAITSET": "wait_lost"
+  },
+  "auth": {
+    "account.NO_SUCH_ACCOUNT": "account_closed"
+  }
+}

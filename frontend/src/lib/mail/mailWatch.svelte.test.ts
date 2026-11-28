@@ -6,6 +6,7 @@ vi.mock('$lib/mobile/androidMailWatch', () => ({
   NATIVE_MAIL_EVENT: 'canari:mail-native',
   startAndroidMailService: vi.fn(() => true),
   stopAndroidMailService: vi.fn(),
+  armAndroidMailWatch: vi.fn(() => true),
 }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   serverMailMode: () => 'on',
@@ -28,7 +29,9 @@ vi.mock('$lib/utils/apiUrl', () => ({ gatewayUrl: () => 'https://example.invalid
 
 import type { MailClient } from './mailClient.svelte';
 import type { MailSessionState } from './mailSession';
+import { armAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import {
+  armNativeCopyIfCurrent,
   backgroundRefresh,
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
@@ -229,5 +232,47 @@ describe('the switch "Notifications de nouveaux mails"', () => {
     store.removeItem(ACCOUNT_KEY.mailNotifications('u1'));
     forgetMailNotificationsSwitch('u1');
     expect(mailNotificationsWanted('u1', store as unknown as Storage)).toBe(false);
+  });
+});
+
+describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
+  const remembered = { account: 'ada@etu.emse.fr', password: 'pw' };
+  const sessionWith = (onRead: (session: { generation: number }) => void) => {
+    const session = {
+      generation: 1,
+      rememberedForNativeWatch: async () => {
+        onRead(session);
+        return remembered;
+      },
+    };
+    return { userId: 'u1', session } as unknown as MailClient;
+  };
+
+  beforeEach(() => vi.mocked(armAndroidMailWatch).mockClear());
+
+  it('arms when nothing moved while the password was read', async () => {
+    expect(
+      await armNativeCopyIfCurrent(
+        sessionWith(() => {}),
+        () => true
+      )
+    ).toBe(true);
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw');
+  });
+
+  it('sends nothing once the page decided otherwise (an erase came after)', async () => {
+    expect(
+      await armNativeCopyIfCurrent(
+        sessionWith(() => {}),
+        () => false
+      )
+    ).toBe(false);
+    expect(armAndroidMailWatch).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing once the session moved (a sign-out or a new sign-in during the read)', async () => {
+    const client = sessionWith((session) => (session.generation = 2));
+    expect(await armNativeCopyIfCurrent(client, () => true)).toBe(false);
+    expect(armAndroidMailWatch).not.toHaveBeenCalled();
   });
 });

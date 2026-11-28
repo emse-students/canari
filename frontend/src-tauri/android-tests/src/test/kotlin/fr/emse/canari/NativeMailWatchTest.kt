@@ -1,6 +1,11 @@
 package fr.emse.canari
 
+import fr.emse.canari.mail.NATIVE_PAGE_AUTH_FAULT_KINDS
+import fr.emse.canari.mail.NATIVE_PAGE_FAULT_KINDS
 import fr.emse.canari.mail.NativeCursor
+import fr.emse.canari.mail.NativeFaultOrigin
+import fr.emse.canari.mail.nativeAddress
+import fr.emse.canari.mail.pageFaultKind
 import fr.emse.canari.mail.NativeInboxItem
 import fr.emse.canari.mail.NativeInboxPage
 import fr.emse.canari.mail.NativeMailFault
@@ -101,12 +106,39 @@ class NativeMailWatchTest {
         val fault = JSONObject("""{"Body":{"Fault":{"Code":{"Value":"soap:Sender"},"Detail":{"Error":{"Code":"admin.NO_SUCH_WAITSET"}}}}}""")
         assertEquals("admin.NO_SUCH_WAITSET", faultCodeOf(fault))
         assertNull(faultCodeOf(body("AuthResponse", "{}")))
-        assertEquals(NativeMailFault.WAIT_LOST, nativeFaultOf("admin.NO_SUCH_WAITSET"))
-        assertEquals(NativeMailFault.BAD_CREDENTIALS, nativeFaultOf("account.AUTH_FAILED"))
-        assertEquals(NativeMailFault.BAD_CREDENTIALS, nativeFaultOf("account.CHANGE_PASSWORD"))
-        assertEquals(NativeMailFault.SESSION_EXPIRED, nativeFaultOf("service.AUTH_EXPIRED"))
-        assertEquals(NativeMailFault.SESSION_EXPIRED, nativeFaultOf("service.AUTH_REQUIRED"))
-        assertEquals(NativeMailFault.OTHER, nativeFaultOf("service.FAILURE"))
+        val call = NativeFaultOrigin.CALL
+        val auth = NativeFaultOrigin.AUTH
+        assertEquals(NativeMailFault.WAIT_LOST, nativeFaultOf("admin.NO_SUCH_WAITSET", call))
+        assertEquals(NativeMailFault.BAD_CREDENTIALS, nativeFaultOf("account.AUTH_FAILED", auth))
+        assertEquals(NativeMailFault.BAD_CREDENTIALS, nativeFaultOf("account.CHANGE_PASSWORD", auth))
+        assertEquals(NativeMailFault.SESSION_EXPIRED, nativeFaultOf("service.AUTH_EXPIRED", call))
+        assertEquals(NativeMailFault.SESSION_EXPIRED, nativeFaultOf("service.AUTH_REQUIRED", call))
+        assertEquals(NativeMailFault.OTHER, nativeFaultOf("service.FAILURE", call))
+        // Review I1: the page's D8 - NO_SUCH_ACCOUNT answered TO THE SIGN-IN is a closed account;
+        // answered to another call it is an ordinary not-found. ACCOUNT_INACTIVE is unavailable.
+        assertEquals(NativeMailFault.ACCOUNT_CLOSED, nativeFaultOf("account.NO_SUCH_ACCOUNT", auth))
+        assertEquals(NativeMailFault.OTHER, nativeFaultOf("account.NO_SUCH_ACCOUNT", call))
+        assertEquals(NativeMailFault.UNAVAILABLE, nativeFaultOf("account.ACCOUNT_INACTIVE", auth))
+        assertEquals("account_closed", pageFaultKind("account.NO_SUCH_ACCOUNT", auth))
+        assertEquals("not_found", pageFaultKind("account.NO_SUCH_ACCOUNT", call))
+        assertEquals("server", pageFaultKind("service.FAILURE", call))
+    }
+
+    @Test
+    fun `the native fault table is the page's - both held to the one contract`() {
+        // `libs/contracts/mail-fault-kinds.json`, which `mailErrors.test.ts` holds the page's table to.
+        val file = java.io.File(System.getProperty("user.dir"), "../../../libs/contracts/mail-fault-kinds.json")
+        assertTrue("the contract is at ${file.canonicalPath}", file.exists())
+        val contract = JSONObject(file.readText())
+        fun mapOf(o: JSONObject): Map<String, String> = o.keys().asSequence().associateWith { o.getString(it) }
+        assertEquals(mapOf(contract.getJSONObject("call")), NATIVE_PAGE_FAULT_KINDS)
+        assertEquals(mapOf(contract.getJSONObject("auth")), NATIVE_PAGE_AUTH_FAULT_KINDS)
+    }
+
+    @Test
+    fun `one address normalisation, the page's`() {
+        assertEquals("ada@etu.emse.fr", nativeAddress("  Ada@Etu.EMSE.fr "))
+        assertEquals(nativeAddress("ADA@etu.emse.fr"), nativeAddress("ada@etu.emse.fr"))
     }
 
     @Test

@@ -55,6 +55,8 @@ class MailWatchService : Service() {
         private const val ACTION_PAGE_GONE = "fr.emse.canari.mail.PAGE_GONE"
         private const val ACTION_RESUME = "fr.emse.canari.mail.RESUME"
         private const val ACTION_NATIVE_ENDED = "fr.emse.canari.mail.NATIVE_ENDED"
+        private const val ACTION_FORGOTTEN = "fr.emse.canari.mail.FORGOTTEN"
+        private const val EXTRA_RUN = "run"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_REASON = "reason"
@@ -70,6 +72,9 @@ class MailWatchService : Service() {
 
         /** Whether the service holds the foreground. */
         val running: Boolean get() = mode != MailWatchMode.OFF
+
+        /** The id of the native run this service started last: an earlier run's end ends nothing. */
+        @Volatile private var currentRun: Long = 0
 
         /** The persistent notification's text with no page to give it: the app's resources. */
         fun resumeSpec(context: Context): MailWatchSpec {
@@ -106,7 +111,10 @@ class MailWatchService : Service() {
                 is MailWatchCommand.Resume -> intent.setAction(ACTION_RESUME)
                     .putExtra(EXTRA_TITLE, command.spec.title)
                     .putExtra(EXTRA_TEXT, command.spec.text)
-                is MailWatchCommand.NativeEnded -> intent.setAction(ACTION_NATIVE_ENDED).putExtra(EXTRA_REASON, command.reason)
+                is MailWatchCommand.NativeEnded -> intent.setAction(ACTION_NATIVE_ENDED)
+                    .putExtra(EXTRA_REASON, command.reason)
+                    .putExtra(EXTRA_RUN, command.run)
+                MailWatchCommand.Forgotten -> intent.setAction(ACTION_FORGOTTEN)
                 // Never sent as an intent: it arrives as `onTaskRemoved`.
                 MailWatchCommand.TaskRemoved -> intent.setAction(ACTION_PAGE_GONE)
             }
@@ -128,7 +136,8 @@ class MailWatchService : Service() {
                 if (title.isNullOrBlank() || text.isNullOrBlank()) null
                 else MailWatchCommand.Resume(MailWatchSpec(title, text))
             }
-            ACTION_NATIVE_ENDED -> MailWatchCommand.NativeEnded(intent.getStringExtra(EXTRA_REASON) ?: "unspecified")
+            ACTION_NATIVE_ENDED -> MailWatchCommand.NativeEnded(intent.getStringExtra(EXTRA_REASON) ?: "unspecified", intent.getLongExtra(EXTRA_RUN, -1))
+            ACTION_FORGOTTEN -> MailWatchCommand.Forgotten
             else -> null
         }
 
@@ -137,7 +146,7 @@ class MailWatchService : Service() {
          * watcher is gone - the table hands the watch to the native watcher when armed, else leaves.
          */
         fun stopForPageGone(context: Context) {
-            NativeMailWatcher.pageGone()
+            NativeMailWatcher.pageReleased()
             if (mode != MailWatchMode.PAGE) return
             Log.i(TAG, "the page that ran the mail watch is gone - telling the service")
             try {
@@ -160,8 +169,15 @@ class MailWatchService : Service() {
             return stickiness()
         }
         val armed = MailWatchVault.armed(this) != null
-        val effect = decideMailWatch(mode, command, armed)
+        val effect = decideMailWatch(mode, command, armed, currentRun)
         Log.i(TAG, "${command.javaClass.simpleName} in $mode (armed=$armed) -> ${effect.javaClass.simpleName}") // log-safe: an enum mode, a boolean and class names
+        if (command is MailWatchCommand.Resume && mode == MailWatchMode.OFF && effect !is MailWatchEffect.EnterForeground) {
+            // A Resume arrives through startForegroundService (boot, update, a sticky restart): the
+            // service MUST enter the foreground before it may leave, or the system kills the app
+            // (review minor 4). It enters, then leaves at once.
+            if (enterForegroundOnly(resumeSpec(this), startId)) leave("resume with nothing to watch", startId)
+            return stickiness()
+        }
         when (effect) {
             is MailWatchEffect.EnterForeground -> enterForeground(effect.spec, effect.mode, startId)
             is MailWatchEffect.Refresh -> notificationManager().notify(NOTIFICATION_ID, notification(effect.spec))
@@ -190,9 +206,9 @@ class MailWatchService : Service() {
 
     private fun startNative() {
         mode = MailWatchMode.NATIVE
-        NativeMailWatcher.start(this) { reason ->
+        currentRun = NativeMailWatcher.start(this) { run, reason ->
             try {
-                startService(intentFor(this, MailWatchCommand.NativeEnded(reason)))
+                startService(intentFor(this, MailWatchCommand.NativeEnded(reason, run)))
             } catch (e: IllegalStateException) {
                 Log.e(TAG, "the native end was not delivered: ${e.javaClass.simpleName}")
             }
@@ -200,6 +216,14 @@ class MailWatchService : Service() {
     }
 
     private fun enterForeground(spec: MailWatchSpec, target: MailWatchMode, startId: Int) {
+        if (!enterForegroundOnly(spec, startId)) return
+        Log.i(TAG, "in the foreground ($target): the mail watch keeps its connection")
+        if (target == MailWatchMode.NATIVE) startNative() else mode = target
+        MailWatchBridge.emit("started", target.name.lowercase())
+    }
+
+    /** Holds the foreground with [spec]; `false` (said to the page, the service stopped) when refused. */
+    private fun enterForegroundOnly(spec: MailWatchSpec, startId: Int): Boolean {
         ensureChannel()
         try {
             ServiceCompat.startForeground(
@@ -215,11 +239,9 @@ class MailWatchService : Service() {
             Log.e(TAG, "startForeground refused (${refusal.code}): ${e.javaClass.simpleName}")
             MailWatchBridge.emit("failed", refusal.code)
             stopSelf(startId)
-            return
+            return false
         }
-        Log.i(TAG, "in the foreground ($target): the mail watch keeps its connection")
-        if (target == MailWatchMode.NATIVE) startNative() else mode = target
-        MailWatchBridge.emit("started", target.name.lowercase())
+        return true
     }
 
     private fun leave(reason: String, startId: Int?) {
@@ -233,8 +255,8 @@ class MailWatchService : Service() {
     /** The user swiped the app away: the page - and so the watcher - went with the task. */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        val effect = decideMailWatch(mode, MailWatchCommand.TaskRemoved, MailWatchVault.armed(this) != null)
-        Log.i(TAG, "TaskRemoved in $mode -> ${effect.javaClass.simpleName}")
+        val effect = decideMailWatch(mode, MailWatchCommand.TaskRemoved, MailWatchVault.armed(this) != null, currentRun)
+        Log.i(TAG, "TaskRemoved in $mode -> ${effect.javaClass.simpleName}") // log-safe: an enum mode and a class name
         when (effect) {
             is MailWatchEffect.Leave -> leave(effect.reason, startId = null)
             MailWatchEffect.HandToNative -> startNative()

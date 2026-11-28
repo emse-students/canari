@@ -23,6 +23,7 @@ import fr.emse.canari.mail.MailSummary
 import fr.emse.canari.mail.MailWatchCommand
 import fr.emse.canari.mail.MailWatchSpec
 import fr.emse.canari.mail.NativeVaultRecord
+import fr.emse.canari.mail.nativeAddress
 import fr.emse.canari.mail.mailBridgeMessageAccepted
 import fr.emse.canari.mail.mailNoticeOf
 import fr.emse.canari.mail.mailSummaryOf
@@ -35,7 +36,8 @@ import org.json.JSONObject
  *
  * Down: `MainActivity` registers `window.canariMail` through [register] - a WEB MESSAGE LISTENER,
  * one JSON op per message (`start`, `stop`, `notify`, `summary`, and for lot 4b's native watcher
- * `page`, `claim`, `arm`), delivered only from the app's origin and acted on only from the top frame.
+ * `page`, `claim`, `arm`, `forget`, `release`), delivered only from the app's origins
+ * (`mailBridgeOrigins`) and acted on only from the top frame.
  * Up: ONE DOM event, `canari:mail-native`, `kind` `started` (`code` the mode: `page` or `native`),
  * `failed` (with the [StartRefusal] `code`: `off-screen` is answered by the page at its next return
  * on screen), `stopped` (the service went away on its own), `handed` (the native run is joined: the
@@ -65,9 +67,14 @@ object MailWatchBridge {
         webView = view
     }
 
-    /** Clears [view] only if it is still the attached one: a relaunched activity attaches first. */
-    fun detach(view: WebView) {
-        if (webView === view) webView = null
+    /**
+     * Clears [view] only if it is still the attached one: a relaunched activity attaches first.
+     * `true` when [view] WAS the page - only then is its going the page's going.
+     */
+    fun detach(view: WebView): Boolean {
+        if (webView !== view) return false
+        webView = null
+        return true
     }
 
     /** Sends one event to the page; built with [JSONObject], so nothing is spliced in as code. */
@@ -248,12 +255,11 @@ object MailWatchBridge {
                 o.optString("publicTitle", ""),
                 o.optString("link", ""),
             ).fold(onSuccess = { postSummary(context, it) }, onFailure = ::refused)
-            MailBridgeOp.PAGE -> {
-                NativeMailWatcher.pageGone()
-                MailWatchService.stopForPageGone(context)
-            }
+            MailBridgeOp.PAGE -> MailWatchService.stopForPageGone(context)
             MailBridgeOp.CLAIM -> claim(context)
             MailBridgeOp.ARM -> arm(context, o.optString("userId", ""), o.optString("account", ""), o.optString("password", ""))
+            MailBridgeOp.FORGET -> NativeMailWatcher.forget(context, o.optString("userId", "").ifBlank { null })
+            MailBridgeOp.RELEASE -> NativeMailWatcher.pageReleased()
             null -> Log.e(TAG, "message refused: an unknown op")
         }
     }
@@ -280,10 +286,13 @@ object MailWatchBridge {
             emit("armed", "failed")
             return
         }
-        Thread({
-            val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(account, password))
+        // The generation is read NOW, on the message's arrival: a forget sent after this arm bumps it,
+        // and the arm, run after on the same executor, then seals nothing (review I3).
+        val sentAt = MailWatchVault.armGeneration()
+        MailWatchVault.ops.execute {
+            val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(nativeAddress(account), password), sentAt)
             emit("armed", if (ok) "ok" else "failed")
-        }, "canari-mail-arm").start()
+        }
     }
 
     private fun refused(error: Throwable) {
