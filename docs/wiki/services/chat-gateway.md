@@ -18,6 +18,7 @@ It does **not** perform encryption, store messages, or make business logic decis
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
+| GET | `/api/mail/relay` | yes (JWT cookie or `?token=`, as `/api/ws`) | The blind mail relay: a WebSocket piped to ONE TCP upstream (`partage.emse.fr:443`), for eligible accounts only, OFF unless `MAIL_RELAY_ENABLED` ([mail-client-transport](../mail-client-transport.md#the-relay)) |
 | POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000) the caller may see ([audience](#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | GET | `/api/presence?users=` | yes | LEGACY, the same answer for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
 | GET | `/api/admin/presence` | yes (global admin) | Counts of connected people and devices by platform and app version - never an id ([census](#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
@@ -913,4 +914,7 @@ wrong**, and nothing said so for either.
 | `SOCIAL_SERVICE_URL` | yes | - | social-service base, no `/api` (`http://social-service:3014`); asked for the community half. Unset: same |
 | `INTERNAL_SECRET` | yes | - | Sent as `X-Internal-Secret` on both audience questions. Unset: same |
 | `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist, and the origins a socket upgrade may name (`*` admits none of those). `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
+| `MAIL_RELAY_ENABLED` | no | off | The mail relay's switch: unset, empty, `0` or `false` is OFF (`/api/mail/relay` answers 404); `1` or `true` is ON; anything else STOPS the gateway at boot ([mail-client-transport](../mail-client-transport.md#the-relay)) |
+| `MAIL_RELAY_UPSTREAM` | when the relay is on | `partage.emse.fr:443` (compose) | The relay's ONE destination, `host:port`; a list, a URL or a wildcard STOPS the gateway at boot |
+| `CORE_SERVICE_URL` | when the relay is on | - | core-service base, no `/api`; asked, with `INTERNAL_SECRET`, for the mail CLASS of the account opening a relay socket (`GET /api/internal/users/:id/mail-class`, one row read) |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

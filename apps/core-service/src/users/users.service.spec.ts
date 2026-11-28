@@ -338,6 +338,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     cursus: [{ formation: 'ISMIN', promo: 2025 }],
     posts: ['ALUMNI' as const],
     alumniLinked: null,
+    mailClass: null,
   };
 
   function makeService(existing: Partial<User> | null, affected = 1) {
@@ -364,6 +365,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
         cursus: [],
         posts: [],
         alumniLinked: null,
+        mailClass: null,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
       warn.mockClear();
@@ -404,12 +406,22 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       cursus: [],
       posts: ['EMSE'],
       alumniLinked: false,
+      mailClass: null,
     });
     // The changed claims as one column update; the row read is never saved back.
     expect(save).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ id: 's1' }, expect.not.objectContaining({ admin: true }));
     expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(
-      ['alumniLinked', 'campus', 'cursus', 'formation', 'miconnectUuid', 'posts', 'promo'].sort()
+      [
+        'alumniLinked',
+        'campus',
+        'cursus',
+        'formation',
+        'mailClass',
+        'miconnectUuid',
+        'posts',
+        'promo',
+      ].sort()
     );
     expect(user).toMatchObject({
       campus: 'saint-etienne',
@@ -418,6 +430,65 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       promo: null,
       formation: null,
     });
+  });
+
+  it('refreshes the mail class at each sign-in, the class and never an address', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service, update } = makeService(stored);
+    await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', { ...profile, mailClass: 'student' });
+    expect(update).toHaveBeenCalledWith(
+      { id: 's1' },
+      expect.objectContaining({ mailClass: 'student' })
+    );
+    // And a claim that vanished takes the class away: not offered, never a stale "student".
+    const back = makeService({ ...stored, mailClass: 'student' });
+    await back.service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
+    expect(back.update).toHaveBeenCalledWith(
+      { id: 's1' },
+      expect.objectContaining({ mailClass: null })
+    );
+  });
+
+  it('leaves the stored class alone when the sign-in carried none (scope not granted)', async () => {
+    const stored = {
+      id: 's1',
+      displayName: 'A B',
+      firstName: 'A',
+      lastName: 'B',
+      ...profile,
+      mailClass: 'student' as const,
+      promo: 2025,
+      formation: 'ISMIN',
+    };
+    const { mailClass: _granted, ...ungranted } = profile;
+    const { service, update } = makeService(stored);
+    const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', ungranted);
+    expect(update).not.toHaveBeenCalled();
+    expect(user.mailClass).toBe('student');
+    // And a change elsewhere does not carry the class with it.
+    const other = makeService(stored);
+    await other.service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+      ...ungranted,
+      campus: 'saint-etienne',
+    });
+    expect(other.update.mock.calls[0][1]).not.toHaveProperty('mailClass');
+  });
+
+  it('returns the STORED class when the update is refused, and the other claims as before', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service, update } = makeService(stored);
+    update.mockRejectedValueOnce(new Error('database refused'));
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const user = await service.findOrCreateFromOidc('s1', 'A B 2', 'A', 'B', {
+      ...profile,
+      campus: 'saint-etienne',
+      mailClass: 'student',
+    });
+    // The class is the one thing the answer must not claim unwritten (the relay reads the column).
+    expect(user.mailClass).toBeNull();
+    // Every other claim joins the answer whatever the write did, exactly as before the mail class.
+    expect(user).toMatchObject({ campus: 'saint-etienne', displayName: 'A B 2' });
+    warn.mockRestore();
   });
 
   it('does not write when nothing changed', async () => {

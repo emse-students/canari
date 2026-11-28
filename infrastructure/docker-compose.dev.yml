@@ -175,6 +175,12 @@ services:
       # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
       SOCIAL_SERVICE_URL: http://mesh:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      # THE MAIL RELAY (/api/mail/relay, docs/wiki/mail-client-transport.md): OFF unless
+      # MAIL_RELAY_ENABLED is 1 (D12). It dials ONE upstream, and asks core-service whether an
+      # account is eligible; an ON that names anything else than one host:port stops the gateway.
+      MAIL_RELAY_ENABLED: ${MAIL_RELAY_ENABLED:-}
+      MAIL_RELAY_UPSTREAM: ${MAIL_RELAY_UPSTREAM:-partage.emse.fr:443}
+      CORE_SERVICE_URL: http://mesh:3012
       # Never `*`. This environment is publicly resolvable and testers sign in with real accounts;
       # a wildcard allowlist there is a different thing from a wildcard on a laptop.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}

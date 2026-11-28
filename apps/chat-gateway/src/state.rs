@@ -123,6 +123,8 @@ pub struct AppState {
     /// The coarse (5-minute, 30-day) series of the census ([`crate::census::COARSE_KEY`] outside
     /// tests).
     pub census_coarse_key: String,
+    /// The blind mail relay (`crate::mail_relay`), `None` while `MAIL_RELAY_ENABLED` is off.
+    pub mail_relay: Option<Arc<crate::mail_relay::MailRelay>>,
 }
 
 impl AppState {
@@ -152,6 +154,7 @@ impl AppState {
             legacy_presence_gets: crate::presence::LegacyGetTally::new(std::time::Instant::now()),
             census_key: crate::census::SAMPLES_KEY.to_string(),
             census_coarse_key: crate::census::COARSE_KEY.to_string(),
+            mail_relay: None,
         }
     }
 

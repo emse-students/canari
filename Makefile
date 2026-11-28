@@ -417,6 +417,8 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/api-error-cors.test.mjs
 	@bun .github/scripts/tests/nginx-body-buffer.test.mjs
 	@bun .github/scripts/tests/live-segments-route.test.mjs
+	@bun .github/scripts/tests/mail-relay-route.test.mjs
+	@bun .github/scripts/tests/school-mail-claim.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs

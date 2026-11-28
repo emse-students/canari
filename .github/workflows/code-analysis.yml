@@ -543,14 +543,14 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
-      # Four committed Cargo.lock files, four audits. A loop rather than one root call: these
+      # Five committed Cargo.lock files, five audits. A loop rather than one root call: these
       # crates are not one workspace, so a single `cargo audit` would read one lockfile and call
-      # the other three clean by never opening them.
+      # the other four clean by never opening them.
       - name: Audit Rust dependencies
         run: |
           set -uo pipefail
           failed=""
-          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
+          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/mail-tls frontend/src-tauri; do
             echo "--- $crate"
             ( cd "$crate" && cargo audit ) || failed="$failed $crate"
           done
@@ -571,7 +571,7 @@ jobs:
           set -uo pipefail
           failed=""
           bare=$(mktemp -d)
-          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
+          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/mail-tls frontend/src-tauri; do
             ids=$(grep -oE '^[[:space:]]*"RUSTSEC-[0-9]{4}-[0-9]{4}"' "$crate/.cargo/audit.toml" | tr -d ' "' || true)
             [ -n "$ids" ] || continue
             echo "--- $crate"

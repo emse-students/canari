@@ -232,8 +232,9 @@ WASM_DIR=frontend/src/lib/wasm
 WASM_KEY_FILE="$WASM_DIR/.canari-source-key"
 
 wasm_key() {
-  printf '%s %s %s %s\n' \
+  printf '%s %s %s %s %s\n' \
     "$(git rev-parse HEAD:frontend/mls-wasm)" "$(git rev-parse HEAD:frontend/mls-core)" \
+    "$(git rev-parse HEAD:frontend/mail-tls)" \
     "$(git rev-parse HEAD:rust-toolchain.toml)" "$(wasm-pack --version 2>/dev/null || echo none)"
 }
 
@@ -245,7 +246,7 @@ frontend_generated() {
   # worktree shares. A check never writes that config (lead, 2026-11-15): the value follows the
   # checkout a HUMAN ran `bun install` in. So the install is told not to, at the source.
   CANARI_KEEP_HOOKS_PATH=1 bash .github/scripts/checks.sh frontend-prepare
-  if [ ! -s "$WASM_DIR/mls_wasm_bg.wasm" ] || [ "$(cat "$WASM_KEY_FILE" 2>/dev/null)" != "$(wasm_key)" ]; then
+  if [ ! -s "$WASM_DIR/mls_wasm_bg.wasm" ] || [ ! -s "$WASM_DIR/mail-tls/mail_tls_bg.wasm" ] || [ "$(cat "$WASM_KEY_FILE" 2>/dev/null)" != "$(wasm_key)" ]; then
     echo "the MLS WASM is missing or was built from other sources: rebuilding it"
     bash ./scripts/install-wasm-pack.sh
     bash .github/scripts/checks.sh mls-wasm-build

@@ -4,6 +4,7 @@
     "kit.config.js",
     "src/env.ts",
     "src/lib/mlsServicePlatform.native.ts",
+    "src/lib/mail/connect.ts",
     "scripts/**/*.{ts,js,mjs}"
   ],
   "project": ["src/**/*.{ts,js,svelte}", "scripts/**/*.{ts,js,mjs}"],

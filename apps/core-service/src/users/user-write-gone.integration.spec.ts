@@ -56,6 +56,7 @@ const PROFILE = {
   cursus: [{ formation: 'ISMIN' as const, promo: 2024 }],
   posts: ['ME' as const],
   alumniLinked: null,
+  mailClass: null,
 };
 const EDIT = { ...PROFILE, firstName: 'Camille', lastName: 'Durand' };
 /** The notepad every seeded account holds, in its pre-encryption plaintext form. */

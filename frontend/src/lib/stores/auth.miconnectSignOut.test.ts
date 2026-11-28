@@ -38,8 +38,15 @@ vi.mock('$app/navigation', () => ({
 vi.stubEnv('VITE_AUTHENTIK_URL', 'https://auth.example');
 vi.stubEnv('VITE_AUTHENTIK_CLIENT_ID', 'client');
 
-const { planMiconnectSignOut, handleOidcCallback, leaveSignedOut, startOidcLogin } =
-  await import('$lib/stores/auth');
+const {
+  planMiconnectSignOut,
+  handleOidcCallback,
+  leaveSignedOut,
+  startOidcLogin,
+  schoolMailAddress,
+  startSchoolMailActivation,
+  clearAuth,
+} = await import('$lib/stores/auth');
 
 /** A promise the test settles by hand - the in-app browser's answer, which comes when its sheet goes. */
 function deferred<T>() {
@@ -158,6 +165,71 @@ describe('from sign-in to sign-out', () => {
     await leaveSignedOut();
 
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the school address a sign-in carried for the mail sign-in, and drops it at sign-out', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await signIn({
+      access_token: 'h.e30.s',
+      id_token: idToken(),
+      school_mail: 'Jane.Doe@etu.emse.fr',
+      user: { id: 'user-1' },
+    });
+    expect(await schoolMailAddress()).toBe('jane.doe@etu.emse.fr');
+    // Logged by class, never by value.
+    expect(log.mock.calls.flat().join(' ')).not.toContain('jane.doe');
+
+    // A sign-in without the claim (Alumni account, or MiConnect before the blueprint) forgets it.
+    await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-2' } });
+    expect(await schoolMailAddress()).toBeNull();
+
+    // One off the school domains is not kept, and says so without naming it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await signIn({
+      access_token: 'h.e30.s',
+      id_token: idToken(),
+      school_mail: 'someone@example.org',
+      user: { id: 'user-3' },
+    });
+    expect(await schoolMailAddress()).toBeNull();
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('example.org');
+
+    await signIn({
+      access_token: 'h.e30.s',
+      id_token: idToken(),
+      school_mail: 'john.roe@emse.fr',
+      user: { id: 'user-4' },
+    });
+    expect(await schoolMailAddress()).toBe('john.roe@emse.fr');
+    await clearAuth('session-expired');
+    expect(await schoolMailAddress()).toBeNull();
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('asks MiConnect for the school_mail scope', async () => {
+    invokeMock.mockResolvedValue({ outcome: 'completed' });
+    await startOidcLogin('/chat');
+    const url = new URL((invokeMock.mock.calls[0]![1] as { url: string }).url);
+    expect(url.searchParams.get('scope')?.split(' ')).toContain('school_mail');
+  });
+
+  it('the mail activation is the ordinary sign-in, asking for school_mail and coming back', async () => {
+    invokeMock.mockResolvedValue({ outcome: 'completed' });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await startSchoolMailActivation('/mail');
+    const url = new URL((invokeMock.mock.calls[0]![1] as { url: string }).url);
+    expect(url.searchParams.get('scope')?.split(' ')).toContain('school_mail');
+    expect(localStorage.getItem('canari_oidc_return')).toBe('/mail');
+    // Its callback is the one every sign-in takes: it keeps the address.
+    await signIn({
+      access_token: 'h.e30.s',
+      id_token: idToken(),
+      school_mail: 'jane.doe@etu.emse.fr',
+      user: { id: 'user-1' },
+    });
+    expect(await schoolMailAddress()).toBe('jane.doe@etu.emse.fr');
+    log.mockRestore();
   });
 
   it('goes to /login at once, without waiting for the end-session sheet to close', async () => {

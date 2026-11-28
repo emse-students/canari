@@ -190,6 +190,12 @@ services:
       # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
       SOCIAL_SERVICE_URL: http://mesh:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      # THE MAIL RELAY (/api/mail/relay, docs/wiki/mail-client-transport.md): OFF unless
+      # MAIL_RELAY_ENABLED is 1 (D12). It dials ONE upstream, and asks core-service whether an
+      # account is eligible; an ON that names anything else than one host:port stops the gateway.
+      MAIL_RELAY_ENABLED: ${MAIL_RELAY_ENABLED:-}
+      MAIL_RELAY_UPSTREAM: ${MAIL_RELAY_UPSTREAM:-partage.emse.fr:443}
+      CORE_SERVICE_URL: http://mesh:3012
       # THE CORS ALLOWLIST, AND THE ONLY SERVICE THAT READS IT. It was a `"*"` LITERAL here until
       # 2026-08-30, which beat anything in `.env` - so the list CD had been writing since the iOS
       # incident reached nothing, and this gateway answered every origin on earth. It is not `:-`

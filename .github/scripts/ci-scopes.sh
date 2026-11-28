@@ -26,7 +26,7 @@ if [[ ! -f "$SELF" ]]; then
   exit 1
 fi
 # ── Full matrices (used as fallback) ──
-ALL_RUST='[{"name":"Chat Gateway","path":"apps/chat-gateway"},{"name":"Call Service (SFU)","path":"apps/call-service"},{"name":"Frontend MLS Core","path":"frontend/mls-core"},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","wasm":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","tauri":true}]'
+ALL_RUST='[{"name":"Chat Gateway","path":"apps/chat-gateway"},{"name":"Call Service (SFU)","path":"apps/call-service"},{"name":"Frontend MLS Core","path":"frontend/mls-core"},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","wasm":true},{"name":"Frontend Mail TLS","path":"frontend/mail-tls"},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","tauri":true}]'
 ALL_TS='["apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
 
 # EVERY OUTPUT THIS JOB DECLARES, OR "run everything" IS A LIE. Two were missing until
@@ -116,6 +116,10 @@ fi
 # mls-wasm depends on mls-core
 if [[ "$mls_core" == "true" ]] || has '^frontend/mls-wasm/'; then
   rust+=('{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","wasm":true}')
+fi
+# The mail client's TLS crate stands alone (no path dependency): only its own sources trigger it.
+if has '^frontend/mail-tls/'; then
+  rust+=('{"name":"Frontend Mail TLS","path":"frontend/mail-tls"}')
 fi
 # AND SO DOES THE NATIVE CRATE, WHICH NOTHING HERE COMPILED UNTIL 2026-08-23. A variant
 # added to `mls_core::DecryptErrorKind` broke `src-tauri`'s exhaustive match, and every
@@ -218,7 +222,7 @@ if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/'
    has '^\.github/scripts/dead-code-ratchet\.mjs' || \
    has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
    has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
-   has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+   has '^frontend/mls-wasm/' || has '^frontend/mail-tls/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
   echo "frontend=true"
 else
   echo "frontend=false"

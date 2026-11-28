@@ -4,6 +4,7 @@ mod census;
 mod frame_census;
 mod handlers;
 mod log_repeat;
+mod mail_relay;
 mod models;
 mod origin;
 mod presence;
@@ -24,6 +25,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::audience::PresenceAudience;
 use crate::handlers::ws_handler;
+use crate::mail_relay::mail_relay_handler;
 use crate::presence::{
     get_admin_presence, get_admin_presence_history, get_presence, post_presence,
 };
@@ -227,6 +229,39 @@ async fn main() {
         frame_limits.max_frames_per_minute
     );
     app_state.frame_limits = frame_limits;
+
+    // The blind mail relay (D12: OFF unless switched on). An unreadable switch, or an ON that does
+    // not name exactly one upstream and an eligibility source, STOPS the gateway here: a relay is
+    // an open door if its destination is anything but the one written down.
+    let env = |name: &str| std::env::var(name).ok();
+    match mail_relay::RelayConfig::from_values(
+        env("MAIL_RELAY_ENABLED").as_deref(),
+        env("MAIL_RELAY_UPSTREAM").as_deref(),
+        env("CORE_SERVICE_URL").as_deref(),
+        env("INTERNAL_SECRET").as_deref(),
+    ) {
+        Ok(None) => tracing::info!(
+            "[mail-relay] off (MAIL_RELAY_ENABLED is not set) - /api/mail/relay answers 404"
+        ),
+        Ok(Some(config)) => {
+            tracing::info!(
+                "[mail-relay] ON: one upstream, {}; at most {} connections per account, {} in all, {} bytes per connection; per account {} new connections per {} s and {} bytes per {} s",
+                config.upstream,
+                mail_relay::MAX_MAIL_CONNECTIONS_PER_ACCOUNT,
+                mail_relay::MAX_MAIL_CONNECTIONS,
+                mail_relay::MAX_BYTES_PER_CONNECTION,
+                mail_relay::MAX_NEW_CONNECTIONS_PER_WINDOW,
+                mail_relay::NEW_CONNECTION_WINDOW.as_secs(),
+                mail_relay::ACCOUNT_BYTE_BUDGET,
+                mail_relay::BYTE_BUDGET_WINDOW.as_secs()
+            );
+            app_state.mail_relay = Some(Arc::new(mail_relay::MailRelay::new(config)));
+        }
+        Err(refusal) => {
+            tracing::error!("[mail-relay] configuration REFUSED: {refusal}");
+            std::process::exit(1);
+        }
+    }
     let app_state = Arc::new(app_state);
 
     // ── Redis pub/sub subscriber ──────────────────────────────────────────
@@ -246,6 +281,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health_check))
         .route("/api/ws", get(ws_handler))
+        .route("/api/mail/relay", get(mail_relay_handler))
         // POST carries the ids in its body; GET is the legacy shim for installed clients
         // (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
         .route("/api/presence", get(get_presence).post(post_presence))

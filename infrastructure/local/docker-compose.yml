@@ -94,6 +94,12 @@ services:
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
       SOCIAL_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      # THE MAIL RELAY (/api/mail/relay, docs/wiki/mail-client-transport.md): OFF unless
+      # MAIL_RELAY_ENABLED is 1 (D12). It dials ONE upstream, and asks core-service whether an
+      # account is eligible; an ON that names anything else than one host:port stops the gateway.
+      MAIL_RELAY_ENABLED: ${MAIL_RELAY_ENABLED:-}
+      MAIL_RELAY_UPSTREAM: ${MAIL_RELAY_UPSTREAM:-partage.emse.fr:443}
+      CORE_SERVICE_URL: http://core-service:3012
       # A LIST, NEVER "*": a socket upgrade must come from an allowed origin, and the gateway takes
       # no wildcard for one (docs/wiki/services/chat-gateway.md). The nginx entry, the Vite dev
       # server and the Tauri WebViews. A phone's chat socket is opened by the native plugin and

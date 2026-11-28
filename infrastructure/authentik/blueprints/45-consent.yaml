@@ -72,7 +72,7 @@ entries:
       label: "Version des conditions"
       type: "hidden"
       order: 3
-      initial_value: "2026-11-24"
+      initial_value: "2026-11-28"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-date"
@@ -103,7 +103,7 @@ entries:
         if "authentik/impersonate/user" in session:
             ak_logger.info("miconnect-consent: impersonated session, terms neither shown nor written")
             return False
-        return request.user.attributes.get("cgu_version") != "2026-11-24"
+        return request.user.attributes.get("cgu_version") != "2026-11-28"
   # THE TICK IS CHECKED HERE, because `required` on a checkbox is not: authentik builds a checkbox as
   # a BooleanField with required=False, so `required: true` above only reaches the browser's form,
   # and a POST without the tick was ACCEPTED and written (driven 2026-10-16 by test-consent-flow.py).

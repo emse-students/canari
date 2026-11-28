@@ -1,0 +1,430 @@
+# The mail client's transport - as built, lot 1
+
+**What this page is.** The design of the school mailbox in Canari is [mail-client](mail-client.md)
+(decisions D1-D12, shipped in the same pull request as lot 1). This page is what lot 1 BUILT of it:
+the pipe that carries bytes from a Canari client to `partage.emse.fr` and back, with TLS ended IN THE
+CLIENT (D3), so no Canari server stores a mail password, a session token or a message, and the relay
+carries ciphertext only; and who may use it (D1). On the web the page that handles the password is
+served by our server, so a compromise of it could capture passwords as they are typed: the threat
+model is written in [mail-client](mail-client.md#what-it-is-and-for-whom), principle 1. **Nothing
+in lot 1 is visible to a user**: no tab, no string, no route a page calls. Lot 2 builds the session
+on top of it.
+
+```
+  web page                                          Tauri app (desktop, Android, iOS)
+  ZimbraSoapClient   (JSON SOAP, frontend/src/lib/mail/soapClient.ts)
+  Http1Connection    (HTTP/1.1 keep-alive on BYTES, http1.ts)
+  TlsConnection      (rustls in WASM, tlsConnection.ts + frontend/mail-tls)
+        |                                                 |
+  relayTransport (WebSocket)                    tauriSocketTransport (native TCP)
+        |                                                 |
+  nginx /api/mail/relay -> chat-gateway          mail_socket.rs, ONE compile-time host:port
+  (blind relay, ONE upstream)                             |
+        +--------------------> partage.emse.fr:443 <------+
+```
+
+## The TLS client (`frontend/mail-tls`)
+
+A sans-IO rustls `ClientConnection`, wrapped for wasm-bindgen (`src/wasm.rs`, `MailTlsClient`) and
+usable natively as a plain Rust library (`src/lib.rs`, `MailTls`). The page feeds it what the
+transport received (`feedCiphertext`), sends what it owes (`takeCiphertext`), and reads and writes
+plaintext. It knows ONE name, `partage.emse.fr` (`SERVER_NAME`): the certificate must carry it, and
+the ClientHello's SNI names it. A failure is TYPED at the throw, as `kind` on the error -
+`certificate`, `peer_alert`, `incompatible`, `protocol`, `closed` - and the TypeScript side reads the
+kind, never the message (`asMailTlsError`; anything else is `internal`). The rustls errors are
+classified by VARIANT (`From<rustls::Error>`): an invalid certificate and NO certificate are both
+`certificate`; a server offering nothing this client accepts (`PeerIncompatible`) is `incompatible`;
+an alert the server sent is `peer_alert`; everything else is `protocol`.
+
+**TLS 1.3 only.** The crate's rustls features are `ring` and `std`, and `tls12` is NOT enabled:
+`partage.emse.fr` answers TLS 1.3, and a 1.2 code path nobody exercises is attack surface. A server
+that ever offered 1.2 only would be refused as `incompatible`, typed.
+
+**What the engine buffers, and why.** rustls caps the plaintext it holds unread at 16 KiB and stops
+processing records past it, so a server answer larger than that would stall a sans-IO client that
+reads only between feeds. `feed_ciphertext` therefore DRAINS: read_tls, process the records, move the
+plaintext into the crate's own buffer, repeat until the input is consumed - so a feed of any size is
+processed whole. On the send side `set_buffer_limit(None)` lifts rustls's 64 KiB cap on unsent
+ciphertext, so a `write_plaintext` of any size is accepted in one call; a write failure is
+`protocol`, never mistyped. The peer's `close_notify` is recorded (`peer_closed`), which is what the
+HTTP layer needs to tell a complete connection-framed body from a cut one (below).
+
+It is built exactly like `mls-wasm` and, like it, NOT committed: `bun run wasm:build` builds both
+(`wasm-pack build mail-tls --target web --out-dir ../src/lib/wasm/mail-tls`, after `mls-wasm`, whose
+out-dir is the parent), the CI action `.github/actions/build-mls-wasm` builds and verifies both, and
+`frontend/src/lib/wasm/` stays gitignored ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).
+The page loads it with a DYNAMIC import (`loadMailTlsEngine`), so the module and its binary are their
+own chunk, fetched when the first mail connection is made and never by a page that does not open one.
+A load that fails is a `MailTlsLoadError`, typed `http_status` (the binary answered a non-2xx) or
+`unavailable` (the import or the instantiation failed).
+
+**Its size, measured 2026-11-27:** `mail_tls_bg.wasm` is 561,849 bytes, 260,753 gzipped (`-9`),
+release profile `opt-level = "z"`, LTO, one codegen unit, `panic = "abort"`. About a quarter of
+`mls_wasm_bg.wasm` (2.48 MB). Measured before `tls12` was dropped, which only shrinks it.
+
+### The crypto provider
+
+**ring 0.17**, with its `wasm32_unknown_unknown_js` feature, for both targets. Why:
+
+- it is rustls's own provider and builds for `wasm32-unknown-unknown` and every native target the
+  apps ship, so one configuration serves both (`provider()` in `lib.rs`);
+- the pure-Rust alternative (`rustls-rustcrypto`) drags `rsa` and `crypto-bigint`, which carry open
+  RUSTSEC advisories - and the audit blocks on what we ship ([cicd](cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17));
+- `aws-lc-rs` does not build for `wasm32-unknown-unknown`.
+
+**Its cost: ring compiles C for wasm32**, so the build needs a clang with the WebAssembly backend.
+LLVM's clang has it (Windows and Linux runners); Apple's clang does not, so the action finds one on
+macOS (Homebrew `llvm`) and exports `CC_wasm32_unknown_unknown` / `AR_wasm32_unknown_unknown`, after
+a probe that compiles one C file for the target and fails the step loudly if it cannot. **It ran in
+CI** (run 46019027381, the iOS job, 2026-11-27): the macOS image carries no Homebrew LLVM, so the
+step installs it - `llvm 23.1.6`, a 457 MB bottle, about 45 s - and the probe passed. That cost is
+paid on a CACHE MISS only (the WASM cache keys on `frontend/mail-tls/**`, beside mls-wasm's); a hit
+skips the step.
+
+Randomness is `getrandom` through the browser's `crypto.getRandomValues` (ring's `js` feature). The
+clock, which rustls reads for certificate validity, is `rustls-pki-types`' `web` feature
+(`Date.now()`): without it rustls's std code does not compile for wasm32 at all.
+
+### The roots
+
+`webpki-roots` (Mozilla's set, compiled in). Not the platform's store: the WASM has none, and one set
+on every platform means a certificate is judged the same everywhere. A change of CA on the school's
+side breaks the client only if the new CA is outside Mozilla's set; the error is then `certificate`,
+typed, and never retried.
+
+### Its tests (`cargo test` in `frontend/mail-tls`)
+
+Thirteen, against an in-process rustls server with an `rcgen` certificate: the ClientHello carries
+the SNI; a full handshake carries plaintext both ways; an untrusted root, another root and a wrong
+name are each refused as `certificate`; non-TLS bytes are `protocol`; the peer's close_notify is seen
+and a write after `close` is refused; the error codes are distinct; a 200 KiB answer arrives whole
+whether fed in 64 KiB pieces or at once (the drain); a 1 MiB write is accepted in one call; rustls's
+failures are classified by variant (no certificate is `certificate`, `PeerIncompatible` is
+`incompatible`, a bad record MAC is `protocol`); and a close_notify sent after plaintext leaves that plaintext readable.
+
+## The relay
+
+`GET /api/mail/relay` on chat-gateway (`apps/chat-gateway/src/mail_relay.rs`): a WebSocket whose
+binary frames are piped, both ways, to a TCP connection to ONE upstream. It is BLIND: it reads no
+byte for meaning, and the only thing it looks at is the TLS record HEADER (content type, length), to
+count records by type for the end-of-connection line - never their content, which is ciphertext.
+
+**Its admission, in order** (`mail_relay_handler`). The REQUEST is refused before the upgrade, as an
+HTTP status: the switch is off -> 404; the `Origin` is not in `ALLOW_ORIGIN` -> 403 (the same check
+as `/api/ws`); no valid access token (cookie `canari_ws_token`, else `?token=`, the same rule as
+`/api/ws`, through the shared `socket_token`) -> 401. The ACCOUNT is refused AFTER the upgrade, with a
+close code, because a browser reads the close code of an open socket while a refused upgrade reaches
+the page as a bare 1006 whatever its status (lead, 2026-11-28): no place under a cap -> 4006; not
+eligible -> 4005; eligibility unknown -> 4007. Such a socket holds no place and dials no upstream; it
+is closed the moment it opens. Then the upstream must accept the TCP connection, or 502 before the
+upgrade - the page reads that one as `unreachable`, like a network that does not answer.
+
+**Why the opposite of `/api/ws`, which refuses BEFORE the upgrade**
+([chat-gateway](services/chat-gateway.md)): the chat socket is reopened by a loop that resets its
+delay when a socket OPENS, so a refusal after the upgrade would be asked again at the shortest delay
+forever. The mail client has no such loop: a connection is opened by a CALL, and a refused one
+rejects that call with `MailTransportError` `refused` - a type the caller acts on (`not_eligible`:
+the tab is not offered, never retried; `cap`: later, never at once; `unavailable`: our fault, said as
+such). Opening a socket is never read as success. And the server bounds whatever a client does
+anyway: a refused open is not counted, but every admitted one is, 20 a minute per account, behind
+nginx's 10 per second per address.
+
+**Its destination is written once**: `MAIL_RELAY_UPSTREAM`, exactly one `host:port`. A list, a URL, a
+wildcard, brackets or anything else STOPS the gateway at boot (`Upstream::parse`, `ConfigRefusal`),
+as does an unreadable switch or an ON without its eligibility source: a relay whose destination is
+anything but the one written down is an open door. Nothing a client sends names a destination.
+
+**Its caps, in one place** (constants at the top of `mail_relay.rs`, and nginx's rate in front):
+
+| Cap | Value | When reached |
+|---|---|---|
+| connections held per account | 4 | closed with code 4006 at once |
+| NEW connections per account | 20 per rolling minute | closed with code 4006 at once |
+| bytes per account, both ways, all its connections | 512 MiB per rolling hour | closed with code 4006, mid-connection or at once |
+| connections in all | 400 | closed with code 4006 at once |
+| bytes per connection, both ways | 256 MiB | closed with code 4001 |
+| one client frame | 1 MiB | refused by the WebSocket layer |
+| nothing crossing, either way | 90 s | closed with code 4004 |
+| upstream TCP connect | 10 s | 502 |
+| eligibility question | 5 s | closed with code 4007 at once |
+| new relay sockets per client address (nginx) | 10/s, burst 100 | 429 before the gateway |
+
+**Why per account, and why a budget over a window** (lead, 2026-11-28, the review's F0-2, F1-1 and
+F1-3). Every connection the relay makes leaves from ONE egress address, which RENATER sees for every
+student at once, and its protections are per address. The per-connection byte cap bounds one socket
+only: an account could open a new one each time and pull without end. So each account has a rate on
+NEW connections (an honest client holds one keep-alive connection and replaces it on an idle close
+or a spent connection - a few a minute) and a byte budget over a rolling hour shared by all its
+connections (a mailbox read heavily, 30 MB attachments included, stays far below it). Both are kept in
+ONE ledger under the place lock (`AccountUse`: places held, the times of recent opens, the bytes moved
+per one-second slot), pruned as it is read; a refused open is not counted against the rate. The
+ledger's memory is bounded by COUNT: past 1,024 accounts an admission sweeps out every account with
+nothing held and nothing left in either window. What the egress address as a whole may do is
+RENATER's to say: [the precondition](backlog.d/the-mail-relay-before-production-renater-limits-and-the-register.md)
+before production.
+
+**An abuse window is put on an account by the log.** Every refusal line and every end line names the
+account by `short` (the first 8 characters of its Canari id), and the end line says what the
+account's byte window holds against the budget. A refusal repeats as a count, never as a line per
+attempt.
+
+**The rate in front (nginx).** `limit_req_zone $binary_remote_addr zone=mail_relay:1m rate=10r/s`,
+applied in `location = /api/mail/relay` with `burst=100 nodelay` and `limit_req_status 429`
+(`infrastructure/local/Dockerfile.frontend`). Every admission refusal above costs the gateway a token
+check and, past it, a core-service question: the rate bounds what one address can make it do. It is
+keyed by ADDRESS, and the campus reaches Canari through a NAT, so it is sized for a building, not a
+person: an honest client opens a handful of sockets per session, never ten a second. A test reads the
+lines back (`.github/scripts/tests/mail-relay-route.test.mjs`, in `make test-ci-scripts`), and checks
+that the idle close below stays under the location's `proxy_read_timeout`.
+
+**How it ends, by close code** (`close_code`, read by `relayEnd` in `relayTransport.ts` - the CODE,
+never the reason text; `the_close_codes_are_distinct_and_in_the_private_range` holds the two lists
+equal): 4000 the upstream closed, 4001 the byte cap, 4002 the upstream failed, 4003 a non-binary
+frame, 4004 the connection was idle for `IDLE_DEADLINE`, 4005 the account is not eligible, 4006 a cap
+of the account or of the relay (above), 4007 the account's eligibility could not be established. The
+page reads 4005-4007 as `TransportEnd` `refused` with its `RelayRefusal` (`not_eligible`, `cap`,
+`unavailable`), and a handshake that meets it rejects with `MailTransportError` `refused`, its
+`refusal` set: "do not offer the tab", "later" and "our fault" are three types, never one 1006.
+**The idle close is the relay's own, at 90 s, CLEARLY BELOW every hop** (lead, 2026-11-28): the
+Cloudflare edge ends a proxied connection that carries nothing for 100 s (its proxy read timeout,
+which an idle WebSocket meets too), and nginx's location at 120 s (`proxy_read_timeout`). An idle
+keep-alive connection then ends as an ordinary end the client reads (`peer_closed`, like 4000) instead
+of as a hop's cut, which would reach it as an unexplained 1006; ten seconds of margin keep the relay
+and the edge from racing. `mail-relay-route.test.mjs` holds both bounds. **One line per connection end**, never one per frame: the account
+(8 characters of its id), the duration, the bytes and the record counts each way, and why it ended.
+An ordinary end (the client or the upstream closed, or idle) is INFO; a cap or a fault is WARN - the
+level depends on how the socket ended, as for `/api/ws`
+([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)).
+A repeated refusal is counted rather than repeated.
+
+**It is OFF unless switched on** (`MAIL_RELAY_ENABLED`, D12), and nginx carries it through a
+`location = /api/mail/relay` with the same lines as `/api/ws` plus the rate above.
+
+Its tests (`apps/chat-gateway/src/mail_relay/tests.rs`, 25): the upstream parser and the switch, the
+contract equality below, eligibility answers from a fake core, record counting across split frames,
+the place caps, the rate and the byte budget over their windows (explicit instants, no clock), the
+close codes distinct and equal to the client's, and served-route tests against a local TCP echo -
+bytes piped both ways, ineligible closed 4005, unknown closed 4007, off 404, no token 401, foreign
+origin 403, the account cap closed 4006 and its place given back, an account opening too fast closed
+4006, the byte budget closing a connection mid-way and refusing the next with 4006, the byte cap
+closing with 4001, a text frame closing with 4003, the upstream closing with 4000, an idle connection
+closing with 4004, a refused connect 502.
+
+### Eligibility
+
+**D1, as the owner decided it on 2026-11-27: the mail tab is for an account MiConnect hands a SCHOOL
+address for - and only those.** MiConnect's `email` claim is SYNTHETIC
+(`<username>@canari.emse.fr`, [identity-sources](infrastructure/identity-sources.md#what-the-applications-receive-from-miconnect)),
+so it cannot answer; a new claim does:
+
+```
+MiConnect --sign-in, scope school_mail (Canari's production and dev providers only)--> core-service
+   school_mail = the account's email, ONLY IF the CAS created the account (its cas-emse link's
+   identifier is the username) AND it is one address on etu.emse.fr or emse.fr; else ABSENT
+   (in the userinfo only - never in the id_token)
+core-service: users."mailClass" = student | staff | NULL
+   written ONLY by a sign-in whose token answer GRANTED school_mail; any other leaves it untouched
+core-service --sign-in answer { ..., school_mail } (ONE use, never stored; only for a STORED class)--> client
+client: keeps the address on the device for the mail sign-in's prefill (schoolMailAddress())
+
+chat-gateway --GET /api/internal/users/:id/mail-class (X-Internal-Secret)--> core-service
+core-service --> { "mailClass": "student" | "staff" | null } | 404   (one row read, nobody else asked)
+```
+
+**The claim** (`infrastructure/authentik/blueprints/10-mappings.yaml`, `miconnect-claim-school-mail`,
+its own scope `school_mail`, bound in `50-providers.yaml` to `miconnect-canari` and
+`miconnect-canari-dev` and NO other provider). An Alumni-created account carries the ALUMNI address
+in its `email` (D46), so the mapping refuses any account whose CAS link does not name it - even an
+Alumni account linked to the CAS later: never the Alumni address. It sends ONE address: exactly one
+`@`, a local part, no whitespace, a listed domain exactly - the same rule as core-service's
+`readSchoolMail` and the client's `mailClassOf`.
+
+**The rule, measured** (read-only on production MiConnect, 2026-11-27): 719 `cas-emse` links, every
+one with identifier equal to its account's username (0 mismatches, 0 `alumni-*` usernames, all
+accounts active); by the address's domain, 689 `etu.emse.fr`, 30 `emse.fr`, 0 other, none or
+malformed. So "the CAS created the account" costs no CAS account, and every one of them gets a class
+at its next sign-in granted the scope.
+
+**Not the local provider** (`miconnect-canari-local`): its user is the cross-client harness, which
+drives no mail and whose accounts hold no school address. A client asking it for the scope is not
+refused: authentik grants the overlap (measured below).
+
+**Never in the id_token.** authentik copies a scope's claims into the id_token by default, and the
+client keeps the id_token (`canari_oidc_id_token`) for the sign-out's `id_token_hint`. Canari's three
+providers set `include_claims_in_id_token: false`: the id_token carries the protocol claims only
+(iss, sub, aud, times), and the client reads `iss` alone (`planMiconnectSignOut`, the only reader of
+its claims). So the address is kept on the device in ONE place, `canari_school_mail`.
+
+**Measured on the real endpoints** (`infrastructure/authentik/test-school-mail-claim.py`, inside
+`test-blueprints.sh`, authentik 2026.8): the mapping evaluated on test accounts (CAS student and staff
+get it; another domain, a subdomain, two `@`, whitespace, an Alumni account, an Alumni account
+later linked to the CAS, no link get nothing), then a real authorize and code redemption: the token
+answer's `scope` names `school_mail` when it was asked for and not otherwise, the userinfo carries
+the address, the id_token does not, and the local provider grants the rest without it. Statically,
+`.github/scripts/tests/school-mail-claim.test.mjs` holds the domains equal to the contract, the own
+scope, the CAS link, the single `@`, the binding to exactly the two providers, and
+`include_claims_in_id_token: false` on all three.
+
+**What Canari keeps: the CLASS, never the address** (charter principle 1, "your messages are yours":
+the server keeps what it needs to decide, and the address is not that). `parseProfileClaims` reads the
+claim into `mailClass` through `readSchoolMail` (`apps/core-service/src/users/mail-class.ts`), the
+upsert stores it on `users."mailClass"` (migration `032_users_mail_class.sql`, additive, nullable,
+`lock_timeout 5s` - not held), and a sign-in granted the scope whose claim vanished sets it back to
+NULL.
+
+**Only a sign-in GRANTED the scope writes the class.** An older client does not ask for
+`school_mail`; were its sign-in read as "no claim", it would clear the class, and the class would
+flip with the device the person last signed in from. So core-service reads the GRANTED scopes from
+the token answer's `scope` (RFC 6749 5.1; authentik 2026.8 always sends it, measured above), and a
+sign-in without `school_mail` in it carries no class at all (`MiconnectProfile.mailClass` absent):
+the stored one is left as it is. A token answer with no `scope` is accused at warn and treated the
+same way.
+
+**The address is handed out only for a STORED class.** The relay admits on the column, so an address
+the client prefilled for a class the database refused would open a mail tab that is then refused.
+The upsert's returned row takes the CLASS only once it is written, and the callback hands
+`school_mail` out only when that row's class is the claim's, accusing the mismatch at warn. Every
+OTHER claim joins the returned row whatever the write did, exactly as before the mail class existed
+(lead, 2026-11-28, the review's F1-9: the sign-in answer's other fields keep their behaviour;
+`users.service.spec.ts` pins both halves). The logs
+name the class only, never the address.
+A restore (account-restore) carries no MiConnect claim: it removes the device's copy, and the class
+on the row stays as the last MiConnect sign-in left it.
+
+**The device's copy.** `adoptSignedInSession` keeps the address in the OIDC store
+(`canari_school_mail`, the same store as the id_token), set or removed by every MiConnect sign-in,
+removed by a restore and by every sign-out that revokes the session. The documented accessor for
+lot 2 is `schoolMailAddress()` in `frontend/src/lib/stores/auth.ts`: it PREFILLS the mail sign-in,
+and the person still types their password.
+
+**Existing accounts get the class at their next MiConnect sign-in, and lot 3 offers one** (lead's
+decision, 2026-11-27, reversible). Nothing back-fills the column: the class exists only where a
+sign-in granted the scope wrote it, so after the stable every account already signed in has NULL -
+the mail not offered - until it signs in through MiConnect again. Canari's own sessions last, so that
+could be weeks. Lot 3 therefore shows, when `schoolMailAddress()` is `null`, an "Activer le mail"
+button calling `startSchoolMailActivation(returnTo)`: it is the ordinary sign-in entry point
+(`startOidcLogin`), and since the MiConnect session is usually still alive it is one tap - the
+callback stores the class and the device's address, then comes back. One path writes the class. An address the client classes as no school address
+(`mailClassOf`, `frontend/src/lib/mail/eligibility.ts`) is not kept and accused at warn: core-service
+validates against the same contract, so reaching that line is a disagreement between the two.
+
+**Why the relay asks a route rather than reading a claim in the access token** ([sessions](sessions.md)).
+The access token is re-minted at every refresh, which never sees MiConnect's claims - so a claim in
+it would be this same column read anyway, only on every refresh instead of on every relay socket. And
+the token rides on every request to every service and is readable by the client, while only the relay
+needs the class: principle 1 keeps the fact where it is used. The route is one primary-key read with
+no third party, so `ELIGIBILITY_DEADLINE` is 5 s and a slower answer is a fault (closed 4007), never an
+admission. A stored value that is not a known class is answered `null` and logged at ERROR.
+
+**What the class does NOT follow (accepted, 2026-11-27).** The class is refreshed only at a
+MiConnect sign-in, so an account MiConnect deactivates, or a student who graduates, keeps relay
+access for as long as its Canari session lives. No sweep resets it: core-service has none for
+deactivated MiConnect accounts (the sign-in handoff asks MiConnect at the moment it hands over, and
+nothing else does). This is accepted rather than built: the relay is a pipe to the school's own
+mailbox, Partage still demands the person's password, and the school closes the mailbox itself when
+the person leaves - so the relay lets nobody read a mailbox they could not already open.
+
+**The rollout state, and why it is not a fallback.** The blueprint applies to MiConnect at a STABLE.
+Until then MiConnect grants no `school_mail` (an authentik provider grants only the scopes it has a
+mapping for), so every sign-in leaves the class as it is - NULL - and the relay refuses everyone with
+4005 (not eligible): the mail is simply not offered. That is the EXPECTED state of every estate before that stable, not a degraded path: nothing
+substitutes for the missing claim, and the first sign-in after the blueprint applies fills the class.
+Dev needs no new secret (the old design needed MiConnect's reader token on dev; it is gone).
+
+**The list is data, written once**: `libs/contracts/mail-domains.json`, `classes` mapping each domain
+to its class. Following the repository's contract convention, each side keeps a constant and a test
+asserts it EQUALS the JSON: `MAIL_CLASS_BY_DOMAIN` in core-service (`mail-class.spec.ts`) and in the
+frontend (`eligibility.test.ts`), `MAIL_CLASSES` in the gateway (`the_classes_are_the_contracts`),
+and the blueprint's `SCHOOL_DOMAINS` (`school-mail-claim.test.mjs`). The gateway's Docker build
+context does not contain `libs/contracts`, so nothing reads the file at run time.
+
+## The native socket (Tauri)
+
+`frontend/src-tauri/src/commands/mail_socket.rs`: four commands, `mail_socket_open`,
+`mail_socket_write`, `mail_socket_close` and `mail_socket_close_all`, to ONE compile-time destination
+(`MAIL_HOST`, `MAIL_PORT` = `partage.emse.fr:443`); nothing the page sends names a host. The bytes
+cross the IPC raw: the write is an `InvokeBody::Raw` request with the socket id in the
+`x-mail-socket` header, the reads arrive on a `Channel<InvokeResponseBody>` as raw bytes, never as
+JSON number arrays ([durable-rules](durable-rules.md)). The connect races IPv6 and IPv4
+(`happy_eyeballs::connect`, 15 s), and how the socket ended comes on a second channel as a tagged
+`MailSocketEnd` (`peer_closed`, `closed_by_page`, `read_failed`, `write_failed`), mapped by
+`nativeEnd`. A connection abandoned while its open is in flight closes the socket the moment the open
+answers.
+
+**At most `MAX_OPEN_SOCKETS` = 4**, open or connecting, per app - the relay's per-account cap, for
+the same reason: a page that leaks connections stops at four instead of exhausting the process. The
+fifth open is refused, typed (`TooManySockets`). **A reloaded page cannot reach the sockets of the
+page before it**, so the first open of every document first calls `mail_socket_close_all`
+(`closePreviousDocument` in `tauriSocketTransport.ts`, once per bridge): it closes every socket and
+bumps a generation, so an open still in flight from the previous page is disowned (`Superseded`) and
+its socket closed when it lands. Not on a page-load event in Rust: the first open of a document is
+the one moment the page is known to hold none.
+
+Eight unit tests (`cargo test --lib mail_socket`), the cap and the close-all of an open in flight
+among them. **Compiled only for the Windows desktop target in lot 1**; Android, iOS, macOS and Linux
+are compiled by their own CI jobs. **The app's OFF switch for the mail is lot 3**: lot 1 builds no
+page that opens a socket, so the commands are unreachable until then.
+
+## The TypeScript layers (`frontend/src/lib/mail/`)
+
+- `transport.ts` - `ByteTransport` (`send`, `close`) and how one ended (`TransportEnd`:
+  `peer_closed`, `closed_by_us`, `byte_cap`, `refused` with its `RelayRefusal`, `failed`);
+  `MailTransportError` is `unreachable` (could not open), `closed`, or `refused` (the relay refused
+  the account, `refusal` says why).
+- `relayTransport.ts`, `tauriSocketTransport.ts` - the two implementations; `connect.ts` picks the
+  platform's (`platformTransport`) and makes a stream opener (`mailStreamOpener`). The relay's idle
+  close (4004) is an ordinary end, `peer_closed`.
+- `tlsConnection.ts` - `TlsConnection`: one TLS session over one transport. It resolves once the
+  handshake completes; a TLS error sends the alert the engine owes, then closes; `close` sends the
+  close_notify, then closes the transport; the WASM session is freed exactly once. Its plaintext
+  stream says HOW it ended (`end`): `tls_closed` when the server sent close_notify, otherwise the
+  transport's end.
+- `http1.ts` - HTTP/1.1 on BYTES: requests serialised one after the other on one connection,
+  `Content-Length` counted in bytes, chunked bodies (extensions and trailers included), a body framed
+  by the end of the stream, `1xx` skipped. **A body framed by the end of the connection is complete
+  ONLY after close_notify** (`tls_closed`); any other end is a truncation, `HttpProtocolError`
+  `ended` - otherwise an attacker on the path, or a cut, would hand the client a short body as whole.
+  Bodies are capped at `MAX_BODY_BYTES` (64 MiB) and a chunk size at 8 hex digits. A request is
+  refused before a byte is sent when its host or path holds CR, LF or a space, its path does not
+  start with `/`, a header name is not a token, or it supplies `Content-Length`, `Host`,
+  `Transfer-Encoding` or `Connection` itself (the serializer writes those). A connection that the
+  server closes, that answered `Connection: close`, or that has bytes left over past an answer, is
+  spent; a request on a spent connection is `not_sent` - it never left, so the caller may send it on
+  a new connection.
+- `soapClient.ts` - `ZimbraSoapClient`: JSON SOAP to `POST /service/soap` over ONE persistent
+  connection, opened on first use and reopened when spent. **A call that failed `not_sent` is sent
+  again exactly once, on a fresh connection** (lead, 2026-11-28, the review's F1-6): it was queued
+  behind an answer that spent the connection, and `not_sent` proves none of its bytes left. A call
+  that failed `ended` is NEVER re-sent: it left, and `SendMsg` is not idempotent. A fault is a `ZimbraFault` typed by its `Detail.Error.Code` and the HTTP status; the
+  fault's `Reason.Text` and an unparsable body are NEVER copied into an error or a log line (server
+  prose may carry the user's own data) - a parse failure says only its size and the error's name.
+- `eligibility.ts` - `mailClassOf`, the class of an address against the contract (above).
+
+Vitest, with a fake transport, a fake TLS engine and a fake stream (`frontend/src/test/mailFakes.ts`)
+across `http1`, `tlsConnection`, `soapClient`, `relayTransport`, `tauriSocketTransport` and
+`eligibility`; the device copy of the school address in `auth.miconnectSignOut.test.ts`.
+
+### The end-to-end test
+
+`frontend/src/lib/mail/mail.e2e.test.ts`, SKIPPED unless `CANARI_MAIL_E2E_RELAY` names a running
+relay's WebSocket URL, token included. It sends an UNAUTHENTICATED
+`{"Body":{"GetInfoRequest":{"_jsns":"urn:zimbraAccount"}}}` twice over one connection and expects
+Zimbra's `service.AUTH_REQUIRED` fault (HTTP 500) both times: proof that bytes crossed the relay, the
+WASM TLS and the HTTP client to the real mailbox and back, with no credential anywhere. To run it:
+`bun run wasm:build`, then a chat-gateway binary with `JWT_SECRET`, `MAIL_RELAY_ENABLED=1`,
+`MAIL_RELAY_UPSTREAM=partage.emse.fr:443`, and a `CORE_SERVICE_URL` + `INTERNAL_SECRET` that answer
+`{"mailClass":"student"}` on `/api/internal/users/:id/mail-class` (a twenty-line stand-in will do),
+and an HS256 token signed with that secret.
+
+**Run 2026-11-27, passed** (before the review fixes and the class route): one connection, two calls,
+89 ms; the gateway's end line read
+`up 782 bytes (hs=1 ccs=1 alert=0 app=4), down 8116 bytes (hs=1 ccs=1 alert=0 app=6)`.
+
+## Still open
+
+- **The claim reaches MiConnect at a stable**: until then no account is eligible (above). The readings
+  owed after it - a CAS student and a staff account, an older client, an Alumni-created account, and
+  lot 3's "Activer le mail" button - are [an entry](backlog.d/the-mail-eligibility-readings-once-lot-1-ships.md).
+- **Before the relay goes on**: RENATER's per-IP limits and the egress exemption (an owner action),
+  D2 on the migration target, and the register line in the pull request that flips it on dev
+  ([precondition](backlog.d/the-mail-relay-before-production-renater-limits-and-the-register.md)).

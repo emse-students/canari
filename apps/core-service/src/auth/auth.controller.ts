@@ -27,6 +27,7 @@ import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.gua
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
+import { readSchoolMail } from '../users/mail-class';
 import { UsersService } from '../users/users.service';
 import { UserRowGoneError } from '../users/user-write';
 import { PlatformService } from '../platform/platform.service';
@@ -562,6 +563,14 @@ export class AuthController {
        * MiConnect").
        */
       id_token?: string;
+      /**
+       * The account's SCHOOL address (claim `school_mail`), handed to the client for ONE use - it
+       * prefills the mail client's sign-in on this device - and stored nowhere on the server, which
+       * keeps only its class (`users.mailClass`, charter principle 1). Absent when MiConnect sent
+       * none: an Alumni-created account, an address off the school domains, or a MiConnect whose
+       * blueprint does not emit the claim yet (docs/wiki/mail-client-transport.md#eligibility).
+       */
+      school_mail?: string;
     }
   > {
     const { code, redirect_uri, code_verifier } = body ?? {};
@@ -614,7 +623,18 @@ export class AuthController {
     const tokenData = (await tokenRes.json()) as {
       access_token: string;
       id_token?: string;
+      /** The scopes GRANTED, space-separated (RFC 6749 5.1; authentik always sends it). */
+      scope?: string;
     };
+    // Whether this sign-in was granted `school_mail`: an older client does not ask for it, and its
+    // sign-in must leave the stored class alone rather than clear it (`MiconnectProfile.mailClass`).
+    // Read from the token answer, measured on authentik 2026.8 (`test-school-mail-claim.py`).
+    if (typeof tokenData.scope !== 'string') {
+      this.logger.warn(
+        'OIDC callback: the token answer carries no `scope` - the mail class is left as stored'
+      );
+    }
+    const schoolMailGranted = (tokenData.scope ?? '').split(' ').includes('school_mail');
 
     // 2. Fetch user info from Authentik
     const userinfoUrl = `${this.authentikBaseUrl}/application/o/userinfo/`;
@@ -655,7 +675,7 @@ export class AuthController {
         userinfo.name || null,
         userinfo.firstName || null,
         userinfo.lastName || null,
-        parseProfileClaims(userinfo, userinfo.sub.slice(0, 8))
+        parseProfileClaims(userinfo, userinfo.sub.slice(0, 8), schoolMailGranted)
       )
       .catch(async (err: unknown) => {
         if (!(err instanceof UserRowGoneError)) throw err;
@@ -687,9 +707,25 @@ export class AuthController {
       );
     }
 
+    // The address leaves with this answer and is kept nowhere here; only its class was stored, by
+    // the upsert above. HANDED OUT ONLY FOR A CLASS THAT IS STORED: the relay admits on the column,
+    // so an address the client would prefill for a class the database refused is a mail tab that
+    // opens and is then refused. Logged by class, never by value.
+    const claimed = schoolMailGranted ? readSchoolMail(userinfo.school_mail) : null;
+    const schoolMail = claimed && user.mailClass === claimed.mailClass ? claimed : null;
+    if (claimed && !schoolMail) {
+      this.logger.warn(
+        `[AUTH] sign-in user=${userinfo.sub.slice(0, 8)}: class ${claimed.mailClass} not stored - the school address is not handed out`
+      );
+    }
+    this.logger.debug(
+      `[AUTH] sign-in user=${userinfo.sub.slice(0, 8)} mail scope=${schoolMailGranted ? 'granted' : 'not granted'} class=${schoolMail?.mailClass ?? 'none'}`
+    );
+
     return {
       ...issued,
       ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
+      ...(schoolMail ? { school_mail: schoolMail.address } : {}),
     };
   }
 

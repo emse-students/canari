@@ -37,7 +37,7 @@ use crate::ws_dispatch::{
 /// What an error ending the receive loop MEANS, which is the only thing that can decide the level
 /// of the line recording it.
 #[derive(Debug, PartialEq, Eq)]
-enum SocketEnd {
+pub(crate) enum SocketEnd {
     /// The ordinary end of a web session. A browser that reloads, navigates away or is killed
     /// sends no close frame, so the socket simply resets - the impolite twin of `Message::Close`,
     /// and recorded beside it at the same level so the two can be counted as one event.
@@ -69,7 +69,7 @@ enum SocketEnd {
 /// carried exactly one thing and that thing was people closing tabs: a genuine fault would have
 /// been one line among 33, and nobody would have looked. That measurement is the argument; the
 /// line count on a developer estate is not, and was explicitly not trusted for this.
-fn classify_socket_error(err: &axum::Error) -> SocketEnd {
+pub(crate) fn classify_socket_error(err: &axum::Error) -> SocketEnd {
     use std::error::Error as _;
     use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
 
@@ -120,6 +120,21 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The access token a socket upgrade presents: the `canari_ws_token` cookie (a browser), else the
+/// `?token=` query parameter (a native socket, which cannot send the WebView's cookies). The one
+/// reading of both routes that open a socket, `/api/ws` and `/api/mail/relay`.
+pub(crate) fn socket_token(headers: &HeaderMap, query_token: Option<&str>) -> Option<String> {
+    extract_cookie_value(headers, "canari_ws_token").or_else(|| {
+        query_token.map(|t| {
+            tracing::debug!(
+                "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
+                t.chars().take(8).collect::<String>()
+            );
+            t.to_string()
+        })
+    })
 }
 
 // ── ConnectionGuard - cleanup on drop ────────────────────────────────────
@@ -227,7 +242,7 @@ const LOGGED_ORIGIN_MAX: usize = 120;
 /// THE REFUSED ORIGIN IS LOGGED, once per distinct value and then at each power of ten: it is the
 /// one fact that identifies a client turned away, and it appears nowhere else on either side. It is
 /// text its sender chose, so it is written escaped and cut.
-fn admit_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+pub(crate) fn admit_origin(state: &AppState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     let origin = match headers.get(axum::http::header::ORIGIN) {
         None => None,
         // A header that is not text names no origin this estate could have listed.
@@ -281,18 +296,7 @@ pub async fn ws_handler(
         return *refusal;
     }
 
-    // Cookie is preferred (web browser) - query-param is the Tauri mobile fallback.
-    let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
-        params.token.as_deref().map(|t| {
-            tracing::debug!(
-                "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
-                t.chars().take(8).collect::<String>()
-            );
-            t.to_string()
-        })
-    });
-
-    let Some(token) = token else {
+    let Some(token) = socket_token(&headers, params.token.as_deref()) else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 

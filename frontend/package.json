@@ -14,7 +14,7 @@
     "test:coverage": "bun run paraglide:compile:test && vitest run --coverage",
     "bench:media-crypto": "bun run scripts/bench-image-encryption.ts",
     "prepare": "bun ./scripts/install-husky.js && bun run paraglide:compile && bun run paraglide:compile:test",
-    "wasm:build": "wasm-pack build mls-wasm --target web --out-dir ../src/lib/wasm",
+    "wasm:build": "wasm-pack build mls-wasm --target web --out-dir ../src/lib/wasm && wasm-pack build mail-tls --target web --out-dir ../src/lib/wasm/mail-tls",
     "generate": "bun run wasm:build && bun run proto:gen",
     "proto:gen": "pbjs -t static-module -w es6 --es6 --no-service --force-number -o src/lib/proto/canari.js ../libs/proto/canari.proto && pbts -o src/lib/proto/canari.d.ts src/lib/proto/canari.js && bun ./scripts/fix-protobuf-c-alias.mjs",
     "paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",

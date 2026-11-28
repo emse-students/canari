@@ -217,6 +217,7 @@ updates:
       - "/apps/chat-gateway"
       - "/frontend/mls-core"
       - "/frontend/mls-wasm"
+      - "/frontend/mail-tls"
       - "/frontend/src-tauri"
       - "/frontend/src-tauri/plugins/tauri-plugin-customtabs"
     rebase-strategy: auto

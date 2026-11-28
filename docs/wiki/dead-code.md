@@ -61,6 +61,10 @@ What they cannot see is declared in `knip.json`:
 - `kit.config.js` (read by `vite.config.js`, which names the two adapters), `src/env.ts` (the
   SvelteKit 3 env declaration, read by `$app/env`), `src/lib/mlsServicePlatform.native.ts` (swapped
   in by `platformMlsService()` in `vite.config.js` for the native build);
+- `src/lib/mail/connect.ts` (2026-11-27): the mail client's entry, which lot 1 ships with NO consumer
+  by design - the transport is switched off and no tab exists yet
+  ([mail-client-transport](mail-client-transport.md)). Lot 2's session imports it; that pull
+  request deletes this entry;
 - `scripts/**` (run by hand or by the Makefile);
 - `ignoreUnresolved`: the generated `$lib/wasm`, `$lib/proto/canari` and `$lib/paraglide`, which are
   not in git;

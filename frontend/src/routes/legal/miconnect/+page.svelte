@@ -20,7 +20,7 @@
    * 45-consent.yaml, so every account is asked once more; a MINOR revision moves `updated` alone and
    * asks nobody. check-consent-version.sh pins this value to the other four places.
    */
-  const acceptedVersion = '2026-11-24';
+  const acceptedVersion = '2026-11-28';
   const acceptedVersionLabel = acceptedVersion.split('-').reverse().join('/');
 </script>
 
@@ -32,7 +32,7 @@
 <LegalDocument
   title={m.legal_miconnect_title()}
   subtitle={m.legal_miconnect_subtitle()}
-  updated="27/11/2026"
+  updated="28/11/2026"
   {sections}
 >
   <section id="objet">
@@ -64,6 +64,10 @@
       </li>
       <li>ton identifiant de connexion ;</li>
       <li>
+        si ton compte a été créé par le CAS : ton <strong>adresse e-mail de l'École</strong>,
+        transmise par le CAS à ta première connexion ;
+      </li>
+      <li>
         ce que tu déclares à ta première connexion : ton campus, ta ou tes formations, ton année
         d'entrée et tes appartenances (élève, personnel de l'École, de la Maison des Élèves ou des
         Alumni) ;
@@ -86,11 +90,15 @@
     </ul>
     <p>
       MiConnect ne reçoit ni ne stocke jamais ton mot de passe : il reste chez le CAS ou les Alumni.
-      Les services reçoivent une adresse e-mail technique, pas ton adresse personnelle.
+      Les services reçoivent une adresse e-mail technique, pas ton adresse personnelle, à une
+      exception près : si ton compte a été créé par le CAS et que son adresse e-mail est en
+      <code>etu.emse.fr</code> (élèves) ou en <code>emse.fr</code> (personnel), Canari la reçoit, pour
+      te proposer la messagerie de l'École ; son serveur n'en garde que la catégorie, élève ou personnel.
+      Aucun service ne reçoit l'adresse enregistrée chez les Alumni.
     </p>
     <p>
-      Ta qualité de cotisant et ton adresse e-mail ne sont transmises à aucun service, à une
-      exception près : si ton compte a été créé par les Alumni, les administrateurs de Canari
+      Ta qualité de cotisant et ton adresse e-mail des Alumni ne sont transmises à aucun service, à
+      une exception près : si ton compte a été créé par les Alumni, les administrateurs de Canari
       peuvent le rattacher à ton compte existant. Pour en décider, ils voient l'adresse e-mail et la
       dernière connexion à MiConnect des deux comptes quand ton nom et ta promo n'en désignent
       qu'un, ou, s'ils le rattachent à la main, de chaque compte qu'une recherche par nom leur

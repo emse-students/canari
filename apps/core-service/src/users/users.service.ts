@@ -346,6 +346,8 @@ export class UsersService implements OnModuleInit {
       sameCursus(u.cursus ?? [], profile.cursus) &&
       JSON.stringify(u.posts ?? []) === JSON.stringify(profile.posts) &&
       (u.alumniLinked ?? null) === profile.alumniLinked &&
+      // An ungranted sign-in carries no class and so cannot change it (`MiconnectProfile.mailClass`).
+      (profile.mailClass === undefined || (u.mailClass ?? null) === profile.mailClass) &&
       (u.promo ?? null) === promo &&
       (u.formation ?? null) === formation;
     const user = await this.userRepository.findOne({ where: { id } });
@@ -370,18 +372,26 @@ export class UsersService implements OnModuleInit {
             `[OIDC_PROFILE_SHRANK] ${id.slice(0, 8)} lost ${[lostCampus && 'its campus', lostCursus && 'its whole cursus'].filter(Boolean).join(' and ')} at sign-in: the profile it signed in with opens no space`
           );
         }
-        Object.assign(changes, profile, { promo, formation });
+        const { mailClass, ...claimed } = profile;
+        Object.assign(changes, claimed, { promo, formation });
+        if (mailClass !== undefined) changes.mailClass = mailClass;
       }
       if (Object.keys(changes).length > 0) {
+        // The mail class alone joins the returned row only once it is WRITTEN: the callback hands
+        // the school address out only for a class that is stored, and the relay admits on the
+        // column (docs/wiki/mail-client-transport.md#eligibility). Every other claim joins it
+        // whatever the write did, as before the mail class existed: the sign-in answer reads them.
+        const { mailClass: classChange, ...otherChanges } = changes;
         try {
           await updateUserColumns(this.userRepository, id, changes, 'oidc.upsert', this.logger);
+          if (classChange !== undefined) Object.assign(user, { mailClass: classChange });
         } catch (err) {
           // The row is gone since the read: the caller refuses the sign-in, nothing is re-created.
           if (err instanceof UserRowGoneError) throw err;
           // Any other database refusal costs the refresh of the claims, never the sign-in.
           this.logger.warn(`OIDC upsert of ${id.slice(0, 8)} not saved: ${String(err)}`);
         }
-        Object.assign(user, changes);
+        Object.assign(user, otherChanges);
       }
       return user;
     }

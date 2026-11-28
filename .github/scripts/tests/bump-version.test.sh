@@ -66,6 +66,7 @@ make_sandbox() {
     "$root/frontend/src-tauri/gen/apple/canari.xcodeproj" \
     "$root/frontend/src-tauri/gen/apple/canari_iOS" \
     "$root/frontend/mls-wasm" \
+    "$root/frontend/mail-tls" \
     "$root/frontend/mls-core" \
     "$root/apps/core-service"
 
@@ -77,7 +78,7 @@ make_sandbox() {
   printf '{\n  "version": "0.0.0",\n  "bundle": {\n    "active": true\n  }\n}\n' \
     > "$root/frontend/src-tauri/tauri.conf.json"
 
-  for crate in src-tauri mls-wasm mls-core; do
+  for crate in src-tauri mls-wasm mail-tls mls-core; do
     printf '[package]\nname = "canari-%s"\nversion = "0.0.0"\n' "$crate" \
       > "$root/frontend/$crate/Cargo.toml"
   done

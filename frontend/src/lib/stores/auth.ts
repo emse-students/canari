@@ -63,6 +63,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import { setAvatarToken } from '$lib/utils/avatarUrl';
+import { mailClassOf } from '$lib/mail/eligibility';
 import type { TokenVerdict } from '$lib/utils/tokenVerdict';
 import {
   REFRESH_HEADER,
@@ -94,6 +95,8 @@ const OIDC_VERIFIER_KEY = 'canari_oidc_verifier';
 const OIDC_CHALLENGED_KEY = 'canari_oidc_challenged';
 /** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
 const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
+/** The account's SCHOOL address, for the mail sign-in's prefill - see {@link schoolMailAddress}. */
+const SCHOOL_MAIL_KEY = 'canari_school_mail';
 const OIDC_STORE_FILE = 'oidc-state.json';
 
 /**
@@ -634,7 +637,9 @@ export async function startOidcLogin(
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'openid profile promo name formation',
+    // `school_mail`: the school address, for CAS accounts only (mail-client-transport.md#eligibility).
+    // A MiConnect whose blueprint does not define the scope yet ignores it, and sends no claim.
+    scope: 'openid profile promo name formation school_mail',
     state,
   });
   if (pkce) {
@@ -854,6 +859,11 @@ export interface SignedInSession {
   avatar_token?: string;
   /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
   id_token?: string;
+  /**
+   * The account's school address (MiConnect claim `school_mail`), handed to this device ONCE and
+   * stored nowhere on the server, which keeps only its class - see {@link schoolMailAddress}.
+   */
+  school_mail?: string;
   user: {
     id: string;
     email: string;
@@ -918,12 +928,70 @@ async function adoptSignedInSession(
   markRestoreAttempted();
   if (via === 'miconnect') {
     await rememberMiconnectIdToken(data.id_token);
+    await rememberSchoolMail(data.school_mail);
   } else {
     await removeOidcEntry(OIDC_ID_TOKEN_KEY);
+    await removeOidcEntry(SCHOOL_MAIL_KEY);
     alog(
-      'restored session: no MiConnect id_token, by construction - the sign-out will not end one'
+      'restored session: no MiConnect id_token nor school address, by construction - the sign-out will not end MiConnect, and the mail sign-in will not be prefilled'
     );
   }
+}
+
+/**
+ * Keeps the school address this sign-in carried, or forgets the previous one when it carried none.
+ *
+ * ABSENT IS AN ANSWER, NOT A FAULT: an Alumni-created account, an address off the school domains,
+ * and - until the stable that applies the blueprint - every account, since MiConnect does not emit
+ * the claim yet (the expected rollout state, docs/wiki/mail-client-transport.md#eligibility). The
+ * line names the class, never the address.
+ */
+async function rememberSchoolMail(address: string | undefined): Promise<void> {
+  const mailClass = mailClassOf(address);
+  if (address && mailClass) {
+    await setOidcEntry(SCHOOL_MAIL_KEY, address.trim().toLowerCase());
+    alog(`login: school address kept for the mail sign-in (class ${mailClass})`);
+    return;
+  }
+  await removeOidcEntry(SCHOOL_MAIL_KEY);
+  if (address) {
+    // core-service validates the claim against the same contract: reaching this is a server that
+    // disagrees with the client about the school domains.
+    awarn('login: school_mail is not on a school domain - not kept, mail not offered');
+  } else {
+    alog('login: no school address in this sign-in - mail not offered');
+  }
+}
+
+/**
+ * Re-runs the MiConnect sign-in to fetch the school address and refresh the mail class - the
+ * "Activer le mail" button lot 3 shows when {@link schoolMailAddress} is `null` (lead's decision,
+ * 2026-11-27, docs/wiki/mail-client-transport.md#eligibility).
+ *
+ * WHY A SIGN-IN. The class is written only by a MiConnect sign-in GRANTED `school_mail`, and an
+ * account signed in before the client asked for that scope, or before MiConnect's blueprint emitted
+ * it, has none yet. MiConnect's session is usually still alive, so this is one tap: authorize answers
+ * at once, and the callback (`handleOidcCallback` -> `adoptSignedInSession`) stores the class on the
+ * server and the address on this device, then returns to `returnTo`. It is the ordinary sign-in
+ * entry point, {@link startOidcLogin}, and nothing else: one path writes the class.
+ * @public called by the mail tab's activation button (lot 3)
+ */
+export function startSchoolMailActivation(returnTo: string): Promise<OidcLoginStart> {
+  alog(`mail activation: re-running the MiConnect sign-in (return ${returnTo})`);
+  return startOidcLogin(returnTo);
+}
+
+/**
+ * The signed-in account's SCHOOL address on this device, or `null` when it has none (mail not
+ * offered). For the mail client's sign-in (lot 2): it PREFILLS the address, and the person still
+ * types their password - Canari holds no mail credential.
+ *
+ * Written by every MiConnect sign-in (set, or removed when the claim is absent), removed by a
+ * restore and by every sign-out; lives in the same store as the OIDC state, on this device only.
+ * @public consumed by the mail client's sign-in (lot 2)
+ */
+export async function schoolMailAddress(): Promise<string | null> {
+  return getOidcEntry(SCHOOL_MAIL_KEY);
 }
 
 /**
@@ -961,9 +1029,12 @@ export async function getOidcReturnTo(): Promise<string> {
  * after the sign-in, across reloads, so it is persisted in the same store as the OIDC state.
  *
  * WHY THAT IS NOT AN ACCESS TOKEN IN STORAGE. No Canari service accepts it (they verify their own
- * HS256 JWT) and Authentik reads it only as a logout HINT, expiry ignored. Its claims (sub, name,
- * promo) are what `saveUserLocally` already keeps. What it can do in other hands is sign this user
- * out of MiConnect, which any page can already do by navigating to end-session without a hint.
+ * HS256 JWT) and Authentik reads it only as a logout HINT, expiry ignored. It carries the protocol
+ * claims ONLY (iss, sub, aud, times): Canari's providers copy no scope claim into it
+ * (`include_claims_in_id_token: false`, 50-providers.yaml), so no profile and no school address is
+ * kept here - this client reads `iss` alone (`planMiconnectSignOut`). What it can do in other hands
+ * is sign this user out of MiConnect, which any page can already do by navigating to end-session
+ * without a hint.
  */
 async function rememberMiconnectIdToken(idToken: string | undefined): Promise<void> {
   if (idToken) {
@@ -1552,6 +1623,16 @@ async function clearAuthUnderway(options: {
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
+  }
+  // THE SCHOOL ADDRESS GOES WITH THE ACCOUNT: the next account on this device must not see it
+  // prefilled. Not in the local-only branch above: it is one per origin, like the cookie. A store
+  // that cannot be written never holds the sign-out: it is accused, and the sign-out goes on.
+  try {
+    await removeOidcEntry(SCHOOL_MAIL_KEY);
+  } catch (err) {
+    console.error(
+      `[A] could not forget the school address at sign-out - it stays prefilled: ${err}`
+    );
   }
   // THE RESTORE KEY GOES WITH THE SESSION (WP-RESTORE-1). The server's copy dies with the session
   // row the logout below revokes; this is the platform's copy, so no later backup carries it. And

@@ -53,6 +53,30 @@ describe('parseProfileClaims', () => {
     });
   });
 
+  it('keeps the CLASS of the school address, never the address, and absent as not offered', () => {
+    const granted = (claims: object) => parseProfileClaims(claims, 'abcd1234', true);
+    const profile = granted({ school_mail: 'jane.doe@etu.emse.fr' });
+    expect(profile.mailClass).toBe('student');
+    expect(JSON.stringify(profile)).not.toContain('jane.doe');
+    expect(granted({ school_mail: 'john.roe@emse.fr' }).mailClass).toBe('staff');
+    // Granted and no claim (an Alumni-created account): not offered.
+    expect(granted({}).mailClass).toBeNull();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    for (const refused of ['x@example.org', 'a@b@etu.emse.fr', 'jane doe@etu.emse.fr']) {
+      expect(granted({ school_mail: refused }).mailClass).toBeNull();
+    }
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('example.org');
+    warn.mockRestore();
+  });
+
+  it('a sign-in NOT granted school_mail carries no class at all, so it cannot clear one', () => {
+    // An older client does not ask for the scope: even a claim present is ignored.
+    expect(parseProfileClaims({ school_mail: 'jane.doe@etu.emse.fr' })).not.toHaveProperty(
+      'mailClass'
+    );
+    expect(parseProfileClaims({}, 'abcd1234', false)).not.toHaveProperty('mailClass');
+  });
+
   it('reads alumni_linked as a boolean, and anything else as UNKNOWN (D44)', () => {
     expect(parseProfileClaims({ alumni_linked: true }).alumniLinked).toBe(true);
     expect(parseProfileClaims({ alumni_linked: false }).alumniLinked).toBe(false);
