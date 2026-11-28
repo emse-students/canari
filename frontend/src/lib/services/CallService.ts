@@ -429,6 +429,11 @@ export class CallService {
   private nativeTapAt: number | null = null;
   /** The join's wait for the call's own group ({@link waitForCallGroupCurrent}), while it runs. */
   private callGroupWait: CallGroupWait | null = null;
+  /**
+   * Hangup notices held behind their group's proof after their call ended here ({@link endCall}),
+   * by call id: each leaves at the proof, or is dropped by {@link dropHeldHangup}.
+   */
+  private readonly heldHangups = new Map<string, CallGroupWait>();
   /** The call screen shapes already timed for this call ({@link noteCallScreenShown}). */
   private screenShapesTimed = new Set<string>();
   /**
@@ -853,6 +858,11 @@ export class CallService {
     const signalDeviceId = (callMsg.deviceId ?? '').trim();
 
     if (callMsg.hangup) {
+      // The call's own end, from another device: a notice of ours still held for it says nothing
+      // more to anyone.
+      if (signalDeviceId !== currentDeviceId) {
+        this.dropHeldHangup(callMsg.callId, `${senderId}'s hangup already ended the call`);
+      }
       if (this.currentCallId === callMsg.callId) {
         if (group && !this.groupHangupEnds(senderNorm, callMsg)) return;
         // Remote origin. A device that was IN the 1:1 call writes its record from its own facts
@@ -1067,6 +1077,19 @@ export class CallService {
     if (this.nativeTapAt === null || this.screenShapesTimed.has(shape)) return;
     this.screenShapesTimed.add(shape);
     appendLog(`[CallAccept] timing: call screen shown as ${shape}${this.sinceNativeTap()}`);
+  }
+
+  /**
+   * Drops the hangup notice still held for `callId` ({@link endCall}): the call's end already
+   * reached the others by another way - `why` names it - so the notice would only repeat it. Its
+   * wait stops with it. A call with no held notice is a no-op.
+   */
+  private dropHeldHangup(callId: string, why: string): void {
+    const wait = this.heldHangups.get(callId);
+    if (!wait) return;
+    this.heldHangups.delete(callId);
+    appendLog(`[Call] hangup notice of ${callId} dropped - ${why}`);
+    wait.stop();
   }
 
   /**
@@ -1643,6 +1666,8 @@ export class CallService {
     this.callGroupWait = null;
     const holdNotice = notify && pendingWait !== null && !pendingWait.settled;
     if (pendingWait && !holdNotice) pendingWait.stop();
+    // Priority in the drain serves a live call only: the held notice waits without it.
+    if (holdNotice) pendingWait?.releaseLead();
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = state === 'calling';
     // Typed, and only for a call nobody answered: incoming = a ring this device refused; calling =
@@ -1690,19 +1715,31 @@ export class CallService {
         mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
       );
       const send = () => this.sendMlsNotification(groupId, frame, endedAt);
-      if (holdNotice) {
+      if (holdNotice && pendingWait) {
         appendLog(
           `[Call] hangup notice of ${callId} held until its group is proven current - the screen and the record do not wait`
         );
+        this.heldHangups.set(callId, pendingWait);
       }
+      /** Whether the held notice is still owed: not dropped, never sent twice. */
+      const stillHeld = () => {
+        if (this.heldHangups.get(callId) !== pendingWait) return false;
+        this.heldHangups.delete(callId);
+        return true;
+      };
       hangup = (
         holdNotice && pendingWait
-          ? pendingWait.proof.then(send, (e: unknown) => {
-              appendLog(
-                `[Call] hangup notice of ${callId} not sent - its group was never proven current: ${String(e)}`
-              );
-              return null;
-            })
+          ? pendingWait.proof.then(
+              () => (stillHeld() ? send() : null),
+              (e: unknown) => {
+                if (stillHeld()) {
+                  appendLog(
+                    `[Call] hangup notice of ${callId} not sent - its group was never proven current: ${String(e)}`
+                  );
+                }
+                return null;
+              }
+            )
           : send()
       ).catch((e: unknown) => {
         console.error(

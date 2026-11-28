@@ -81,6 +81,11 @@ export interface CallGroupWait {
   readonly proof: Promise<CallGroupProof>;
   /** Whether {@link proof} has settled, either way. */
   readonly settled: boolean;
+  /**
+   * Gives up the group's lead on the drain and keeps waiting: what a hangup notice held behind the
+   * proof does once its call ended locally - priority serves a live call only. Idempotent.
+   */
+  releaseLead(): void;
   /** Ends the wait - its lead on the drain, its waiters, its proof. Idempotent. */
   stop(): void;
 }
@@ -111,7 +116,14 @@ export function waitForCallGroupCurrent(
   const startedAt = performance.now();
   const since = () => Math.round(performance.now() - startedAt);
   log(`[Call] keys of call=${callId} wait for its group ${short} to be current`);
-  const releaseLead = mls.leadGroup(groupId);
+  const releaseGroupLead = mls.leadGroup(groupId);
+  let leading = true;
+  const releaseLead = () => {
+    if (!leading) return;
+    leading = false;
+    releaseGroupLead();
+    log(`[Call] group ${short} no longer leads the drain`);
+  };
   /** Aborted by {@link stop}: every waiter of the wait is removed with it. */
   const stopped = new AbortController();
   let settled = false;
@@ -243,6 +255,7 @@ export function waitForCallGroupCurrent(
     get settled() {
       return settled;
     },
+    releaseLead,
     stop,
   };
 }

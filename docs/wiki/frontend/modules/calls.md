@@ -841,9 +841,15 @@ either. So:
   current.
 - **A hang-up during the wait.** The screen and the record are immediate. The MLS hangup notice is
   sent in the group, so it is HELD behind the same proof (`endCall`: `held until its group is proven
-  current`) and the wait goes on for it alone; the server's ring-end does not replace it (it reaches
-  the devices still ringing, not the caller's record of the call). It is bounded by the proof or by
-  the session's end, never by a clock: a sign-out drops it, said.
+  current`), and the group gives up its LEAD on the drain at once (`CallGroupWait.releaseLead`):
+  priority serves a live call only. The notice leaves at the proof, or is DROPPED
+  (`dropHeldHangup`, logged `hangup notice of ... dropped - <why>`) when the call's own end reaches
+  this page from another device - the other side's hangup frame for that call - since it would
+  only repeat it. No clock bounds it: the proof, that drop, or the session's end (logged `not
+  sent`). The server's `call_ring_end` is NOT such a signal here: it is a native push that stops
+  ringing devices (`CanariFirebaseMessagingService`, CallKit) and never reaches a page, and a 1:1
+  caller still ringing learns of the callee's end only from this notice - so the notice is not
+  dropped on this device's own `ring-end` either.
 - **Nothing outlives the wait.** Every waiter it registers is removable through an `AbortSignal`
   (`whenMlsReady`, `whenGroupFrameApplied`, `whenGroupDrained`, `whenNextCatchUp`), one controller per
   round aborted when the round moves on or the wait stops (never `AbortSignal.any`, absent from the
@@ -877,7 +883,7 @@ counted holders; the frame event, its abandon and its removal; the round-robin i
 emptied bucket), `BaseMlsService.groupDrained.test.ts` (drained at the listing; an aborted waiter
 removed), `mlsReadiness.test.ts`, `pendingCallAccept*.test.ts` (the next catch-up, removable, and
 abandoned at sign-out) and `CallService.p2p.test.ts` (the setup before the proof and the keys after
-it; a caught-up session no proof; the hangup notice held then sent; a session end with no toast and
+it; a caught-up session no proof; the hangup notice held without its lead then sent, or dropped by the other side's hangup; a session end with no toast and
 nothing sent; the screen timed per shape). **Owed:** the reading in
 [backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
 

@@ -5531,6 +5531,8 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(
       (await logLines()).some((l) => l.includes('held until its group is proven current'))
     ).toBe(true);
+    // Priority in the drain served the live call only: released at the end, not at the proof.
+    expect(release).toHaveBeenCalledTimes(1);
 
     applyCallGroupFrame(1);
     await settle();
@@ -5538,6 +5540,53 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(release).toHaveBeenCalledTimes(1);
     expect(FakeSocket.instances).toHaveLength(0);
     expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+  });
+
+  it('the end of the call from the other side drops the held notice: nothing repeated, the wait stopped', async () => {
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    await answeredOnTheRing(service);
+    await settle();
+    service.endCall();
+    await settle();
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true, deviceId: 'device-peer' },
+      'me@example.org',
+      'device-1'
+    );
+    applyCallGroupFrame(1);
+    await settle();
+
+    expect(sentCallFrames().some((c) => c.hangup)).toBe(false);
+    const lines = await logLines();
+    expect(lines.some((l) => l.includes('hangup notice of room-1 dropped'))).toBe(true);
+    expect(lines.some((l) => l.includes('not sent - its group was never proven current'))).toBe(
+      false
+    );
+  });
+
+  it('a hangup of another call drops nothing', async () => {
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    await answeredOnTheRing(service);
+    await settle();
+    service.endCall();
+    await settle();
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { callId: 'room-other', hangup: true, deviceId: 'device-peer' },
+      'me@example.org',
+      'device-1'
+    );
+    applyCallGroupFrame(1);
+    await settle();
+
+    expect(sentCallFrames().filter((c) => c.hangup)).toHaveLength(1);
   });
 
   it('the session ending under the wait is no failure: no toast, nothing sent', async () => {

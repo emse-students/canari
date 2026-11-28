@@ -278,6 +278,21 @@ describe('waitForCallGroupCurrent', () => {
     expect(w.mls.getGroupServerStatus).toHaveBeenCalledTimes(1);
   });
 
+  it('a released lead keeps the wait: the proof still lands, the lead released once', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
+    w.state.ready = true;
+    const { wait, outcome } = start(w);
+    await flush();
+    wait.releaseLead();
+    wait.releaseLead();
+    expect(w.release).toHaveBeenCalledTimes(1);
+
+    w.applyFrame(2);
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
+    expect(w.release).toHaveBeenCalledTimes(1);
+  });
+
   it('a stop before MLS is up removes the parked MLS-ready waiter', async () => {
     const w = world();
     const { wait } = start(w);
