@@ -1,3 +1,4 @@
+import { deliveryUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 import { forgetMailPassword } from './sealedMailPassword';
 
@@ -21,14 +22,63 @@ import { forgetMailPassword } from './sealedMailPassword';
 
 type MailSignOut = (reason: string) => Promise<void>;
 
-let registered: MailSignOut | null = null;
+/** A POST to the delivery service, authenticated with the token the leaving session still holds. */
+export type AlertFetcher = (path: string, body: unknown) => Promise<Response>;
 
-/** Registers the mail client's sign-out; returns the unregister. One client at a time. */
-export function registerMailSignOut(signOut: MailSignOut): () => void {
+/**
+ * The mail client's release of the account's alert rule (mail lot 5, `mailAlert.ts`): run while the
+ * mailbox session is still open, with a fetcher that carries the leaving Canari token.
+ */
+type MailAlertRelease = (fetcher: AlertFetcher) => Promise<void>;
+
+let registered: MailSignOut | null = null;
+let registeredRelease: MailAlertRelease | null = null;
+/** The release started for the sign-out under way: the mailbox's own sign-out waits for it. */
+let releasing: Promise<void> | null = null;
+
+/** Registers the mail client's sign-out (and its alert release); returns the unregister. One client at a time. */
+export function registerMailSignOut(signOut: MailSignOut, release?: MailAlertRelease): () => void {
   registered = signOut;
+  registeredRelease = release ?? null;
   return () => {
-    if (registered === signOut) registered = null;
+    if (registered === signOut) {
+      registered = null;
+      registeredRelease = null;
+    }
   };
+}
+
+/**
+ * STARTS the release of the account's alert rule at a Canari sign-out, BEFORE the sign-out forgets
+ * the token: `auth.ts` calls it first, with the access token still in hand, and does not wait. The
+ * mailbox's own sign-out ({@link endMailOnSignOut}) waits for it, so the rule is removed while the
+ * mailbox session is still open. Never throws; a failure is logged, and the rule is then left to
+ * another device's orphan repair (or outlives Canari - register C34).
+ */
+export function startMailAlertRelease(bearer: string): void {
+  const release = registeredRelease;
+  if (!release) return;
+  // The leaving token, as it is: a sign-out cannot refresh it (the refresh is what may have failed,
+  // and a refresh racing the sign-out would mint a session for an account that is leaving). A token
+  // already expired is REFUSED: said at warn, and the rule is then left to the orphan repair - the
+  // subscription itself goes with the session's push rows server-side (register C34).
+  const fetcher: AlertFetcher = async (path, body) => {
+    const res = await fetch(`${deliveryUrl()}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) {
+      Log.w(
+        'MAIL-ALERT',
+        `the release at sign-out was refused (401 on ${path}): the session had expired`
+      );
+    }
+    return res;
+  };
+  releasing = release(fetcher).catch((err: unknown) => {
+    Log.w('MAIL-ALERT', `ERROR: the alert release at sign-out failed (${String(err)})`);
+  });
 }
 
 /**
@@ -42,6 +92,9 @@ export async function endMailOnSignOut(
   store?: Storage
 ): Promise<void> {
   const signOut = registered;
+  const release = releasing;
+  releasing = null;
+  if (release) await release;
   if (!signOut) {
     Log.d('MAIL', `canari sign-out (${reason}): no mail client to end`);
   } else {

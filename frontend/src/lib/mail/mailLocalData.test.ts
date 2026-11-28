@@ -13,6 +13,8 @@ describe('the D8 erasure', () => {
       ACCOUNT_KEY.mailSealedPassword('u1'),
       ACCOUNT_KEY.mailWatchCursor('u1'),
       ACCOUNT_KEY.mailNotifications('u1'),
+      ACCOUNT_KEY.mailAlert('u1'),
+      ACCOUNT_KEY.mailPersistentConnection('u1'),
     ]);
   });
 

@@ -55,6 +55,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
       mailMode: 'off' as const,
+      mailPush: 'none' as const,
       groupCallsMode: 'off' as const,
       callRelay: 'none' as const,
       retentionReelDays: 365,
@@ -78,6 +79,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off' as const,
       liveReplaysMode: 'off' as const,
       mailMode: 'off' as const,
+      mailPush: 'none' as const,
       groupCallsMode: 'off' as const,
       callRelay: 'none' as const,
       retentionReelDays: 365,
@@ -103,6 +105,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       groupCallsMode: 'off',
       callRelay: 'none',
       lydiaContractAnniversary: null,
@@ -188,6 +191,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       groupCallsMode: 'off',
       callRelay: 'none',
       lydiaContractAnniversary: null,
@@ -263,6 +267,7 @@ describe('PlatformService', () => {
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
         mailMode: 'off',
+        mailPush: 'none',
         groupCallsMode: 'off',
         callRelay: 'none',
         lydiaContractAnniversary: null,
@@ -346,6 +351,7 @@ describe('PlatformService', () => {
         checkpointSkipMode: 'off',
         liveReplaysMode: 'off',
         mailMode: 'off',
+        mailPush: 'none',
         groupCallsMode: 'off',
         callRelay: 'none',
         lydiaContractAnniversary: null,
@@ -414,6 +420,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       groupCallsMode: 'off',
       callRelay: 'none',
       lydiaContractAnniversary: null,
@@ -446,6 +453,7 @@ describe('PlatformService', () => {
       checkpointSkipMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       groupCallsMode: 'off',
       callRelay: 'none',
       lydiaContractAnniversary: null,
@@ -543,6 +551,22 @@ describe('PlatformService', () => {
     expect(result.livesMode).toBe('on');
     expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { mailMode: 'on' });
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain('mailMode off -> on by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the mail push switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ mailPush: 'cloudflare' }, ADMIN);
+
+    expect(result.mailPush).toBe('cloudflare');
+    expect(result.mailMode).toBe('off');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { mailPush: 'cloudflare' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'mailPush none -> cloudflare by=aaaaaaaa'
+    );
     warn.mockRestore();
   });
 

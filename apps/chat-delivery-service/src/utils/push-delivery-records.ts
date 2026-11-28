@@ -37,7 +37,9 @@ export type PushDeliveryKind =
   /** A ring's end - a state signal, kept apart so it never inflates the rings. */
   | 'ring_end'
   /** `welcome_request_pending`, the admission nudge to the other members' Android devices. */
-  | 'welcome_request';
+  | 'welcome_request'
+  /** An empty new-mail push (mail lot 5, `MailAlertService.alert`). */
+  | 'mail';
 
 /**
  * What became of one attempt at the provider: the column `outcome`. `attempted = accepted + failed`

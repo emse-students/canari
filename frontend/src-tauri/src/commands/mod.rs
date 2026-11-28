@@ -16,6 +16,7 @@ pub mod handoff;
 // The mail client's native socket: one destination, raw bytes both ways (2026-11-27).
 pub mod mail_socket;
 // The iOS background refresh flag of the new-mail watcher (lot 4, 2026-11-27).
+pub mod mail_push_secret;
 pub mod mail_watch;
 pub mod mls;
 // One MLS state per account on a shared install: the slot, the parked states, the switch.

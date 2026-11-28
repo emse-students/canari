@@ -34,8 +34,12 @@ export interface MailWatchCursor {
 /** Where the cursor's text is kept. Every method logs its own failure; `read` and `erase` never throw. */
 export interface MailCursorStore {
   read(userId: string): Promise<string | null>;
-  /** Resolves `true` when the text is durably written, `false` (logged) when it is not. */
-  write(userId: string, raw: string): Promise<boolean>;
+  /**
+   * Writes `raw` ONLY over the cursor the writer read - `expectedHighest`, `null` for none (mail lot
+   * 5: the iOS notification extension writes the same file, and whoever moves it first announces).
+   * Resolves `true` when written, `false` (logged) when it was not or the cursor moved meanwhile.
+   */
+  write(userId: string, raw: string, expectedHighest: number | null): Promise<boolean>;
   erase(userId: string): Promise<void>;
 }
 
@@ -50,8 +54,13 @@ export function webCursorStore(store: Storage = localStorage): MailCursorStore {
         return null;
       }
     },
-    async write(userId, raw) {
+    async write(userId, raw, expectedHighest) {
       try {
+        const now = store.getItem(ACCOUNT_KEY.mailWatchCursor(userId));
+        if (highestAsRead(now, accountOf(raw)) !== expectedHighest) {
+          Log.i('MAIL-WATCH', 'the cursor moved since it was read - not written');
+          return false;
+        }
         store.setItem(ACCOUNT_KEY.mailWatchCursor(userId), raw);
         return true;
       } catch (err) {
@@ -80,11 +89,16 @@ export const nativeCursorStore: MailCursorStore = {
       return null;
     }
   },
-  async write(userId, raw) {
+  async write(userId, raw, expectedHighest) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('mail_watch_cursor_write', { userId, value: raw });
-      return true;
+      const written = await invoke<boolean>('mail_watch_cursor_write', {
+        userId,
+        value: raw,
+        expectedHighest,
+      });
+      if (!written) Log.i('MAIL-WATCH', 'the cursor moved since it was read - not written');
+      return written;
     } catch (err) {
       Log.w('MAIL-WATCH', `ERROR: the native cursor could not be written (${String(err)})`);
       return false;
@@ -181,10 +195,15 @@ export async function readMailWatchCursor(
   return { account: entry.account, highest: entry.highest };
 }
 
-/** Writes `cursor` for `userId`. `false` (logged by the store) when it was not durably written. */
+/**
+ * Writes `cursor` for `userId` over the one read (`read`, `null` for none). `false` (logged by the
+ * store) when it was not durably written, or another process moved it since - nothing is then
+ * announced.
+ */
 export function writeMailWatchCursor(
   userId: string,
   cursor: MailWatchCursor,
+  read: MailWatchCursor | null,
   store: MailCursorStore
 ): Promise<boolean> {
   return store.write(
@@ -193,8 +212,40 @@ export function writeMailWatchCursor(
       v: VERSION,
       account: normalizeMailAddress(cursor.account),
       highest: cursor.highest,
-    })
+    }),
+    read?.highest ?? null
   );
+}
+
+/** The mailbox a cursor text names, or `null`. */
+function accountOf(raw: string): string | null {
+  try {
+    const account = (JSON.parse(raw) as { account?: unknown }).account;
+    return typeof account === 'string' ? account : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `highest` of a stored cursor text as {@link readMailWatchCursor} reads it for `account`:
+ * `null` when absent, not version 1, or another mailbox's - the same comparison `mail_watch.rs`'s
+ * `write_cursor_if` makes. Silent: the reader says why it took a baseline.
+ */
+function highestAsRead(raw: string | null, account: string | null): number | null {
+  if (raw === null || account === null) return null;
+  try {
+    const entry = JSON.parse(raw) as { v?: unknown; account?: unknown; highest?: unknown };
+    return entry?.v === VERSION &&
+      entry.account === account &&
+      typeof entry.highest === 'number' &&
+      Number.isSafeInteger(entry.highest) &&
+      entry.highest >= 0
+      ? entry.highest
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

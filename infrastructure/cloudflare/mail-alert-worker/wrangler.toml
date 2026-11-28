@@ -1,0 +1,31 @@
+# Canari's mail alert relay (mail lot 5, docs/wiki/mail-client-transport.md#as-built---lot-5).
+#
+# NO SECRET AND NO ACCOUNT ID LIVE HERE: wrangler reads the account from the login of whoever deploys
+# (`bunx wrangler login`), and the shared secret is a Worker secret set by hand:
+#   bunx wrangler secret put HOOK_SECRET --env production   (= GitHub env secret MAIL_ALERT_HOOK_SECRET)
+#   bunx wrangler secret put HOOK_SECRET --env dev          (= DEV_MAIL_ALERT_HOOK_SECRET)
+# The owner's one-off procedure: docs/wiki/mail-client-transport.md (As built - lot 5).
+
+name = "canari-mail-alert"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+workers_dev = false
+
+[env.production]
+name = "canari-mail-alert"
+vars = { TARGET_URL = "https://canari-emse.fr", ALERT_DOMAIN = "alerte.canari-emse.fr" }
+
+# `namespace_id` is a number of OUR choosing that names the counter, not an account identifier.
+[[env.production.ratelimits]]
+name = "MAIL_ALERT_LIMITER"
+namespace_id = "5101"
+simple = { limit = 20, period = 60 }
+
+[env.dev]
+name = "canari-mail-alert-dev"
+vars = { TARGET_URL = "https://dev.canari-emse.fr", ALERT_DOMAIN = "alerte-dev.canari-emse.fr" }
+
+[[env.dev.ratelimits]]
+name = "MAIL_ALERT_LIMITER"
+namespace_id = "5102"
+simple = { limit = 20, period = 60 }

@@ -263,10 +263,31 @@ let ladderGeneration: number | null = null;
  * Records this install's latest {@link PushOutcomeRecord} for the session of `generation`; a ladder
  * of a session that ended records nothing. A store that refuses is logged.
  */
+/** Who wants to know that this session's push registration completed (mail lot 5's alert). */
+const registeredListeners = new Set<() => void>();
+
+/**
+ * Calls `listener` each time this install's push registration completes (`registered`) for the
+ * signed-in session; returns the unsubscribe. A listener that throws is logged and the others run.
+ */
+export function onPushRegistered(listener: () => void): () => void {
+  registeredListeners.add(listener);
+  return () => registeredListeners.delete(listener);
+}
+
 function recordPushOutcome(outcome: PushOutcomeRecord, generation: number): void {
   if (generation !== pushSessionGeneration) {
     console.info(`[Push] outcome ${outcome} of a signed-out session not recorded`);
     return;
+  }
+  if (outcome === 'registered') {
+    for (const listener of registeredListeners) {
+      try {
+        listener();
+      } catch (err) {
+        console.warn('[Push] a registration listener threw', err);
+      }
+    }
   }
   try {
     localStorage.setItem(PUSH_OUTCOME_STORAGE_KEY, outcome);

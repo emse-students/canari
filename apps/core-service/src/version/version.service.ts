@@ -9,6 +9,7 @@ import type {
   LivesMode,
   LiveReplaysMode,
   MailMode,
+  MailPush,
   GroupCallsMode,
   CallRelay,
 } from '../platform/entities/platform-config.entity';
@@ -84,6 +85,11 @@ export type AppVersionResponse = {
    */
   mail: {
     mode: MailMode;
+    /**
+     * How a new school mail reaches a phone (`platform_config.mail_push`, mail lot 5): `none` or
+     * `cloudflare`. A client reads an absent or unknown value as `none`.
+     */
+    push: MailPush;
   };
   /**
    * The retention durations in force, in days (`platform_config.retention_*`, migration 025). The
@@ -208,7 +214,7 @@ export class VersionService {
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
       liveReplays: { mode: platform.liveReplaysMode },
-      mail: { mode: platform.mailMode },
+      mail: { mode: platform.mailMode, push: platform.mailPush },
       retention: publicRetention(platform),
       oidcPkce: true,
       presencePost: true,

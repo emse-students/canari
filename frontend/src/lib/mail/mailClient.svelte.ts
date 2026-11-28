@@ -3,13 +3,16 @@ import { serverMailMode } from '$lib/stores/appVersionCheck.svelte';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { gatewayUrl } from '$lib/utils/apiUrl';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
+import { httpMailAlertServer, releaseMailAlertBeforeSignOut } from './mailAlert';
 import { mailStreamOpener, platformTransport } from './connect';
 import { MailApi } from './mailApi';
 import { classifyMailFailure } from './mailErrors';
 import { canariMailContext } from './mailContext';
 import { MailSession, type MailContext, type MailSoap } from './mailSession';
-import { registerMailSignOut } from './mailSignOut';
+import { registerMailSignOut, type AlertFetcher } from './mailSignOut';
+import { quiesceMailAlertSync } from './mailAlertSync';
 import { MailStore } from './mailStore.svelte';
 import { ZimbraSoapClient } from './soapClient';
 
@@ -107,6 +110,38 @@ function buildClient(userId: string): MailClient {
 let current = $state<MailClient | null>(null);
 let unregister: (() => void) | null = null;
 
+/**
+ * Mail lot 5: takes this device out of the account's alert and removes the estate's rule when it was
+ * the last, while `client`'s mailbox session is still open (a Canari sign-out starts it, the mailbox
+ * sign-out waits for it - `mailSignOut.ts`). A mailbox that is not open has nothing to read the rules
+ * with: said, and left to the orphan repair.
+ */
+async function releaseClientAlert(client: MailClient, fetcher: AlertFetcher): Promise<void> {
+  // Behind the alert's single flight: an `ensure` already running settles first, and none starts
+  // after - so nothing writes the rule once this release has removed it.
+  await quiesceMailAlertSync();
+  if (client.session.state.kind !== 'ready') {
+    Log.i(
+      'MAIL-ALERT',
+      `sign-out with the mailbox ${client.session.state.kind} - no rule released`
+    );
+    return;
+  }
+  let deviceId: string | null = null;
+  try {
+    deviceId = localStorage.getItem(ACCOUNT_KEY.deviceId(client.userId));
+  } catch (err) {
+    Log.w('MAIL-ALERT', `ERROR: the device id could not be read at sign-out (${String(err)})`);
+  }
+  await releaseMailAlertBeforeSignOut({
+    userId: client.userId,
+    deviceId,
+    mailbox: client.session,
+    server: httpMailAlertServer(fetcher),
+    store: localStorage,
+  });
+}
+
 /** Ends the current client, if any (a Canari sign-out, an account switch). */
 async function endCurrent(reason: string): Promise<void> {
   const client = current;
@@ -132,7 +167,10 @@ export function mailClientFor(
   }
   const client = build(userId);
   current = client;
-  unregister = registerMailSignOut((reason) => endCurrent(reason));
+  unregister = registerMailSignOut(
+    (reason) => endCurrent(reason),
+    (fetcher) => releaseClientAlert(client, fetcher)
+  );
   return client;
 }
 

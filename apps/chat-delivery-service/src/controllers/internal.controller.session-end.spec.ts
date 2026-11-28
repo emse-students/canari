@@ -17,6 +17,11 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { MessagingService } from '../services/messaging.service';
+import { sendMailForget } from '../utils/mail-forget';
+
+jest.mock('../utils/mail-forget', () => ({
+  sendMailForget: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+}));
 
 /**
  * The server half of "a sign-out ends the device's push registration": when core-service ends a
@@ -25,9 +30,12 @@ import { MessagingService } from '../services/messaging.service';
  */
 describe('InternalController - a session end ends the device push registration', () => {
   const SECRET = 'internal-secret-for-tests';
+  const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
+  const OLD = '0e0e0e0e-0000-4000-8000-00000000a1b2';
+  const ROW = { id: 'row-1', userId: 'user-1', deviceId: 'dev-1', token: 't', platform: 'android' };
 
   let controller: InternalController;
-  let pushTokenRepo: { delete: jest.Mock; findOne: jest.Mock };
+  let pushTokenRepo: { delete: jest.Mock; findOne: jest.Mock; find: jest.Mock };
   let previousSecret: string | undefined;
 
   beforeEach(async () => {
@@ -36,7 +44,10 @@ describe('InternalController - a session end ends the device push registration',
     pushTokenRepo = {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       findOne: jest.fn(),
+      // One registration matches each filter, unless a test says otherwise.
+      find: jest.fn().mockResolvedValue([ROW]),
     };
+    (sendMailForget as jest.Mock).mockClear();
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InternalController],
@@ -69,15 +80,44 @@ describe('InternalController - a session end ends the device push registration',
     else process.env.INTERNAL_SECRET = previousSecret;
   });
 
-  const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
-  const OLD = '0e0e0e0e-0000-4000-8000-00000000a1b2';
+  /** The forget runs after the answer (`setImmediate`): one turn of the loop lets it start. */
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it('answers BEFORE the forget is sent: core-service never waits on Google or Apple', async () => {
+    await controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined);
+    expect(sendMailForget).not.toHaveBeenCalled();
+    await flush();
+    expect(sendMailForget).toHaveBeenCalledTimes(1);
+  });
 
   it('removes the row the ended session registered, by session alone when no device is named', async () => {
     await expect(
       controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
     ).resolves.toEqual({ removed: 1 });
+    expect(pushTokenRepo.find).toHaveBeenCalledWith({
+      where: { userId: 'user-1', sessionId: SID },
+    });
     expect(pushTokenRepo.delete).toHaveBeenCalledTimes(1);
-    expect(pushTokenRepo.delete).toHaveBeenCalledWith({ userId: 'user-1', sessionId: SID });
+    expect(pushTokenRepo.delete).toHaveBeenCalledWith({
+      userId: 'user-1',
+      sessionId: SID,
+      id: 'row-1',
+    });
+    await flush();
+    expect(sendMailForget).toHaveBeenCalledWith([ROW], 'session-ended', expect.anything());
+  });
+
+  it('tells ONLY the rows it removed to forget the mailbox - a re-sign-in rewritten meanwhile stays', async () => {
+    const rewritten = { ...ROW, id: 'row-2' };
+    pushTokenRepo.find.mockResolvedValueOnce([ROW, rewritten]);
+    pushTokenRepo.delete
+      .mockResolvedValueOnce({ affected: 1 })
+      .mockResolvedValueOnce({ affected: 0 });
+    await expect(
+      controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
+    ).resolves.toEqual({ removed: 1 });
+    await flush();
+    expect(sendMailForget).toHaveBeenCalledWith([ROW], 'session-ended', expect.anything());
   });
 
   it("also removes the device's row, only while it is bound to exactly what core-service read", async () => {
@@ -86,6 +126,7 @@ describe('InternalController - a session end ends the device push registration',
       userId: 'user-1',
       deviceId: 'dev-1',
       sessionId: OLD,
+      id: 'row-1',
     });
 
     await controller.endSessionPushRegistration(SECRET, 'user-1', SID, 'dev-1', 'none');
@@ -93,6 +134,7 @@ describe('InternalController - a session end ends the device push registration',
       userId: 'user-1',
       deviceId: 'dev-1',
       sessionId: IsNull(),
+      id: 'row-1',
     });
   });
 

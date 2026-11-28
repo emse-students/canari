@@ -162,3 +162,8 @@
    message the app had already received (push_mode = wake, 2026-11-02). */
 "notif.wake.unavailable" = "Un message n'a pas pu être chargé. Ouvrez Canari pour le lire.";
 "notif.wake.gone" = "Message déjà reçu dans Canari.";
+
+/* Mail lot 5: the new school mail behind an empty push (`handleMailPush`). */
+"notif.mail.new" = "Nouveau mail";
+"notif.mail.nosubject" = "(sans objet)";
+"notif.mail.many" = "%@ nouveaux mails";

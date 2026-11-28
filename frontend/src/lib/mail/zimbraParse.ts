@@ -406,3 +406,15 @@ export function parseWaitSetAnswer(body: Json): WaitSetAnswer {
     canceled: response.canceled === true || response.canceled === '1',
   };
 }
+
+/**
+ * The rules of `GetFilterRulesResponse` (lot 5), in their order and EXACTLY as Zimbra sent them: a
+ * caller writes the ones it does not own back verbatim. `filterRules` is a required element of the
+ * answer (present, empty, for an account with no rule), so its absence is a malformed answer - never
+ * read as "no rules", which written back would erase the user's own.
+ */
+export function parseFilterRules(body: Json): Json[] {
+  const answer = responseOf(body, 'GetFilterRulesResponse');
+  if (!('filterRules' in answer)) throw new MailError('server', 'malformed-GetFilterRulesResponse');
+  return list(answer.filterRules).flatMap((group) => list(group.filterRule));
+}

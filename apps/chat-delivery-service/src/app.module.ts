@@ -37,6 +37,10 @@ import { DeviceSignatureKey } from './entities/device-signature-key.entity';
 import { PushToken } from './entities/push-token.entity';
 import { NotificationPreference } from './entities/notification-preference.entity';
 import { NotificationPreferencesController } from './controllers/notification-preferences.controller';
+import { MailAlertController } from './controllers/mail-alert.controller';
+import { MailAlertDevice } from './entities/mail-alert-device.entity';
+import { MailAlertToken } from './entities/mail-alert-token.entity';
+import { MailAlertService } from './services/mail-alert.service';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
@@ -124,6 +128,8 @@ class RedisShutdown implements OnModuleDestroy {
         UninvitedEntry,
         GroupLastMessage,
         ReportAccusation,
+        MailAlertToken,
+        MailAlertDevice,
       ],
       synchronize: typeormSynchronize(),
       // The session zone is pinned: see `PG_SESSION_OPTIONS`.
@@ -148,6 +154,8 @@ class RedisShutdown implements OnModuleDestroy {
       NotificationPreference,
       GroupMembershipInterval,
       RevokedDeviceGroup,
+      MailAlertToken,
+      MailAlertDevice,
     ]),
   ],
   controllers: [
@@ -168,11 +176,13 @@ class RedisShutdown implements OnModuleDestroy {
     AdminStorageController,
     CallsController,
     CloudflareSfuController,
+    MailAlertController,
   ],
   providers: [
     ROUTE_PARAMS_GUARD,
     RedisProvider,
     RedisShutdown,
+    MailAlertService,
     MessagingService,
     DeviceSignatureKeysService,
     CallsService,

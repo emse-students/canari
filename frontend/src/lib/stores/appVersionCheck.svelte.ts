@@ -11,6 +11,7 @@ import {
   type LivesMode,
   type LiveReplaysMode,
   type MailMode,
+  type MailPush,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { parseRetentionRead, type ServedRetention } from '$lib/legal/retention';
@@ -155,6 +156,15 @@ export function serverLiveReplaysMode(): LiveReplaysMode {
  */
 export function serverMailMode(): MailMode {
   return lastCheck?.mailMode ?? 'off';
+}
+
+/**
+ * How a new mail reaches a phone, as the last `/api/version` answer gave it, `none` before any
+ * answer (mail lot 5). A decision that would UNDO an alert on `none` waits for
+ * {@link serverMailModeKnown}: a default is never a reason to restore the account's prefs.
+ */
+export function serverMailPush(): MailPush {
+  return lastCheck?.mailPush ?? 'none';
 }
 
 /**

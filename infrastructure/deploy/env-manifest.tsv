@@ -100,6 +100,7 @@ MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET	warn	skip	secret:MICONNECT_ALUMNI_MERGE_WE
 HANDOFF_SIGNING_KEY	warn	silent	secret:HANDOFF_SIGNING_KEY	no sign-in handoff is minted (POST /api/auth/handoff answers HANDOFF_NOT_OFFERED), so every MiConnect site Canari opens is opened plainly and may ask for a MiConnect sign-in again; silent on dev, where no site trusts the dev issuer yet
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
 KLIPY_API_KEY	warn	warn	secret:KLIPY_API_KEY	the GIF picker answers that GIF search is not configured
+MAIL_ALERT_HOOK_SECRET	warn	warn	secret:MAIL_ALERT_HOOK_SECRET	the Cloudflare Email Worker's alerts are refused (401), so with mail_push = cloudflare no fast new-mail push leaves: iOS waits for its background refresh and Android for its persistent connection (mail lot 5)
 ANDROID_APP_LINK_SHA256	warn	warn	secret:ANDROID_APP_LINK_SHA256	account restore on a new Android phone is unavailable (every /api/auth/restore route answers 503)
 ANDROID_UPLOAD_KEY_SHA256	skip	silent	secret:ANDROID_UPLOAD_KEY_SHA256	dev only: a bench APK installed by hand (signed by the upload key) cannot register a restore key; absent, dev accepts the Play key only like production
 APNS_VOIP_KEY_P8	warn	warn	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner

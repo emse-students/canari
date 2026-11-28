@@ -135,7 +135,7 @@ export async function readNewInboxMail(
     const top = newest.items.map((m) => itemNumber(m.id)).find((n) => n !== null) ?? 0;
     const taken = { account: account.toLowerCase(), highest: top };
     if (!current()) throw superseded();
-    const written = await writeMailWatchCursor(userId, taken, store);
+    const written = await writeMailWatchCursor(userId, taken, null, store);
     Log.i('MAIL-WATCH', `baseline taken at item ${top} (written: ${written}) - nothing notified`);
     return { baseline: true, fresh: [], cursor: taken };
   }
@@ -166,10 +166,10 @@ export async function readNewInboxMail(
   const highest = above.reduce((top, m) => Math.max(top, itemNumber(m.id) ?? 0), cursor.highest);
   const next = { account: cursor.account, highest };
   if (!current()) throw superseded();
-  if (highest !== cursor.highest && !(await writeMailWatchCursor(userId, next, store))) {
+  if (highest !== cursor.highest && !(await writeMailWatchCursor(userId, next, cursor, store))) {
     Log.w(
       'MAIL-WATCH',
-      'ERROR: the cursor was not written - nothing notified, the next read retries'
+      'the cursor was not written (or moved meanwhile) - nothing notified, the next read retries'
     );
     return { baseline: false, fresh: [], cursor };
   }

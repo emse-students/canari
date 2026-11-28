@@ -3548,13 +3548,15 @@ static void CanariRemoveWithheldTrendNotifications(void) {
     NSMutableArray<NSString *> *ids = [NSMutableArray array];
     for (UNNotification *n in notifications) {
       id stamp = n.request.content.userInfo[@"canariWithheld"];
-      if ([stamp isKindOfClass:[NSString class]] && [stamp isEqualToString:@"seen-trend"]) {
+      // `mail`: a mail push with nothing new to show (mail lot 5, `handleMailPush`).
+      if ([stamp isKindOfClass:[NSString class]] &&
+          ([stamp isEqualToString:@"seen-trend"] || [stamp isEqualToString:@"mail"])) {
         [ids addObject:n.request.identifier];
       }
     }
     if (ids.count == 0) return;
     [center removeDeliveredNotificationsWithIdentifiers:ids];
-    NSLog(@"[CanariPush] [SEEN_TREND] %lu blank notification(s) of withheld trends removed",
+    NSLog(@"[CanariPush] [SEEN_TREND] %lu blank notification(s) of withheld trends or mail removed",
           (unsigned long)ids.count);
   }];
 }
@@ -5406,6 +5408,9 @@ static void CanariHandleWakeBackgroundFrame(NSDictionary *data,
  * - `call_ring_end`: end the CallKit ring of that call (a no-op when none rings for it).
  * - `wake`: a content-free wake-up push - its frame is fetched (`CanariHandleWakeBackgroundFrame`)
  *   and comes back through THIS allowlist, never around it.
+ * - `mail-forget` (mail lot 5, D6): erase the extension's copy of the mailbox password and the
+ *   shared mail cursor of the account it names (`canari_mail_forget`) - an erasure, never a write;
+ *   an ended session's forget only when its registration is this install's current one.
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
@@ -5423,6 +5428,28 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
 
   if ([msgType isEqualToString:@"wake"]) {
     CanariHandleWakeBackgroundFrame(data, done);
+    return;
+  }
+
+  // Mail lot 5 (D6): the server ended this device's place in the account (revoked, signed out
+  // elsewhere, account erased) - what it keeps of the school mailbox outside the page goes now.
+  if ([msgType isEqualToString:@"mail-forget"]) {
+    NSString *userId = [data[@"userId"] isKindOfClass:[NSString class]] ? data[@"userId"] : @"";
+    if (userId.length == 0) {
+      NSLog(@"[CanariPush] ERROR: mail-forget without an account - nothing erased");
+      done(UIBackgroundFetchResultNoData);
+      return;
+    }
+    // An ended session's forget names its registration: a device that signed in again keeps its
+    // mailbox (`forget_applies`, mail_push_secret.rs).
+    NSString *scope = [data[@"scope"] isKindOfClass:[NSString class]] ? data[@"scope"] : nil;
+    NSString *registration =
+        [data[@"registration"] isKindOfClass:[NSString class]] ? data[@"registration"] : nil;
+    int32_t status = canari_mail_forget(userId.UTF8String, scope.UTF8String, registration.UTF8String);
+    NSLog(@"[CanariPush] mail-forget status=%d", status);
+    done(status == 0   ? UIBackgroundFetchResultNewData
+         : status == 1 ? UIBackgroundFetchResultNoData
+                       : UIBackgroundFetchResultFailed);
     return;
   }
 

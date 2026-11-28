@@ -11,6 +11,11 @@ import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { memoryRedis } from '../testing/memoryRedis';
+import { sendMailForget } from '../utils/mail-forget';
+
+jest.mock('../utils/mail-forget', () => ({
+  sendMailForget: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+}));
 
 /**
  * THE CHAT-DELIVERY HALF OF AN ACCOUNT ERASURE, AS THE DURABLE QUEUE CALLS IT: MORE THAN ONCE.
@@ -266,6 +271,17 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       expect.stringMatching(/DELETE FROM push_token WHERE "userId" = \$1/),
     ]);
     expect(txQuery.mock.calls.every(([, params]) => params?.[0] === USER)).toBe(true);
+  });
+
+  it('reads the rows to tell to forget the mailbox first, and sends after the erasure answered', async () => {
+    const { controller, repos } = make();
+    const row = { id: 'p1', userId: USER, deviceId: 'd1', token: 't', platform: 'android' };
+    repos.pushToken.find.mockResolvedValueOnce([row]);
+    (sendMailForget as jest.Mock).mockClear();
+    await controller.deleteUserData(USER, SECRET);
+    expect(sendMailForget).not.toHaveBeenCalled();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(sendMailForget).toHaveBeenCalledWith([row], 'account-erased', expect.anything());
   });
 
   it('deletes the signature keys, the notification preferences and the dismissal markers', async () => {

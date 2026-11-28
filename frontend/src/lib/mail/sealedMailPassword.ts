@@ -2,6 +2,7 @@ import { liveDeviceKey, withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
+import { eraseMailPushSecret } from './mailPushSecret';
 import { eraseNativeMailPassword } from './mailWatchCursor';
 
 /**
@@ -166,8 +167,13 @@ export async function readRememberedMailPassword(
   });
 }
 
-/** Forgets the remembered password (unticked, signed out, refused, unopenable). */
+/**
+ * Forgets the remembered password (unticked, signed out, refused, unopenable) - and, in every case,
+ * the iOS notification extension's copy of it (mail lot 5): every path that forgets the password
+ * reaches this one, so no copy outlives it.
+ */
 export function forgetMailPassword(userId: string, store: Storage = localStorage): void {
+  void eraseMailPushSecret('the remembered password is forgotten');
   // The Android native watcher's copy goes with it (lot 4b) - even when this entry is already gone:
   // the copy's erasure must not depend on the page's own record still being there.
   void eraseNativeMailPassword(userId);

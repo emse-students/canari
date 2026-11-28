@@ -35,7 +35,7 @@ import {
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
-import { endMailOnSignOut } from '$lib/mail/mailSignOut';
+import { endMailOnSignOut, startMailAlertRelease } from '$lib/mail/mailSignOut';
 import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
@@ -1569,6 +1569,9 @@ async function clearAuthUnderway(options: {
   revokeServerSession: boolean;
   cause: SignOutCause;
 }): Promise<void> {
+  // MAIL LOT 5: the account's alert rule is released while the token that may still ask the server
+  // is in hand - started, not awaited; the mailbox's sign-out below waits for it (`mailSignOut.ts`).
+  if (_accessToken) startMailAlertRelease(_accessToken);
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
   let handlerSettled: void | Promise<void> = undefined;

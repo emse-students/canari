@@ -307,8 +307,9 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       // `RingClosed`, an enum.
       'RingSequencer.kt|it',
       'canari_push.mm|ctx == nil ? ["push_context.json " stringByAppendingString:CanariPushContextRefusal()] : "another ac',
-      // `finalCause` / `causeValue`, the extension's own fallback tokens.
-      'NotificationService.swift|cause, privacy: .public',
+      // `finalCause` / `causeValue`, the extension's own fallback tokens; and `finishMailGeneric`'s
+      // `cause`, a literal its callers spell (`no-secret`, `auth`, `search`, ...), mail lot 5.
+      '2x NotificationService.swift|cause, privacy: .public',
       // A claim file's suffix: `claimed`, `draining`, spelled by `handoff.rs`'s callers.
       '3x handoff.rs|suffix',
       '2x MainActivity.kt|name',

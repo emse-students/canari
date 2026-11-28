@@ -24,6 +24,8 @@
         <item quantity="one">%d new mail</item>
         <item quantity="other">%d new mails</item>
     </plurals>
+    <!-- Mail lot 5: the empty mail push while the native watcher is absent (MailPushHandoff). -->
+    <string name="notif_mail_generic">New mail</string>
     <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>
     <string name="notif_action_call_mute">Mute</string>
     <string name="notif_action_call_unmute">Unmute</string>

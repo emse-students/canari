@@ -296,3 +296,20 @@ export function waitSetRequest(waitSet: string, seq: string, timeoutSeconds: num
 export function destroyWaitSetRequest(waitSet: string): Body {
   return { DestroyWaitSetRequest: { _jsns: MAIL, waitSet } };
 }
+
+/**
+ * `GetFilterRulesRequest` (lot 5): the account's OWN incoming filter rules, in their order (measured
+ * on Partage with a user token, 2026-11-28).
+ */
+export function getFilterRulesRequest(): Body {
+  return { GetFilterRulesRequest: { _jsns: MAIL } };
+}
+
+/**
+ * `ModifyFilterRulesRequest` (lot 5): REPLACES the account's incoming filter rules with `rules`, in
+ * that order - so a caller hands back every rule it read, untouched, beside its own change. The
+ * accepted shape is `filterRules: [{ filterRule: [...] }]` (measured on Partage, 2026-11-28).
+ */
+export function modifyFilterRulesRequest(rules: readonly Record<string, unknown>[]): Body {
+  return { ModifyFilterRulesRequest: { _jsns: MAIL, filterRules: [{ filterRule: [...rules] }] } };
+}

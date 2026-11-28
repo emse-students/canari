@@ -63,6 +63,12 @@ const OUTCOMES: &[&str] = &[
     "seen-trend",
     "expired",
     "killed",
+    // Mail lot 5 (`handleMailPush`): read and shown, the generic notice kept, a blank row (the app
+    // in the foreground, or nothing new).
+    "mail",
+    "mail-generic",
+    "mail-foreground",
+    "mail-nothing-new",
 ];
 /// Every stage a run may reach.
 const STAGES: &[&str] = &[

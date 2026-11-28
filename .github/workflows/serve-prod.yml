@@ -187,6 +187,8 @@ jobs:
           MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET: ${{ secrets.MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET }}
           GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
+          # The Cloudflare Email Worker's shared secret for /api/hooks/mail-alert (mail lot 5).
+          MAIL_ALERT_HOOK_SECRET: ${{ secrets.MAIL_ALERT_HOOK_SECRET }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}

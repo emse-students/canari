@@ -85,6 +85,7 @@ describe('parseServerVersionInfo', () => {
       livesMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -284,6 +285,7 @@ describe('buildAppVersionCheckResult', () => {
       livesMode: 'on',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       checkpointSkipMode: 'off',
       oidcPkce: true,
       presencePost: false,
@@ -315,6 +317,7 @@ describe('buildAppVersionCheckResult', () => {
       livesMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -394,6 +397,7 @@ describe('fetchServerAppVersionReliable', () => {
       livesMode: 'off',
       liveReplaysMode: 'off',
       mailMode: 'off',
+      mailPush: 'none',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -580,6 +584,29 @@ describe('the live replays switch of /api/version', () => {
     const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
     expect(parseServerVersionInfo(cached)).toEqual(info);
     expect(info?.liveReplaysMode).toBe('on');
+  });
+});
+
+describe('the mail push switch of /api/version (mail lot 5)', () => {
+  it.each(['none', 'cloudflare'] as const)('reads %s', (push) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', mail: { mode: 'on', push } })?.mailPush).toBe(
+      push
+    );
+  });
+  it.each([undefined, { mode: 'on' }, { push: 'CLOUDFLARE' }, { push: true }])(
+    'reads %j as none - an unreadable push mode configures no alert',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', mail: raw })?.mailPush).toBe('none');
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      mail: { mode: 'on', push: 'cloudflare' },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.mailPush).toBe('cloudflare');
   });
 });
 

@@ -85,6 +85,79 @@ pub(crate) fn write_cursor(dir: &Path, user_id: &str, value: &str) -> Result<(),
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename cursor: {e}"))
 }
 
+/// The lock file every cursor write of the App Group takes (mail lot 5): the page's writes here and
+/// the iOS notification extension's (`NotificationService.swift`, `MailPushRules.cursorLockFile`).
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) const CURSOR_LOCK_FILE: &str = "cursor.lock";
+
+/// The `highest` of a cursor text AS THE PAGE READS IT (`readMailWatchCursor`): `None` when it is
+/// absent, not a version-1 cursor, or taken in another mailbox than `account` - each of which the
+/// page reads as "no cursor", so the two sides compare the same thing.
+fn cursor_highest(text: Option<&str>, account: Option<&str>) -> Option<i64> {
+    let value: serde_json::Value = serde_json::from_str(text?).ok()?;
+    if value.get("v")?.as_i64()? != 1 || value.get("account")?.as_str()? != account? {
+        return None;
+    }
+    value.get("highest")?.as_i64().filter(|h| *h >= 0)
+}
+
+/// The mailbox a cursor text names.
+fn cursor_account(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    value.get("account")?.as_str().map(str::to_owned)
+}
+
+/// Runs `body` under the exclusive `flock` of the cursors' lock file (both processes take it).
+#[cfg(unix)]
+fn with_cursor_lock<T>(dir: &Path, body: impl FnOnce() -> T) -> Result<T, String> {
+    use std::os::unix::io::AsRawFd;
+    let lock_dir = dir.join(MAIL_WATCH_DIR);
+    std::fs::create_dir_all(&lock_dir).map_err(|e| format!("create dir: {e}"))?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_dir.join(CURSOR_LOCK_FILE))
+        .map_err(|e| format!("cursor lock not opened: {e}"))?;
+    // SAFETY: a plain flock on a descriptor this function owns; released when `file` drops.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(format!(
+            "cursor lock not taken: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let out = body();
+    // SAFETY: as above; closing would release it too, this says so explicitly.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    Ok(out)
+}
+
+#[cfg(not(unix))]
+fn with_cursor_lock<T>(_dir: &Path, body: impl FnOnce() -> T) -> Result<T, String> {
+    Ok(body())
+}
+
+/// COMPARE-AND-SET of the cursor of `user_id` (mail lot 5): written only while the cursor on disk
+/// still has the `highest` the writer read (`None`: there was none), under the lock both processes
+/// take. `Ok(false)` when another process moved it since - that process announced the mail, so the
+/// caller announces nothing (the next read takes the rest). This is what keeps the iOS notification
+/// extension and the app's background refresh from both announcing one mail.
+pub(crate) fn write_cursor_if(
+    dir: &Path,
+    user_id: &str,
+    value: &str,
+    expected_highest: Option<i64>,
+) -> Result<bool, String> {
+    with_cursor_lock(dir, || {
+        let now = read_cursor(dir, user_id)?;
+        let account = cursor_account(value);
+        if cursor_highest(now.as_deref(), account.as_deref()) != expected_highest {
+            return Ok(false);
+        }
+        write_cursor(dir, user_id, value).map(|()| true)
+    })?
+}
+
 /// The Android native watcher's sealed copy of the mailbox password for `user_id` (lot 4b): the
 /// ciphertext `MailWatchVault.kt` writes under its Android Keystore key. Same allowlist as the cursor.
 fn vault_path(dir: &Path, user_id: &str) -> Result<std::path::PathBuf, String> {
@@ -130,11 +203,25 @@ pub(crate) fn forget(dir: &Path, user_id: &str) -> Result<(), String> {
     remove_all(&[path.with_extension("json.tmp"), path])
 }
 
+/// Where the per-account cursor files live. On iOS, the App Group store (mail lot 5): the
+/// notification extension reads the cursor above which a mail is new, and writes it after it showed
+/// one, so the two processes share ONE durable answer to "already notified". Elsewhere the app's data
+/// directory, which lot 4b's native Android watcher reads.
 fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| {
-        log::warn!("[MailWatch] app_data_dir() failed: {e}");
-        e.to_string()
-    })
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        crate::app_group::app_group_dir().inspect_err(|e| {
+            log::warn!("[MailWatch] the App Group store is unavailable: {e}");
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        app.path().app_data_dir().map_err(|e| {
+            log::warn!("[MailWatch] app_data_dir() failed: {e}");
+            e.to_string()
+        })
+    }
 }
 
 /// The page reads its cursor (the apps keep it here, not in `localStorage`, mail lot 4).
@@ -149,24 +236,66 @@ pub(crate) fn mail_watch_cursor_read(
     Ok(found)
 }
 
-/// The page writes its cursor.
+/// The page writes its cursor - only over the one it read ([`write_cursor_if`]). `false`: another
+/// process (the iOS extension) moved it meanwhile and announced the mail; nothing is written.
 #[tauri::command]
 pub(crate) fn mail_watch_cursor_write(
     app: tauri::AppHandle,
     user_id: String,
     value: String,
-) -> Result<(), String> {
-    write_cursor(&data_dir(&app)?, &user_id, &value)
+    expected_highest: Option<i64>,
+) -> Result<bool, String> {
+    let written = write_cursor_if(&data_dir(&app)?, &user_id, &value, expected_highest)
         .inspect_err(|e| log::warn!("[MailWatch] cursor not written: {e}"))?;
-    log::debug!("[MailWatch] cursor written ({} bytes)", value.len());
-    Ok(())
+    if written {
+        log::debug!("[MailWatch] cursor written ({} bytes)", value.len());
+    } else {
+        log::info!(
+            "[MailWatch] the cursor moved since it was read - not written, nothing to announce"
+        );
+    }
+    Ok(written)
 }
 
-/// D8, the switch turned off, the account's local wipe: the native mail watch state goes.
+/// D8, the switch turned off, the account's local wipe: the native mail watch state goes - the
+/// cursor, and the notification extension's copy of the mailbox password (mail lot 5), which is
+/// wanted only while the switch is on.
 #[tauri::command]
 pub(crate) fn mail_watch_forget(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
-    forget(&data_dir(&app)?, &user_id)
-        .inspect_err(|e| log::warn!("[MailWatch] not forgotten: {e}"))?;
+    // EVERY erase runs, whatever another answered: a Keychain refusal must not keep the cursor, nor
+    // the reverse. The errors are collected and returned together.
+    let mut errors: Vec<String> = Vec::new();
+    if let Err(e) = super::mail_push_secret::erase() {
+        log::warn!("[MailWatch] the extension's password copy not erased: {e}");
+        errors.push(format!("keychain: {e}"));
+    }
+    match data_dir(&app).and_then(|dir| forget(&dir, &user_id)) {
+        Ok(()) => {}
+        Err(e) => {
+            log::warn!("[MailWatch] not forgotten: {e}");
+            errors.push(format!("cursor: {e}"));
+        }
+    }
+    // Lot 4 builds kept the iOS cursor in the app's data directory; lot 5 moved it to the App Group.
+    // The old file is erased here too, so a forget leaves nothing of the account in either place.
+    #[cfg(target_os = "ios")]
+    {
+        match app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())
+            .and_then(|old| forget(&old, &user_id))
+        {
+            Ok(()) => {}
+            Err(e) => {
+                log::warn!("[MailWatch] the lot 4 cursor not erased: {e}");
+                errors.push(format!("lot 4 cursor: {e}"));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
     log::info!("[MailWatch] native mail watch state erased");
     Ok(())
 }
@@ -252,6 +381,27 @@ mod tests {
         assert!(vault("bob").exists(), "another account is untouched");
         assert!(erase_vault(&dir, "../bob").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_cursor_is_written_only_over_the_one_read() {
+        let owned = std::env::temp_dir().join(format!("canari-mail-cas-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&owned);
+        let dir = owned.as_path();
+        let at = |h: i64| format!(r#"{{"v":1,"account":"a@x.test","highest":{h}}}"#);
+        assert!(write_cursor_if(dir, "alice", &at(5), None).unwrap());
+        // Another process moved it to 5: a writer that read nothing writes nothing.
+        assert!(!write_cursor_if(dir, "alice", &at(9), None).unwrap());
+        assert!(!write_cursor_if(dir, "alice", &at(9), Some(4)).unwrap());
+        assert!(write_cursor_if(dir, "alice", &at(9), Some(5)).unwrap());
+        assert_eq!(read_cursor(dir, "alice").unwrap(), Some(at(9)));
+        // A cursor of ANOTHER mailbox reads as none, as the page reads it: a baseline replaces it.
+        let other = r#"{"v":1,"account":"b@x.test","highest":3}"#;
+        assert!(write_cursor_if(dir, "alice", &at(1), Some(9)).unwrap());
+        assert!(write_cursor_if(dir, "alice", other, None).unwrap());
+        #[cfg(unix)]
+        assert!(dir.join(MAIL_WATCH_DIR).join(CURSOR_LOCK_FILE).exists());
+        let _ = std::fs::remove_dir_all(&owned);
     }
 
     #[test]

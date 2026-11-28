@@ -11,7 +11,10 @@ vi.mock('$lib/mobile/androidMailWatch', () => ({
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   serverMailMode: () => 'on',
   serverMailModeKnown: () => true,
+  serverMailPush: () => 'none',
 }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ globalSession: { deviceKeyB64: '' } }));
+vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: vi.fn() }));
 const screen = vi.hoisted(() => ({ on: true }));
 vi.mock('$lib/utils/appForeground', () => ({
   onAppScreenChange: () => () => {},
@@ -25,16 +28,25 @@ vi.mock('./connect', () => ({ mailStreamOpener: vi.fn(), platformTransport: vi.f
 vi.mock('./mailClient.svelte', () => ({ currentMailClient: () => null }));
 vi.mock('./mailNotify', () => ({ postMailNotices: vi.fn() }));
 vi.mock('./soapClient', () => ({ ZimbraSoapClient: vi.fn() }));
-vi.mock('$lib/utils/apiUrl', () => ({ gatewayUrl: () => 'https://example.invalid' }));
+vi.mock('$lib/services/PushNotificationService', () => ({
+  onPushRegistered: vi.fn(() => () => {}),
+}));
+vi.mock('$lib/utils/apiUrl', () => ({
+  gatewayUrl: () => 'https://example.invalid',
+  deliveryUrl: () => 'https://example.invalid',
+}));
 
 import type { MailClient } from './mailClient.svelte';
 import type { MailSessionState } from './mailSession';
 import { armAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import {
+  alertLeaveCause,
   armNativeCopyIfCurrent,
+  nativeWatchPersists,
   backgroundRefresh,
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
+  mailAlertWanted,
   mailTabOnScreen,
   nativeWatchWanted,
   pauseUntilRetry,
@@ -43,7 +55,9 @@ import {
 import {
   forgetMailNotificationsSwitch,
   mailNotificationsWanted,
+  mailPersistentWanted,
   setMailNotificationsWanted,
+  setMailPersistentWanted,
 } from './mailWatchSwitch.svelte';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -60,6 +74,11 @@ const facts = (over: Partial<Parameters<typeof watcherShouldRun>[0]> = {}) => ({
   wanted: true,
   state: 'ready' as MailSessionState['kind'],
   eligible: true,
+  pushMode: 'none' as 'none' | 'cloudflare',
+  pushKnown: true,
+  phone: false,
+  needsPersistent: false,
+  persistent: false,
   remembered: true,
   ...over,
 });
@@ -86,6 +105,29 @@ describe('watcherShouldRun', () => {
     expect(watcherShouldRun(facts({ eligible: false }))).toBe(false);
     for (const state of ['signed_out', 'closed', 'needs_password', 'unavailable'] as const)
       expect(watcherShouldRun(facts({ state }))).toBe(false);
+  });
+
+  it('on Android with mail_push = cloudflare, runs only if the account keeps the persistent connection (lot 5)', () => {
+    expect(watcherShouldRun(facts({ needsPersistent: true, persistent: false }))).toBe(false);
+    expect(watcherShouldRun(facts({ needsPersistent: true, persistent: true }))).toBe(true);
+    expect(watcherShouldRun(facts({ needsPersistent: false, persistent: false }))).toBe(true);
+  });
+});
+
+describe('mailAlertWanted (lot 5)', () => {
+  const on = { phone: true, pushMode: 'cloudflare' as const, pushKnown: true };
+  it('wants the empty push only on a phone, with cloudflare READ, the tab on, eligible and notifications on', () => {
+    expect(mailAlertWanted(facts(on))).toBe(true);
+    expect(mailAlertWanted(facts({ ...on, phone: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, pushMode: 'none' }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, pushKnown: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, wanted: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, eligible: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, mailOn: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, client: null }))).toBe(false);
+  });
+  it('does not depend on the session state: the sync waits for an open mailbox itself', () => {
+    expect(mailAlertWanted(facts({ ...on, state: 'needs_password' }))).toBe(true);
   });
 });
 
@@ -233,6 +275,15 @@ describe('the switch "Notifications de nouveaux mails"', () => {
     forgetMailNotificationsSwitch('u1');
     expect(mailNotificationsWanted('u1', store as unknown as Storage)).toBe(false);
   });
+
+  it('the persistent connection (lot 5) is off by default, kept per account, and forgotten with D8', () => {
+    expect(mailPersistentWanted('u1', store as unknown as Storage)).toBe(false);
+    setMailPersistentWanted('u1', true, store as unknown as Storage);
+    expect(store.getItem(ACCOUNT_KEY.mailPersistentConnection('u1'))).toBe('1');
+    store.removeItem(ACCOUNT_KEY.mailPersistentConnection('u1'));
+    forgetMailNotificationsSwitch('u1');
+    expect(mailPersistentWanted('u1', store as unknown as Storage)).toBe(false);
+  });
 });
 
 describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
@@ -254,17 +305,34 @@ describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
     expect(
       await armNativeCopyIfCurrent(
         sessionWith(() => {}),
-        () => true
+        () => true,
+        true
       )
     ).toBe(true);
-    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw');
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw', true);
+  });
+
+  it('carries the persistent choice into the arm', async () => {
+    await armNativeCopyIfCurrent(
+      sessionWith(() => {}),
+      () => true,
+      false
+    );
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw', false);
+  });
+
+  it('persists with no server path, and with Cloudflare only when the account keeps it', () => {
+    expect(nativeWatchPersists({ needsPersistent: false, persistent: false })).toBe(true);
+    expect(nativeWatchPersists({ needsPersistent: true, persistent: true })).toBe(true);
+    expect(nativeWatchPersists({ needsPersistent: true, persistent: false })).toBe(false);
   });
 
   it('sends nothing once the page decided otherwise (an erase came after)', async () => {
     expect(
       await armNativeCopyIfCurrent(
         sessionWith(() => {}),
-        () => false
+        () => false,
+        true
       )
     ).toBe(false);
     expect(armAndroidMailWatch).not.toHaveBeenCalled();
@@ -272,7 +340,33 @@ describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
 
   it('sends nothing once the session moved (a sign-out or a new sign-in during the read)', async () => {
     const client = sessionWith((session) => (session.generation = 2));
-    expect(await armNativeCopyIfCurrent(client, () => true)).toBe(false);
+    expect(await armNativeCopyIfCurrent(client, () => true, true)).toBe(false);
     expect(armAndroidMailWatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('alertLeaveCause (mail lot 5)', () => {
+  const account = { name: 'ada@etu.emse.fr' } as never;
+  it('names the causes that take the device out, and only those', () => {
+    expect(alertLeaveCause({ kind: 'closed', account: null }, true, true)).toBe('account_closed');
+    expect(
+      alertLeaveCause(
+        { kind: 'needs_password', account: null, reason: 'password_refused' },
+        true,
+        true
+      )
+    ).toBe('password_refused');
+    expect(alertLeaveCause({ kind: 'signed_out' }, false, true)).toBe('mail_off');
+    // May open again by itself: no leave.
+    expect(
+      alertLeaveCause(
+        { kind: 'needs_password', account: null, reason: 'device_locked' },
+        true,
+        true
+      )
+    ).toBeNull();
+    expect(alertLeaveCause({ kind: 'signed_out' }, false, false)).toBeNull();
+    expect(alertLeaveCause({ kind: 'unavailable', account: null }, true, true)).toBeNull();
+    expect(alertLeaveCause({ kind: 'ready', account, remembered: true }, false, true)).toBeNull();
   });
 });
