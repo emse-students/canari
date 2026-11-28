@@ -1656,6 +1656,8 @@ export async function handleSystemEvent(
         if (mark) publishReadState(convoKey, senderNorm, mark.at, mark.clock);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
+        // NO AWAIT between this check and the hand-over (`catchupWrites.ts`): a hold beginning in
+        // between would flush before the save is held, and the checkpoint would export uncovered.
         if (ctx.catchupWrites?.deferring()) {
           // INSIDE A CATCH-UP WINDOW the row is saved once, at the window's close (`catchupWrites.ts`),
           // as memory holds it then - the row the last of these per-frame saves would have written.

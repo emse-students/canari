@@ -164,6 +164,8 @@ export async function applyReactionFrame(
   // it is written onto its row at the next look; a store that refuses the park too says so at ERROR
   // (`parkPendingMutation`).
   const parkUnwritten = () => keep('could not be written onto its stored row');
+  // NO AWAIT between this check and the hand-over below: a checkpoint hold beginning in between
+  // would flush before the write is held and export with it uncovered (`catchupWrites.ts`).
   if (catchupWrites?.deferring()) {
     // INSIDE A CATCH-UP WINDOW the write waits for the window's close, one merge per conversation
     // (`catchupWrites.ts`); the frame's ack waits with it.

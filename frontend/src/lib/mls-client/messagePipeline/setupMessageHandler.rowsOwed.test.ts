@@ -248,7 +248,11 @@ describe('an application frame owes its row from its decrypt to its write', () =
   );
 
   it('the allowlist is exactly the events read for a checkpoint-free AND request-free path - a history bundle makes HTTP calls before its rows, so it is not on it', () => {
-    expect([...SYSTEM_EVENTS_OWING_THEIR_ROW].sort()).toEqual(['delete_message', 'edit_message']);
+    expect([...SYSTEM_EVENTS_OWING_THEIR_ROW].sort()).toEqual([
+      'delete_message',
+      'edit_message',
+      'remove_reaction',
+    ]);
   });
 
   it('a frame whose decrypt throws settles its mark', async () => {

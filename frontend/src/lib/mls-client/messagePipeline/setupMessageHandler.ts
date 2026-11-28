@@ -1216,6 +1216,9 @@ interface KnownGroupArgs {
 export const SYSTEM_EVENTS_OWING_THEIR_ROW: ReadonlySet<string> = new Set([
   'edit_message',
   'delete_message',
+  // The legacy reaction removal: `applyReactionFrame` awaits the store (a point read, a merge, the
+  // pending-mutation park) and nothing else, so a checkpoint must not land inside it.
+  'remove_reaction',
 ]);
 
 /**

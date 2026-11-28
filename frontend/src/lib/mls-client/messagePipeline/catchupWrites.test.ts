@@ -410,3 +410,56 @@ describe('a thread a Welcome re-keyed', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('only 0 written'));
   });
 });
+
+describe('a save the store refuses for good', () => {
+  it('is DROPPED and accused, never kept to refuse every checkpoint', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const saveConversation = vi
+      .fn<(key: string) => Promise<void>>()
+      .mockRejectedValue(new DOMException('cannot clone', 'DataCloneError'));
+    const { writes } = ledger({ saveConversation });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferConversationSave('convo-a', 'f0');
+    const release = await writes.holdRowsForCheckpoint();
+    expect(writes.framesLeftUnstored().size).toBe(0);
+    expect(saveConversation).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('DROPPED'), expect.anything());
+    release();
+    vi.restoreAllMocks();
+  });
+
+  it('a transient failure says its blocking cause ONCE however many checkpoints it refuses', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const saveConversation = vi
+      .fn<(key: string) => Promise<void>>()
+      .mockRejectedValue(new Error('disk full'));
+    const { writes } = ledger({ saveConversation });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferConversationSave('convo-a', 'f0');
+    for (let i = 0; i < 3; i++) {
+      await expect(writes.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+        CatchupWritesNotStoredError
+      );
+    }
+    const said = error.mock.calls.filter((c) =>
+      String(c[0]).includes('every checkpoint is refused')
+    );
+    expect(said).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+});
+
+describe('the no-await invariant of the callers', () => {
+  it('accuses a write handed over while a hold stands (an await between check and hand-over)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { writes } = ledger();
+    writes.onBulkIngestStart(WINDOW);
+    const release = await writes.holdRowsForCheckpoint();
+    writes.deferConversationSave('convo-a', 'f0');
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('awaited between deferring()'));
+    // Kept all the same: the next flush writes it and its frame stays withheld meanwhile.
+    expect([...writes.framesLeftUnstored()]).toEqual(['f0']);
+    release();
+    vi.restoreAllMocks();
+  });
+});

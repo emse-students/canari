@@ -25,14 +25,15 @@
  */
 import type { IStorage, StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
+import { classifyRowWriteFailure } from '$lib/db/rowWriteFailure';
 import { movedKeyOf } from '$lib/utils/chat/conversationMoves';
 import type { BulkIngestObserver, BulkIngestPhase } from '../IMlsService';
 
 /** How one reaction folds onto the stored row, a pure function of the row (`mergeMessages`). */
-export type StoredRowFold = (current: StoredMessage) => StoredMessage | null;
+type StoredRowFold = (current: StoredMessage) => StoredMessage | null;
 
 /** One reaction write a frame handed over. */
-export interface DeferredReaction {
+interface DeferredReaction {
   convoKey: string;
   messageId: string;
   fold: StoredRowFold;
@@ -53,6 +54,20 @@ export class CatchupWritesNotStoredError extends Error {
     );
     this.name = 'CatchupWritesNotStoredError';
   }
+}
+
+/**
+ * Whether a failed conversation save can NEVER land: a value the store cannot clone
+ * (`DataCloneError`), or a row refused for what it is (`classifyRowWriteFailure`, by TYPE). A bare
+ * `DataError` is NOT read as permanent: `crypto.subtle.importKey` raises one for an empty device
+ * key, which sign-in paths hand the store on purpose (`rowWriteFailure.ts`). Everything else is
+ * transient, deliberately - withholding costs a re-listing, dropping costs the mark.
+ */
+function isPermanentSaveRefusal(e: unknown): boolean {
+  return (
+    classifyRowWriteFailure(e) === 'poison' ||
+    (e as { name?: unknown } | null)?.name === 'DataCloneError'
+  );
 }
 
 /** What the ledger reads and writes. */
@@ -91,6 +106,23 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
   /** Frames of the writes a flush took and has not landed yet. */
   const inFlight = new Map<string, number>();
   let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * THE INVARIANT OF EVERY CALLER: `deferring()` is asked and the write handed over with NO AWAIT
+   * between the two. A hold (`holds`) or a close can begin at any await, flush, and return; a write
+   * handed over after that would be covered by nobody while the checkpoint exports. The write is
+   * still kept (the next flush or hold writes it, its frame withheld), but it is said at ERROR: it
+   * means a caller put an await between the check and the hand-over.
+   */
+  const noteDeferredOutsideWindow = (what: string) => {
+    if (openWindows > 0 && holds === 0) return;
+    console.error(
+      `[CATCHUP_WRITES] ${what} was handed over while no window was open or a checkpoint hold stood - a caller awaited between deferring() and the hand-over; held for the next flush`
+    );
+  };
+
+  /** The cause that blocks checkpoints, said ONCE until every held write has landed. */
+  let blockingSaid = false;
 
   /** Where a thread lives NOW: its key, else where a Welcome moved it, else nowhere. */
   const homeOf = (key: string): string | null => {
@@ -245,13 +277,25 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
               await deps.saveConversation(home);
               takenSaves.delete(convoKey);
             } catch (e) {
-              // KEPT for the next flush, its frames' acks withheld: it is idempotent, and swallowing
-              // it (what the per-frame path did) lost the read mark for good.
-              console.error(
-                `[CATCHUP_WRITES] saving ${home.slice(0, 8)}… failed - kept for the next flush:`,
-                e
-              );
               takenSaves.delete(convoKey);
+              if (isPermanentSaveRefusal(e)) {
+                // A value the store can NEVER take fails the same way at every retry and after every
+                // reload: kept, it would refuse every checkpoint for good. Dropped, and accused.
+                console.error(
+                  `[CATCHUP_WRITES] the store refuses the row of ${home.slice(0, 8)}… for what it is (${String((e as { name?: unknown })?.name)}) - its held save is DROPPED, its frames acknowledged:`,
+                  e
+                );
+                continue;
+              }
+              // KEPT for the next flush, its frames' acks withheld: it is idempotent, and swallowing
+              // it (what the per-frame path did) lost the read mark for good. Said once per episode.
+              if (!blockingSaid) {
+                blockingSaid = true;
+                console.error(
+                  `[CATCHUP_WRITES] saving ${home.slice(0, 8)}… failed - kept, and every checkpoint is refused until it lands (said once):`,
+                  e
+                );
+              }
               const kept = saves.get(convoKey) ?? new Set<string>();
               for (const id of ids) kept.add(id);
               saves.set(convoKey, kept);
@@ -271,6 +315,12 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
           }
         } finally {
           track(frames, -1);
+          if (blockingSaid && reactions.length === 0 && saves.size === 0) {
+            blockingSaid = false;
+            console.info(
+              '[CATCHUP_WRITES] every held write has landed - checkpoints are no longer refused'
+            );
+          }
         }
       })
       .catch((e: unknown) => {
@@ -282,9 +332,11 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
   return {
     deferring: () => openWindows > 0 && holds === 0,
     deferReaction(entry) {
+      noteDeferredOutsideWindow('a reaction');
       reactions.push(entry);
     },
     deferConversationSave(convoKey, frameId) {
+      noteDeferredOutsideWindow('a conversation save');
       const frames = saves.get(convoKey) ?? new Set<string>();
       if (frameId) frames.add(frameId);
       saves.set(convoKey, frames);
@@ -307,9 +359,8 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
         // acknowledged ahead of a write that has not landed (idsDurableEnoughToAck), and a kill
         // would lose the read mark or the reaction for good. The next hold writes them again.
         holds -= 1;
-        console.error(
-          `[CATCHUP_WRITES] a checkpoint is refused: ${left} held write(s) did not land - the next hold writes them again`
-        );
+        // The cause was said where it failed, once; this says only what the checkpoint was told.
+        log(`[CATCHUP_WRITES] a checkpoint is refused: ${left} held write(s) did not land`);
         throw new CatchupWritesNotStoredError(left);
       }
       let released = false;

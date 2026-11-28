@@ -4088,7 +4088,7 @@ conversation, nothing on disk before the close, a replay changing nothing, a thr
 
 **Failures are kept, never swallowed.** A merge that throws parks each of its reactions as a pending mutation (the
 per-frame path's answer, said at ERROR); a reaction that cannot even be parked stays held, and an unexpected throw of a flush puts back everything it had not written. A save that throws stays in the ledger with its frames withheld and is
-written at the next close or hold - the per-frame path swallowed it and lost the mark. A thread that left the map
+written at the next close or hold - the per-frame path swallowed it and lost the mark - and its blocking cause is said ONCE until every held write has landed. **A save the store can never take** (`DataCloneError`, or a `RowRefusedError`, by type, as `classifyRowWriteFailure` decides for rows; a bare `DataError` stays transient because `importKey` raises one for an empty device key) is dropped and accused once, never kept to refuse every checkpoint for good. **Every caller checks `deferring()` and hands the write over with no await between** (a hold beginning in between would flush before it is held): the ledger says at ERROR when a write arrives outside a window or during a hold. The legacy `remove_reaction` event owes its row through its dispatch (`SYSTEM_EVENTS_OWING_THEIR_ROW`), so a checkpoint cannot land inside its store read. A thread that left the map
 during the window is dropped and said; one a Welcome re-keyed is written under its new key (`movedKeyOf`).
 Logs: `[CATCHUP_WRITES]` at each flush, each drop and each failure.
 
