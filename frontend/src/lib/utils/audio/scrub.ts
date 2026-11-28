@@ -1,7 +1,6 @@
 /**
  * The arithmetic of a voice note's scrubber, apart from the component so it is tested without a
- * pointer: where a press lands in time, what a key steps by, and where a note was left when its
- * element went away.
+ * pointer: where a press lands in time, and what a key steps by.
  */
 
 /** Seconds a left/right arrow moves the playhead by. */
@@ -43,39 +42,4 @@ export function scrubTimeForKey(key: string, current: number, duration: number):
     default:
       return null;
   }
-}
-
-/** Where a note was left: its position, and whether it was playing. */
-export interface VoiceResume {
-  time: number;
-  playing: boolean;
-}
-
-/**
- * THE NOTE'S PLACE OUTLIVES ITS ELEMENT. Whatever tears a bubble's player down and builds it again
- * (a virtualised list scrolling the row away, a media effect re-running, a remount of the row) used
- * to take the position with it, and the note started over from 0:00. The place is kept here, keyed
- * by the attachment (`MediaRef.mediaId`, never the blob URL a re-download changes), and read back
- * when a player for the same attachment appears. Bounded: the oldest entry goes first.
- */
-const MEMORY_LIMIT = 64;
-const memory = new Map<string, VoiceResume>();
-
-/** Records where `key`'s note stands. A note at its start, paused, has nothing to remember. */
-export function rememberVoicePosition(key: string, state: VoiceResume): void {
-  if (!key) return;
-  memory.delete(key);
-  if (state.time <= 0 && !state.playing) return;
-  memory.set(key, state);
-  if (memory.size > MEMORY_LIMIT) memory.delete(memory.keys().next().value as string);
-}
-
-/** Where `key`'s note was left, or `null` when it was never played (or played to its end). */
-export function recallVoicePosition(key: string): VoiceResume | null {
-  return key ? (memory.get(key) ?? null) : null;
-}
-
-/** Forgets a note (it ended, or its attachment changed). */
-export function forgetVoicePosition(key: string): void {
-  memory.delete(key);
 }

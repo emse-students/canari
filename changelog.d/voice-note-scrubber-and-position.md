@@ -1,3 +1,3 @@
-### Fixed - a voice note's waveform seeks, and its position survives a rebuild
+### Fixed - a reaction no longer restarts a voice note, and its waveform seeks
 
-A press or drag on the waveform is the scrubber's (it opened the actions sheet or became a reply swipe), and a rebuilt player resumes where it was instead of starting over ([chat](docs/wiki/frontend/modules/chat.md#a-voice-notes-waveform-is-its-scrubber)).
+A reaction replaced the message object and re-ran the bubble's media download through a tracked `messageId` read, rebuilding the player; and a press on the waveform was read by the bubble as a long press or reply swipe, so it is now a real scrubber ([chat](docs/wiki/frontend/modules/chat.md#a-voice-notes-waveform-is-its-scrubber)).

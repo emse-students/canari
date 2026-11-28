@@ -1,11 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  forgetVoicePosition,
-  recallVoicePosition,
-  rememberVoicePosition,
-  scrubTimeAt,
-  scrubTimeForKey,
-} from './scrub';
+import { describe, expect, it } from 'vitest';
+import { scrubTimeAt, scrubTimeForKey } from './scrub';
 
 describe('scrubTimeAt', () => {
   const strip = { left: 100, width: 200 };
@@ -33,19 +27,5 @@ describe('scrubTimeForKey', () => {
   it('leaves other keys alone', () => {
     expect(scrubTimeForKey('Enter', 10, 45)).toBeNull();
     expect(scrubTimeForKey('ArrowRight', 10, 0)).toBeNull();
-  });
-});
-
-describe('voice position memory', () => {
-  beforeEach(() => forgetVoicePosition('a'));
-  it('returns what was left, and forgets it', () => {
-    rememberVoicePosition('a', { time: 7, playing: true });
-    expect(recallVoicePosition('a')).toEqual({ time: 7, playing: true });
-    forgetVoicePosition('a');
-    expect(recallVoicePosition('a')).toBeNull();
-  });
-  it('keeps nothing for a note at its start, paused', () => {
-    rememberVoicePosition('a', { time: 0, playing: false });
-    expect(recallVoicePosition('a')).toBeNull();
   });
 });

@@ -3149,12 +3149,17 @@ sideways it is a reply swipe that claims the `touchmove` - so the finger moved t
 playhead (owner, 1.8.2). The scrubber is marked `data-scrub`, and `MessageBubble.pressOwnedByScrub`
 arms neither gesture for a press that starts on it (the same contract as `[data-video-player]`).
 
-**The note's place outlives its element.** The player keeps where the note stands under
-`MediaRef.mediaId` (`rememberVoicePosition`, bounded to 64 notes, written on teardown and on every
-seek, forgotten at the end) and a player rebuilt for the same attachment resumes there, playing if it
-was. A reaction itself does not remount the row (`MessageBubble.voiceReaction.svelte.test.ts` pins
-it: same `<audio>`, same position); the memory is what keeps a rebuild from the other causes (a
-virtualised row, a media effect re-running) from starting the note over.
+**A reaction does not restart a note (the 1.8.2 report).** `handleAddReaction` replaces the message
+OBJECT (`{ ...msg, reactions }`) in a new conversation. The thread hands each bubble
+`messageId={msg.id}` as a getter over its `msg` derived, and the bubble's media-download effect read
+`messageId` for a log line - a TRACKED read - so the replaced object re-ran the effect for an
+attachment that had not changed: its cleanup nulled `blobUrl`, the renderer fell to its skeleton, the
+player was destroyed and rebuilt, and the note began at 0:00. The effect now reads `messageId`
+untracked and is keyed on the attachment alone. `ChatMessageGroups.voiceReaction.svelte.test.ts`
+pins it at the level where it happened (a new message object under the same key keeps the same
+`<audio>` and position); a bubble-level test with a constant `messageId` prop could not see it.
+Rule: **an effect in a row component must not read a prop that the list passes as a getter over the
+message object, unless it means to re-run on every replacement of that object.**
 
 ### A voice note declares itself, because nothing downstream can tell
 

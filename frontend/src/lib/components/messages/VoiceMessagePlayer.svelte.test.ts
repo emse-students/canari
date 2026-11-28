@@ -58,7 +58,7 @@ it('starting a second voice note pauses the first and its button shows play agai
 });
 
 /** A mounted player with a known length, whose strip is 200 px wide starting at x = 0. */
-function mountScrubbable(resumeKey = '') {
+function mountScrubbable() {
   vi.stubGlobal('fetch', () => Promise.reject(new Error('no network in this test')));
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
@@ -66,14 +66,9 @@ function mountScrubbable(resumeKey = '') {
   document.body.appendChild(target);
   const component = mount(VoiceMessagePlayer, {
     target,
-    props: { src: 'blob:voice', resumeKey },
+    props: { src: 'blob:voice' },
   });
-  let unmounted = false;
-  const unmountOnce = () => {
-    if (!unmounted) void unmount(component);
-    unmounted = true;
-  };
-  mounted.push(unmountOnce);
+  mounted.push(() => unmount(component));
   flushSync();
   const audio = target.querySelector('audio')!;
   Object.defineProperty(audio, 'duration', { configurable: true, get: () => 40 });
@@ -81,7 +76,7 @@ function mountScrubbable(resumeKey = '') {
   flushSync();
   const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
   slider.getBoundingClientRect = () => ({ left: 0, width: 200 }) as DOMRect;
-  return { audio, slider, unmount: unmountOnce };
+  return { audio, slider };
 }
 
 const press = (type: string, clientX: number) =>
@@ -115,16 +110,4 @@ it('the slider answers the arrow keys and exposes its value', () => {
   expect(audio.currentTime).toBe(40);
   expect(slider.getAttribute('aria-valuemax')).toBe('40');
   expect(slider.hasAttribute('data-scrub')).toBe(true);
-});
-
-it('a player rebuilt for the same attachment resumes where the first one was', () => {
-  const first = mountScrubbable('att-1');
-  Object.defineProperty(first.audio, 'paused', { configurable: true, get: () => true });
-  first.audio.currentTime = 12;
-  first.unmount();
-  flushSync();
-
-  const second = mountScrubbable('att-1');
-  expect(second.audio.currentTime).toBe(12);
-  expect(second.slider.getAttribute('aria-valuenow')).toBe('12');
 });

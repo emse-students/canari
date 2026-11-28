@@ -1061,7 +1061,16 @@
     // Read untracked: the ref of THIS blob, whichever re-parse of the content produced it.
     const ref = untrack(() => mediaRef);
     if (!ref) return;
-    Log.d('MESSAGE', `media ${mediaBlobId.slice(0, 8)}: download for row ${messageId.slice(0, 8)}`);
+    // `messageId` is read UNTRACKED, and that is the whole fix of "a reaction restarts a voice note":
+    // the thread passes it as a getter over its `msg` derived, and a reaction replaces the message
+    // OBJECT (`{ ...msg, reactions }`, `handleAddReaction`), so a tracked read re-ran this effect
+    // for a row whose attachment had not changed - its cleanup nulled `blobUrl`, the player was torn
+    // down and rebuilt, and the note started over from 0:00. This effect is keyed on the attachment
+    // alone.
+    Log.d(
+      'MESSAGE',
+      `media ${mediaBlobId.slice(0, 8)}: download for row ${untrack(() => messageId).slice(0, 8)}`
+    );
     // Leaves the gate's queue if the row is torn down before its turn comes.
     const abort = new AbortController();
 

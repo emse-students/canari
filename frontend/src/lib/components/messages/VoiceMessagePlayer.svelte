@@ -10,13 +10,7 @@
   } from '$lib/video/loudnessPlayback';
   import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { m } from '$lib/paraglide/messages';
-  import {
-    forgetVoicePosition,
-    recallVoicePosition,
-    rememberVoicePosition,
-    scrubTimeAt,
-    scrubTimeForKey,
-  } from '$lib/utils/audio/scrub';
+  import { scrubTimeAt, scrubTimeForKey } from '$lib/utils/audio/scrub';
   import {
     barCountForWidth,
     computeWaveformPeaks,
@@ -42,16 +36,9 @@
      * an unmeasurable recording, the composer's own preview - plays exactly as it always did.
      */
     loudness?: MediaLoudness | null;
-    /**
-     * The attachment this note is (`MediaRef.mediaId`). Where the note stands is kept under it
-     * (`rememberVoicePosition`), so a player rebuilt for the same attachment - whatever tore the
-     * first down - picks up at the same second instead of starting over. Absent: nothing is kept
-     * (the composer's own preview).
-     */
-    resumeKey?: string;
   }
 
-  let { src, onDownload, mimeType = '', loudness = null, resumeKey = '' }: Props = $props();
+  let { src, onDownload, mimeType = '', loudness = null }: Props = $props();
 
   /** `MediaError.code` as a word, so a log line names its cause without a lookup table. */
   const MEDIA_ERROR_NAMES: Record<number, string> = {
@@ -208,7 +195,6 @@
     const next = Math.min(duration, Math.max(0, seconds));
     audioEl.currentTime = next;
     currentTime = next;
-    if (resumeKey) rememberVoicePosition(resumeKey, { time: next, playing: !audioEl.paused });
   }
 
   function seekToPointer(clientX: number) {
@@ -249,35 +235,6 @@
     e.preventDefault();
     seekTo(next);
   }
-
-  /**
-   * WHERE THE NOTE WAS LEFT comes back once the element knows its length (a seek before the
-   * metadata is refused by the engine), and only once per source. See `rememberVoicePosition`.
-   */
-  let restoredFor = '';
-  function restoreRemembered(element: HTMLAudioElement) {
-    if (!resumeKey || restoredFor === src) return;
-    restoredFor = src;
-    const left = recallVoicePosition(resumeKey);
-    if (!left) return;
-    console.debug(
-      `[voice] ${resumeKey.slice(0, 8)} rebuilt - back to ${left.time.toFixed(1)}s${left.playing ? ', playing' : ''}`
-    );
-    element.currentTime = left.time;
-    currentTime = left.time;
-    if (left.playing) startPlayback(element);
-  }
-
-  // The element's last word goes to memory when it is torn down, whatever tore it down.
-  $effect(() => {
-    const element = audioEl;
-    const key = resumeKey;
-    if (!element || !key) return;
-    return () => {
-      if (element.ended) forgetVoicePosition(key);
-      else rememberVoicePosition(key, { time: element.currentTime, playing: !element.paused });
-    };
-  });
 
   function cycleSpeed() {
     if (!audioEl) return;
@@ -351,7 +308,6 @@
       if (Number.isFinite(metadataDuration) && metadataDuration > 0 && metadataDuration < 60 * 60) {
         duration = metadataDuration;
       }
-      if (audioEl) restoreRemembered(audioEl);
     }}
     ontimeupdate={() => {
       if (!scrubbing) currentTime = audioEl?.currentTime ?? 0;
@@ -364,7 +320,6 @@
     }}
     onended={() => {
       isPlaying = false;
-      if (resumeKey) forgetVoicePosition(resumeKey);
     }}
     onerror={() => {
       reportRefusal(audioEl);

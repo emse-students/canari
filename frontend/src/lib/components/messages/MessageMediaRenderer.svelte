@@ -542,7 +542,6 @@
             src={blobUrl}
             mimeType={mediaRef.mimeType}
             loudness={mediaRef.loudness}
-            resumeKey={mediaRef.mediaId}
             onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
           />
         </div>
