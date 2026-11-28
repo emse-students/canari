@@ -22,7 +22,7 @@
    * THE GAME MODE MODAL, "Nouvelle partie" (owner, 2026-11-27): ONE centered chooser, replacing the bottom sheet
    * of the four modes. Two big cards - "Classé" (timed and ranked, no hint) and "Entraînement" (hints allowed,
    * nothing counted) - the three levels under Entraînement, a "Jouer" button that commits, and the way to the
-   * tutorial. It opens by itself ONLY at the first game on a device (no mode stored yet); afterwards the pastille
+   * tutorial. It opens by itself when a game is launched (`askMode`, set by the `/games/play` route); afterwards, and any time, the pastille
    * of the bottom bar opens this same modal. The game's own stored settings are written by the caller, exactly
    * as before (`canari.minesweeper.unranked` and `.level`): this component only chooses.
    * docs/wiki/frontend/modules/minesweeper.md, "The game mode modal"
@@ -219,9 +219,13 @@
       </p>
     {/if}
 
-    <Button onclick={play} class="w-full" data-testid="mode-play"
-      >{m.minesweeper_modal_play()}</Button
+    <Button
+      onclick={play}
+      class="font-display min-h-14 w-full text-xl font-bold"
+      data-testid="mode-play"
     >
+      {m.minesweeper_modal_play()}
+    </Button>
     <p class="text-text-muted text-center text-xs">{m.minesweeper_modal_change_later()}</p>
     <a
       href={resolve('/games/tutorial')}

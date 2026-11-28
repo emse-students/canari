@@ -87,6 +87,7 @@
   --color-green-ok: var(--green-ok);
   --color-red-err: var(--red-err);
   --color-red-solid: var(--red-solid);
+  --color-green-solid: var(--green-solid);
   /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
      hardcode shades of the raw amber scale, none of which flip, so the
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
@@ -528,6 +529,9 @@
   /* A FILL for white text: `red-err` is a text/edge red and reads 3.9:1 under white (2.8:1 in dark), under
      AA. One value in both themes, 6:1 with white. */
   --red-solid: #c42b2b;
+  /* The same for green: `green-ok` is a text/edge green (2.6:1 under white). A FILL for white text, 4.9:1, one value in both
+     themes - the "go on" button of the minesweeper learning path (owner, 2026-11-28). */
+  --green-solid: #1b7f46;
   --amber-warn: #b45309;
   --amber-warn-text: #92400e;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind

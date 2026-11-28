@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { linkableEventPickerOptions, shortDate } from './time';
+import { linkableEventPickerOptions, shortDate, shortDateTime } from './time';
 
 describe('shortDate', () => {
   it('writes DD/MM/YY in local time, zero-padded', () => {
@@ -27,5 +27,12 @@ describe('linkableEventPickerOptions', () => {
     const events = [ev('a', '2026-01-01T00:00:00Z'), ev('b', '2027-01-01T00:00:00Z')];
     linkableEventPickerOptions(events, false);
     expect(events.map((e) => e.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('shortDateTime', () => {
+  it('writes the day and the local hour of a record, zero-padded', () => {
+    expect(shortDateTime(new Date(2026, 10, 25, 9, 5).toISOString())).toBe('25/11/26 09:05');
+    expect(shortDateTime(new Date(2027, 0, 3, 23, 41).toISOString())).toBe('03/01/27 23:41');
   });
 });

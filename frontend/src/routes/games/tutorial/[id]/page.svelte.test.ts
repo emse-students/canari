@@ -40,9 +40,9 @@ afterEach(() => {
 describe('the tutorial lesson route', () => {
   it('opens a basics lesson by its id, and goes back to the path', () => {
     open('chord');
-    expect(document.querySelector('h1')?.textContent).toContain('Le chording');
+    expect(document.querySelector('h1')?.textContent).toContain('chording');
     expect(document.querySelector('[data-testid="tutorial-goal"]')).not.toBeNull();
-    expect(document.querySelector('a[data-back-link]')?.getAttribute('href')).toMatch(
+    expect(document.querySelector('[data-testid="tutorial-back"]')?.getAttribute('href')).toMatch(
       /\/games\/tutorial\?tab=basics$/
     );
   });
@@ -50,11 +50,11 @@ describe('the tutorial lesson route', () => {
   it('opens a catalogue pattern by its id', () => {
     open('one_one');
     expect(document.querySelector('h1')?.textContent).toContain('1-1');
-    expect(document.querySelector('[data-testid="tutorial-progress"]')?.textContent).toContain(
+    expect(document.querySelector('[data-testid="tutorial-family"]')?.textContent).toContain(
       'Motifs de base'
     );
     // Back returns to the tab of the lesson's family, not to the default one.
-    expect(document.querySelector('a[data-back-link]')?.getAttribute('href')).toMatch(
+    expect(document.querySelector('[data-testid="tutorial-back"]')?.getAttribute('href')).toMatch(
       /\/games\/tutorial\?tab=patterns$/
     );
   });

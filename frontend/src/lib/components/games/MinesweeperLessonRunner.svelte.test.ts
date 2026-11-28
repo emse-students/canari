@@ -112,8 +112,21 @@ describe('a lesson screen', () => {
   it('explains the three colours under the grid, always', () => {
     open('flag');
     expect(testId('tutorial-legend')?.textContent).toContain('Mine sûre');
-    expect(testId('tutorial-legend')?.textContent).toContain('Groupe de cases');
+    expect(testId('tutorial-legend')?.textContent).toContain('Groupe de mines');
     expect(testId('tutorial-legend')?.textContent).toContain('Case sûre');
+    // One row: it never wraps (short labels, no `flex-wrap`).
+    expect(testId('tutorial-legend')!.className).not.toContain('flex-wrap');
+  });
+
+  it('has the lesson header: a back arrow, the family over the lesson title, the position, one segment per lesson', () => {
+    open('flag');
+    expect(testId('tutorial-family')?.textContent?.trim()).toBe('Les bases');
+    expect(document.querySelector('h1')?.textContent?.trim()).toBe('Poser un drapeau');
+    expect(testId('tutorial-progress')?.textContent?.trim()).toMatch(
+      new RegExp('^[0-9]+ [/] [0-9]+$')
+    );
+    expect(testId('tutorial-back')?.getAttribute('aria-label')).toBe('Retour au parcours');
+    expect(testId('tutorial-back')?.getAttribute('href')).toContain('/games/tutorial');
   });
 
   it('says a mine is a mine, with Le Pic worried; restart plays it again', async () => {
@@ -171,10 +184,12 @@ describe('a lesson screen', () => {
 });
 
 describe('the bottom bar and the tab bar', () => {
-  it('sticks above the shell measure of the tab bar, never a hard-coded offset (iPhone reading, 2026-11-27)', () => {
+  it('sits above the shell measure of the tab bar, never a hard-coded offset (iPhone reading, 2026-11-27)', () => {
     open('flag');
     const cls = testId('tutorial-bottom-bar')!.className;
-    expect(cls).toContain('sticky');
+    // Full-bleed and pinned (fixed), never sticky inside the column.
+    expect(cls).toContain('fixed');
+    expect(cls).toContain('inset-x-0');
     expect(cls).toContain('bottom-(--bottom-nav-reserve)');
     // No literal rem/px bottom offset competes with the measure.
     expect(cls).not.toMatch(/(^|\s)bottom-(\d|\[)/);

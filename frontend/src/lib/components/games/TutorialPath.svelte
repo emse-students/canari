@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Check } from '@lucide/svelte';
+  import { Check, Menu } from '@lucide/svelte';
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/state';
@@ -69,6 +70,8 @@
       const total = String(all.length);
       return {
         key,
+        /** A COMPLETE tab wears a check, as in the design (owner mockup, 2026-11-28). */
+        icon: count === total ? Check : undefined,
         label:
           key === 'basics'
             ? m.minesweeper_path_tab_basics({ done: count, total })
@@ -101,10 +104,31 @@
     return lessons.findIndex((l) => l.id === id) + 1;
   }
 
+  let pathEl: HTMLDivElement | undefined;
+
+  /**
+   * THE CATALOGUE BUTTON of the bottom sheet: the pattern catalogue IS the "Motifs" tab, so it opens that tab and brings
+   * the path back into view from the top.
+   */
+  function openCatalogue() {
+    if (tab !== 'patterns') selectTab('patterns');
+    pathEl?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  /**
+   * THE PATH OPENS ON THE CURRENT TILE (the path runs upward, so a long catalogue starts far below the top): the page
+   * brings the first lesson not done to the middle of the screen, as the design shows it standing above the sheet.
+   */
+  onMount(() => {
+    pathEl
+      ?.querySelector<HTMLElement>('a[data-state="current"]')
+      ?.scrollIntoView({ block: 'center' });
+  });
+
   console.debug('[minesweeper] tutorial path opened', { done: progress.done.length });
 </script>
 
-<div class="space-y-4" data-testid="tutorial-path">
+<div class="space-y-4" data-testid="tutorial-path" bind:this={pathEl}>
   <SegmentedControl
     items={tabItems}
     value={tab}
@@ -112,14 +136,104 @@
     label={m.minesweeper_path_tabs_label()}
   />
 
-  <div class="flex items-start gap-3">
-    <LePic size={56} mood={current ? 'happy' : 'neutral'} pose="rest" />
-    <p class="bg-cn-surface text-text-main flex-1 rounded-2xl px-3 py-2.5 text-sm">
-      {tab === 'basics' ? m.minesweeper_path_intro_basics() : m.minesweeper_path_intro_patterns()}
-    </p>
+  <p class="bg-cn-surface text-text-main rounded-2xl px-3 py-2.5 text-sm" data-testid="path-intro">
+    {tab === 'basics' ? m.minesweeper_path_intro_basics() : m.minesweeper_path_intro_patterns()}
+  </p>
+
+  <!-- THE PATH RUNS UPWARD (owner mockup, 2026-11-28): the first lesson is at the bottom, next to the sheet. Only the
+       VISUAL order is reversed (`flex-col-reverse`); the DOM, the tab order and a reader's order stay first-to-last. -->
+  <div class="relative flex flex-col-reverse gap-4" data-testid="path-stack">
+    <!-- The scenery of the design: a mine cart and a headframe. Decoration (aria-hidden), drawn with the muted text tone. -->
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 70 46"
+      class="text-text-muted pointer-events-none absolute top-1/3 left-0 w-16 opacity-25"
+    >
+      <polygon points="4,6 66,6 58,34 12,34" fill="currentColor" />
+      <polygon points="10,0 26,0 22,6 14,6" fill="currentColor" opacity="0.7" />
+      <polygon points="28,0 50,2 46,6 30,6" fill="currentColor" opacity="0.7" />
+      <circle cx="20" cy="38" r="6" fill="currentColor" />
+      <circle cx="50" cy="38" r="6" fill="currentColor" />
+    </svg>
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 80 150"
+      class="text-text-muted pointer-events-none absolute right-0 bottom-0 w-20 opacity-25"
+    >
+      <polygon points="12,150 34,10 46,10 68,150 58,150 40,30 22,150" fill="currentColor" />
+      <polygon points="22,110 58,110 56,118 24,118" fill="currentColor" />
+      <polygon points="28,70 52,70 51,77 29,77" fill="currentColor" />
+      <circle cx="40" cy="14" r="11" fill="none" stroke="currentColor" stroke-width="5" />
+      <polygon points="0,150 80,150 80,140 0,140" fill="currentColor" />
+    </svg>
+    {#each families as family (family.key)}
+      {@const count = countDone(family.lessons, done)}
+      <section aria-labelledby="family-{tab}-{family.key}" data-testid="path-family">
+        <h2
+          id="family-{tab}-{family.key}"
+          class="text-text-muted flex items-center justify-between text-sm font-bold"
+        >
+          <span>{family.label()}</span>
+          <span>{count} / {family.lessons.length}</span>
+        </h2>
+        <ol class="relative mt-2 flex flex-col-reverse">
+          {#each family.lessons as lesson (lesson.id)}
+            {@const state = stateOf(lesson.id)}
+            {@const dx = offsetOf(lesson.id)}
+            {@const name = shortName(lesson.title())}
+            <li class="relative flex h-14.5 items-center justify-center">
+              <a
+                href={resolve('/games/tutorial/[id]', { id: lesson.id })}
+                class="path-tile"
+                data-state={state}
+                data-lesson={lesson.id}
+                aria-label={tileLabel(lesson.id, lesson.title())}
+                title={lesson.title()}
+                style:--path-dx="{dx}rem"
+              >
+                <span class="path-face">
+                  {#if state === 'done'}
+                    <Check size={26} strokeWidth={3.5} />
+                  {:else}
+                    <span class="path-name" class:path-name-long={name.length > 5}>
+                      {name.length > 5 ? String(positionInFamily(family.lessons, lesson.id)) : name}
+                    </span>
+                  {/if}
+                </span>
+              </a>
+              {#if name.length > 5}
+                <span
+                  class="text-text-muted pointer-events-none absolute top-1/2 max-w-2/5 -translate-y-1/2 text-xs font-semibold {dx >=
+                  0
+                    ? 'left-0 text-left'
+                    : 'right-0 text-right'}"
+                >
+                  {name}
+                </span>
+              {/if}
+              {#if state === 'current'}
+                <span
+                  class="pointer-events-none absolute bottom-1 {dx >= 0
+                    ? 'path-pic-left'
+                    : 'path-pic-right'}"
+                  style:--path-dx="{dx}rem"
+                >
+                  <LePic size={64} mood="happy" pose="rest" />
+                </span>
+              {/if}
+            </li>
+          {/each}
+        </ol>
+      </section>
+    {/each}
   </div>
 
-  <section class="bg-cn-surface space-y-3 rounded-2xl p-3" data-testid="tutorial-continue">
+  <!-- THE BOTTOM SHEET of the design (owner mockup, 2026-11-28): the family's progress and "Continuer" stay under the
+       thumb whatever the length of the path, clear of the tab bar (`--bottom-nav-reserve`, as the lesson's bar). -->
+  <section
+    class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 space-y-3 rounded-t-3xl p-3 shadow-lg md:bottom-0"
+    data-testid="tutorial-continue"
+  >
     {#if current && currentFamily}
       {@const total = currentFamily.lessons.length}
       {@const count = countDone(currentFamily.lessons, done)}
@@ -137,75 +251,32 @@
         </div>
         <span class="text-text-main text-sm font-bold">{count} / {total}</span>
       </div>
-      <Button href={resolve('/games/tutorial/[id]', { id: current.id })} class="w-full">
-        {m.minesweeper_path_continue({ name: shortName(current.title()) })}
-      </Button>
+      <div class="flex gap-2.5">
+        <Button
+          variant="soft"
+          icon
+          class="min-h-14 w-14"
+          aria-label={m.minesweeper_path_catalogue()}
+          onclick={openCatalogue}
+          data-testid="tutorial-catalogue"
+        >
+          <Menu size={24} strokeWidth={2.4} />
+        </Button>
+        <Button
+          variant="success"
+          href={resolve('/games/tutorial/[id]', { id: current.id })}
+          class="font-display min-h-14 flex-1 text-lg font-bold"
+        >
+          {m.minesweeper_path_continue({ name: shortName(current.title()) })}
+        </Button>
+      </div>
     {:else}
       <p class="text-text-main text-sm font-semibold">{m.minesweeper_path_all_done()}</p>
-      <Button href={resolve('/games/play')} class="w-full">{m.minesweeper_tutorial_play()}</Button>
+      <Button href={resolve('/games/play')} class="font-display min-h-14 w-full text-lg font-bold">
+        {m.minesweeper_tutorial_play()}
+      </Button>
     {/if}
   </section>
-
-  {#each families as family (family.key)}
-    {@const count = countDone(family.lessons, done)}
-    <section aria-labelledby="family-{tab}-{family.key}" data-testid="path-family">
-      <h2
-        id="family-{tab}-{family.key}"
-        class="text-text-muted flex items-center justify-between text-sm font-bold"
-      >
-        <span>{family.label()}</span>
-        <span>{count} / {family.lessons.length}</span>
-      </h2>
-      <ol class="mt-2">
-        {#each family.lessons as lesson (lesson.id)}
-          {@const state = stateOf(lesson.id)}
-          {@const dx = offsetOf(lesson.id)}
-          {@const name = shortName(lesson.title())}
-          <li class="relative flex h-18 items-center justify-center">
-            <a
-              href={resolve('/games/tutorial/[id]', { id: lesson.id })}
-              class="path-tile"
-              data-state={state}
-              data-lesson={lesson.id}
-              aria-label={tileLabel(lesson.id, lesson.title())}
-              title={lesson.title()}
-              style:--path-dx="{dx}rem"
-            >
-              <span class="path-face">
-                {#if state === 'done'}
-                  <Check size={26} strokeWidth={3.5} />
-                {:else}
-                  <span class="path-name" class:path-name-long={name.length > 5}>
-                    {name.length > 5 ? String(positionInFamily(family.lessons, lesson.id)) : name}
-                  </span>
-                {/if}
-              </span>
-            </a>
-            {#if name.length > 5}
-              <span
-                class="text-text-muted pointer-events-none absolute top-1/2 max-w-2/5 -translate-y-1/2 text-xs font-semibold {dx >=
-                0
-                  ? 'left-0 text-left'
-                  : 'right-0 text-right'}"
-              >
-                {name}
-              </span>
-            {/if}
-            {#if state === 'current'}
-              <span
-                class="pointer-events-none absolute bottom-1 {dx >= 0
-                  ? 'path-pic-left'
-                  : 'path-pic-right'}"
-                style:--path-dx="{dx}rem"
-              >
-                <LePic size={64} mood="happy" pose="rest" />
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ol>
-    </section>
-  {/each}
 </div>
 
 <style>

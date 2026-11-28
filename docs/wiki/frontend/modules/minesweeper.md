@@ -169,24 +169,14 @@ DELETED** (`MinesweeperModeSheet.svelte` and its test): one chooser, a CENTERED 
 **"Libre" is renamed "Entraînement" in every user-visible string** (the pastille reads "Entraînement · Débutant", the
 stats note says "mode Entraînement"; English: "Training"). The stored keys did not change.
 
-**It opens by itself ONLY at the first game on a device** (owner review, 2026-11-27): no mode stored AND no minesweeper
-history on the device (`isFirstMinesweeperGame()`: any `canari.minesweeper.*` key besides the mode and the tutorial's
-progress - a level, the settings, the stats - counts as history, so a player from before this modal is never nagged),
-AND never while `modeLocked` or `board.minesPlaced` (the first-game flag is read once, before the level loader writes
-its own key). Afterwards the bottom pastille opens the same modal, before the first dig. **Dismissing it without a pick
-(Escape, scrim, cross, Back, the tutorial link) STORES NOTHING**: the default (Entraînement on Débutant) just plays, and
-the level key written on mount makes the next open a later one, so it introduces the choice once and never nags
-(charter, principle 3). Focus moves into the dialog on open and back on close (`focusTrap`), and both radiogroups are
-roving (one tab stop, arrows move and pick). "Jouer" writes exactly what the sheet's pick wrote (`canari.minesweeper.unranked`, and
-`canari.minesweeper.level` for a level); the draft inside the modal writes nothing until then. Ranked offers no hint, as
-before (`hintOffered`).
+**It opens by itself at EVERY launch of a game** (owner, 2026-11-28: *"quand j'appuie sur Jouer, la modale qui propose classé ou non classé n'apparaît pas ?"*). The first version opened it only at the very first game on a device (no mode stored AND no minesweeper history, `isFirstMinesweeperGame()`), so any player with a level, a setting or a stat on the device pressed "Jouer" and landed on a board whose mode had been chosen for them: the modal was not broken, it was gated off by design, and the design was wrong for the people who press "Jouer". Now `/games/play` mounts `MinesweeperModal` with `askMode` (the route is the launch: the Games page's "Jouer", the tutorial's game link), so the modal is open on arrival, on the STORED mode (a returning player confirms with one tap on "Jouer"), and never while `modeLocked` or `board.minesPlaced`. The component's own default is `askMode = false`, so a mount that is not a launch (every other test, a future embed) does not ask. The three history helpers (`hasStoredMinesweeperMode`, `hasMinesweeperHistory`, `isFirstMinesweeperGame`) are DELETED with the gate they fed. **Dismissing it without a pick (Escape, scrim, cross, Back, the tutorial link) STORES NOTHING**: the default or the stored mode just plays, and the pastille of the bottom bar opens the same modal again before the first dig (charter, principle 3: it is asked, it never counts or calls anyone back). Focus moves into the dialog on open and back on close (`focusTrap`), and both radiogroups are roving (one tab stop, arrows move and pick). "Jouer" writes exactly what the sheet's pick wrote (`canari.minesweeper.unranked`, and `canari.minesweeper.level` for a level); the draft inside the modal writes nothing until then. Ranked offers no hint, as before (`hintOffered`).
 
 **The Android Back key closes the modal and the game stays** (reading on the Mi 9T, 2026-11-27, [reading](../../backlog.d/reading-owed-the-minesweeper-hint.md) item 13: Back on the old sheet left `/games/play`). The modal takes a history entry through `historyOverlayStack` exactly as `shared/Modal` does, released when it goes; pinned in `MinesweeperModeModal.svelte.test.ts` and `MinesweeperModal.chrome.svelte.test.ts`.
 
 **Pinned:** `MinesweeperModeModal.svelte.test.ts` (the cards and their lines, the levels under Entraînement only, "Jouer"
 commits and nothing before, the ways out, the tutorial link), `MinesweeperModal.chrome.svelte.test.ts` (opens by itself
-at the first game and only then, the pastille reopens it, a dismissal stores nothing, the history gate, roving arrows and focus, ranked asks for its challenge,
-a level pick is stored), `MinesweeperModal.levels.svelte.test.ts`, `levels.test.ts` (`hasStoredMinesweeperMode`, `isFirstMinesweeperGame`).
+when launched (`askMode`) whatever the device holds, the pastille reopens it, a dismissal stores nothing, roving arrows and focus, ranked asks for its challenge,
+a level pick is stored), `MinesweeperModal.levels.svelte.test.ts`, `routes/games/play/page.svelte.test.ts` (the route asks, a returning player included).
 
 ## The tutorial path (owner, 2026-11-27)
 
@@ -211,7 +201,7 @@ for a basics lesson), one line restating the pattern (the last step of its hint,
 keep true), the family progress, **"Motif suivant · <name>"** and "Retour au parcours". The lessons, their proofs and
 `lessons.test.ts` are untouched.
 
-**The bottom bar stays clear of the tab bar** (iPhone reading, 2026-11-27: the old lesson buttons sat under the floating bar until the page was scrolled): it is `sticky` at `bottom-(--bottom-nav-reserve)`, the shell's one measure of what the bar covers (the native bar overwrites it), and `md:bottom-0` where there is none; pinned in `MinesweeperLessonRunner.svelte.test.ts`.
+**The bottom bar stays clear of the tab bar** (iPhone reading, 2026-11-27: the old lesson buttons sat under the floating bar until the page was scrolled): it is `fixed`, full-bleed (`inset-x-0`), at `bottom-(--bottom-nav-reserve)`, the shell's one measure of what the bar covers (the native bar overwrites it), and `md:bottom-0` where there is none; pinned in `MinesweeperLessonRunner.svelte.test.ts`.
 
 **Progress is a per-device convenience**, stored like the other minesweeper settings (`tutorial/progress.ts`, key
 `canari.minesweeper.tutorial`: the solved ids and whether the lamp was ever used): read synchronously, validated on
@@ -245,6 +235,16 @@ invalid values logged and ignored, unknown ids dropped, a refusing storage survi
 recorded, the solved screen, Passer), `routes/games/tutorial/[id]/page.svelte.test.ts`, `LePic.svelte.test.ts` (poses,
 moods, no raw colour, the lamp's flame). **Owed:** the phone reading
 ([reading](../../backlog.d/reading-owed-the-minesweeper-tutorial-path.md)).
+
+### The tutorial against its mockups (owner review, 2026-11-28)
+
+The owner's five mockups (the path, a lesson with the lamp and its three hints, "Motif maîtrisé", "Nouvelle partie", Le Pic's sheet) were compared with the shipped screens at 390 x 844. **Done:** the path's intro is a plain bubble (Le Pic stands on his tile, he is no longer drawn twice) and the family progress with "Continuer" is the **bottom sheet** of the design (sticky above `--bottom-nav-reserve`, rounded top, a 56 px green call to action in the display face); the lesson's tag takes the design's colour logic (the accent colour while the lamp speaks, muted for the goal; sentence case, the capitals of the mockup are refused by `uppercaseTracking.test.ts`); the solved screen has the large Le Pic (224), the warm glow and four scraps of confetti (decoration, `aria-hidden`, no counter), the 32 px title and the 56 px calls to action; "Jouer" of the mode modal is the 56 px display-face button; the Games ranking shows the day and the hour (`shortDateTime`, the locale's clock).
+
+The lesson's mini-grid cells are as big as the mockup's (up to 3.75rem, fitted to the columns of the board, numbers in the display face) instead of 2.5rem.
+
+**Owner's answers on the review (owner, 2026-11-28).** (1) **Green, in the learning path only**: "Continuer" and "Motif suivant" are GREEN as in the mockup, through a `success` variant of `Button` (`bg-green-solid`, white text; `--green-solid` is a new fill token because `green-ok` is a text/edge green at 2.6:1 under white, as `red-solid` is for red) - yellow stays the primary everywhere else, "Jouer" included. (2) **The lesson and solved screens follow the theme**, they are not always dark. (3) **The path follows the mockup completely**: the short "Apprendre" header, the path running UPWARD (first lesson at the bottom, by `flex-col-reverse` on the stack and on each family, so the DOM and the tab order stay first-to-last), the mine-cart and headframe scenery (decorative, `aria-hidden`, the muted text tone), 58 px between tiles, the bottom sheet with a menu button (the catalogue: it opens the "Motifs" tab and scrolls to the top) beside the green "Continuer", and a check on a "Les bases" tab once complete. (4) **The lesson chrome SHIPPED (owner chose the full proposal, 2026-11-28)**: the lesson draws its own header (back arrow, the family label in sentence case, the lesson's OWN title as the `h1` - no hand-typed article - and "n / total" on the right), full-width progress segments under it, the legend of the three colours on ONE row with short labels ("Mine sûre", "Groupe de mines", "Case sûre", Paraglide fr and en), and a full-bleed bottom bar `fixed` above the tab bar at `--bottom-nav-reserve` (the shell's one measure, which already carries the iOS safe-area inset; seen in a browser, NOT yet on a device). **The mines counter is shown ONLY when the lesson gives a total**: the grid renders it when `!lesson.open`, so it is derived from the data with no list of names. Shown on the five basics (reveal, flag, autoflag, chord, counter) and on the patterns `mine_counting` and `combinations`; hidden on the 27 other patterns (every open grid, 1-1 included), where it used to read "?". Pinned in `MinesweeperMiniGrid.svelte.test.ts` (the set of lessons that show it is asserted).
+
+**Still NOT matched, and why.** *Fonts:* the mockups set headings, tiles and buttons in Fredoka and the rest in Nunito; the app already carries exactly those two (`--font-display`, `--font-body`) and its rule is that Fredoka is the title, a name and a call to action (design-reference, Typography), so nothing was added. *Colours:* every mockup colour maps to a token (`accent`, `green-ok`, `green-solid`, `red-err`, `cn-surface`, `cn-bg`, `cn-border`, the `--color-pic-*` drawing palette). *The legend's 3 px outlines, the card's 3 px border:* the scale has 2 and 4 px, no raw px. *Capitals on the lesson tag:* `uppercaseTracking.test.ts` refuses them (audit M3), so it is sentence case. *The 3 D edge of the yellow buttons:* one button, one look.
 
 ## The tutorial (owner, 2026-11-25)
 

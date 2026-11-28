@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronRight, RotateCcw } from '@lucide/svelte';
+  import { ArrowLeft, ChevronRight, RotateCcw } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import Button from '$lib/components/ui/Button.svelte';
   import LePic, { type PicMood, type PicPose } from '$lib/components/games/LePic.svelte';
@@ -117,24 +117,31 @@
 
 {#if outcome === 'solved'}
   <section
-    class="bg-cn-surface flex flex-col items-center gap-4 rounded-2xl p-4 text-center"
+    class="bg-cn-surface relative flex flex-col items-center gap-4 overflow-hidden rounded-2xl p-4 text-center"
     data-testid="tutorial-solved"
   >
-    <LePic size={160} mood="happy" pose="flag" />
+    <!-- THE CELEBRATION of the design (owner mockup, 2026-11-28): a warm glow behind Le Pic and a few scraps of
+         confetti. Decoration only (aria-hidden), no counter, no streak: nothing here calls the player back. -->
+    <span class="solved-glow" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-a" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-b" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-c" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-d" aria-hidden="true"></span>
+    <LePic size={224} mood="happy" pose="flag" class="relative" />
     <span
-      class="bg-accent text-on-accent font-display rounded-full px-3 py-1 text-base font-bold"
+      class="bg-accent text-on-accent font-display relative rounded-full px-3 py-1 text-base font-bold"
       data-testid="tutorial-solved-name"
     >
       {shortName(lesson.title())}
     </span>
-    <h2 class="font-display text-text-main text-2xl font-bold">
+    <h1 class="font-display text-text-main relative text-3xl font-bold">
       {isPattern ? m.minesweeper_done_title_pattern() : m.minesweeper_done_title_lesson()}
-    </h2>
-    <p class="text-text-muted text-sm" data-testid="tutorial-solved-line">
+    </h1>
+    <p class="text-text-muted relative text-sm" data-testid="tutorial-solved-line">
       {lesson.hints.at(-1)?.text()}
     </p>
 
-    <div class="bg-cn-bg w-full space-y-2 rounded-2xl p-3 text-left">
+    <div class="bg-cn-bg relative w-full space-y-2 rounded-2xl p-3 text-left">
       <div class="flex items-center justify-between text-sm font-bold">
         <span class="text-text-main">{place.family.label()}</span>
         <span class="text-text-main" data-testid="tutorial-solved-progress">
@@ -161,36 +168,63 @@
       </p>
     </div>
 
-    <div class="flex w-full flex-col gap-2">
+    <div class="relative flex w-full flex-col gap-2.5">
       {#if place.next}
-        <Button href={nextHref} class="w-full" data-testid="tutorial-solved-next">
+        <Button
+          variant="success"
+          href={nextHref}
+          class="font-display min-h-14 w-full text-lg font-bold"
+          data-testid="tutorial-solved-next"
+        >
           {isPattern
             ? m.minesweeper_done_next_pattern({ name: shortName(place.next.title()) })
             : m.minesweeper_done_next_lesson({ name: shortName(place.next.title()) })}
         </Button>
       {:else}
-        <Button href={resolve('/games/play')} class="w-full">
+        <Button
+          href={resolve('/games/play')}
+          class="font-display min-h-14 w-full text-lg font-bold"
+        >
           {m.minesweeper_tutorial_play()}
         </Button>
       {/if}
-      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="w-full">
+      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="min-h-12 w-full font-bold">
         {m.minesweeper_lesson_back()}
       </Button>
     </div>
   </section>
 {:else}
   <section class="space-y-4">
-    <div class="flex items-center gap-3">
-      <p class="text-text-muted text-sm font-semibold" data-testid="tutorial-progress">
-        {place.family.label()} · {m.minesweeper_lesson_position({
-          n: String(place.indexInFamily + 1),
-          total: String(familyTotal),
-        })}
-      </p>
-      <div
-        class="grid flex-1 gap-1"
-        style:grid-template-columns="repeat({familyTotal}, minmax(0, 1fr))"
-      >
+    <!-- THE LESSON'S HEADER (owner mockup, 2026-11-28, chosen over the old line): a back arrow, the family in small bold
+         type over the lesson's own title, the position on the right, and one segment per lesson of the family under it
+         (done green, this one yellow). Sentence case: the capitals of the mockup are refused by the typography audit. -->
+    <header class="space-y-2.5">
+      <div class="flex items-center gap-2">
+        <Button
+          href={tutorialPathHref(place.tab)}
+          variant="ghost"
+          icon
+          aria-label={m.minesweeper_lesson_back()}
+          data-testid="tutorial-back"
+        >
+          <ArrowLeft size={24} strokeWidth={2.6} />
+        </Button>
+        <div class="flex min-w-0 flex-1 flex-col">
+          <span class="text-text-muted text-xs font-extrabold" data-testid="tutorial-family">
+            {place.family.label()}
+          </span>
+          <h1 class="font-display text-text-main text-xl leading-tight font-bold">
+            {lesson.title()}
+          </h1>
+        </div>
+        <span class="text-text-muted text-sm font-extrabold" data-testid="tutorial-progress">
+          {m.minesweeper_lesson_position({
+            n: String(place.indexInFamily + 1),
+            total: String(familyTotal),
+          })}
+        </span>
+      </div>
+      <div class="grid gap-1" style:grid-template-columns="repeat({familyTotal}, minmax(0, 1fr))">
         {#each place.family.lessons as other, i (other.id)}
           <span
             class="h-1.5 rounded-full {done.has(other.id)
@@ -201,7 +235,7 @@
           ></span>
         {/each}
       </div>
-    </div>
+    </header>
 
     <div class="flex items-end gap-2">
       <LePic size={96} {mood} {pose} />
@@ -219,12 +253,12 @@
             {m.minesweeper_tutorial_lost()}
           </p>
         {:else if hintStep !== null}
-          <p class="text-text-muted text-xs font-bold">
+          <p class="text-accent-text text-xs font-extrabold">
             {m.minesweeper_lesson_hint_tag({ n: String(hintStep + 1), total: String(stepCount) })}
           </p>
           <p data-testid="tutorial-hint">{lesson.hints[hintStep].text()}</p>
         {:else}
-          <p class="text-text-muted text-xs font-bold">
+          <p class="text-text-muted text-xs font-extrabold">
             {m.minesweeper_lesson_goal()}
           </p>
           <p data-testid="tutorial-goal">{lesson.body()}</p>
@@ -246,7 +280,7 @@
 
     <!-- What the three outlines mean: the colour is the whole message, so it is said once, under the grid. -->
     <ul
-      class="text-text-muted flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs font-semibold"
+      class="text-text-muted flex items-center justify-center gap-x-3.5 text-xs font-bold"
       data-testid="tutorial-legend"
     >
       <li class="flex items-center gap-1.5">
@@ -263,11 +297,14 @@
       </li>
     </ul>
 
-    <!-- THE BOTTOM BAR STAYS CLEAR OF THE TAB BAR (iPhone reading, 2026-11-27: the old buttons sat under the floating
-         bar until the page was scrolled): it sticks above `--bottom-nav-reserve`, the shell's one measure of what the bar
-         covers (the native bar overwrites it with its measured inset), and to the screen edge where there is no bar. -->
+    <!-- THE BOTTOM BAR IS FULL-BLEED AND PINNED (owner mockup, 2026-11-28), ABOVE the tab bar and never under it: it sits
+         at `--bottom-nav-reserve`, the shell's one measure of what the bar covers (the bar's height plus the home-indicator
+         strip; the native bar overwrites it with its measured inset), and at the screen edge where there is no bar.
+         From `md` the shell has a 6rem sidebar on the left (`md:pl-[6rem]`), which the bar clears. The spacer keeps the last
+         line of the page from ending under it. -->
+    <div class="h-40" aria-hidden="true"></div>
     <div
-      class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 flex items-center justify-around gap-2 rounded-2xl px-2 py-3 md:bottom-0"
+      class="bg-cn-surface border-cn-border fixed inset-x-0 bottom-(--bottom-nav-reserve) z-10 flex h-40 items-center justify-around gap-2 border-t px-3 pb-2 md:bottom-0 md:left-24"
       data-testid="tutorial-bottom-bar"
     >
       <Button
@@ -351,6 +388,56 @@
         0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
         0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
     }
+  }
+  /* THE SOLVED SCREEN'S GLOW AND CONFETTI: the accent and the status colours, nothing raw. */
+  .solved-glow {
+    position: absolute;
+    top: 7rem;
+    left: 50%;
+    width: 28rem;
+    height: 28rem;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: radial-gradient(
+      circle,
+      color-mix(in srgb, var(--accent) 28%, transparent),
+      transparent 65%
+    );
+    pointer-events: none;
+  }
+  .solved-confetti {
+    position: absolute;
+    width: 0.75rem;
+    height: 0.75rem;
+    pointer-events: none;
+  }
+  .solved-confetti-a {
+    top: 1.5rem;
+    left: 12%;
+    background: var(--accent);
+    transform: rotate(25deg);
+  }
+  .solved-confetti-b {
+    top: 1rem;
+    right: 14%;
+    background: var(--accent-icon);
+    transform: rotate(45deg);
+  }
+  .solved-confetti-c {
+    top: 9rem;
+    right: 8%;
+    width: 1rem;
+    height: 0.5rem;
+    background: var(--red-err);
+    transform: rotate(-30deg);
+  }
+  .solved-confetti-d {
+    top: 10rem;
+    left: 7%;
+    width: 0.625rem;
+    height: 1.125rem;
+    background: var(--green-ok);
+    transform: rotate(20deg);
   }
   @media (prefers-reduced-motion: reduce) {
     .lamp-pulse {

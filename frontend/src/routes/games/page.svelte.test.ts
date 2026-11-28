@@ -132,7 +132,7 @@ describe('the games page', () => {
     await settle();
     const dates = [...document.querySelectorAll('[data-testid="games-date"]')];
     expect(dates).toHaveLength(2);
-    expect(dates[0].textContent?.trim()).toMatch(/^\d{2}\/\d{2}\/26$/);
+    expect(dates[0].textContent?.trim()).toMatch(/^\d{2}\/\d{2}\/26 \d{2}:\d{2}$/);
   });
 
   it('carries the Stats tab, which loads the reader record only when opened', async () => {
