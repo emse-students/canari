@@ -84,7 +84,7 @@ from authentik.sources.saml.processors.response import SAMLSourceFlowManager
 from authentik.tenants.models import Tenant
 
 SLUG = "miconnect-authorization"
-VERSION = "2026-11-24"
+VERSION = "2026-11-28"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"

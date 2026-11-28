@@ -474,16 +474,20 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     expect(other.update.mock.calls[0][1]).not.toHaveProperty('mailClass');
   });
 
-  it('returns the STORED row when the update is refused, never the claims it could not write', async () => {
+  it('returns the STORED class when the update is refused, and the other claims as before', async () => {
     const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
     const { service, update } = makeService(stored);
     update.mockRejectedValueOnce(new Error('database refused'));
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const user = await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+    const user = await service.findOrCreateFromOidc('s1', 'A B 2', 'A', 'B', {
       ...profile,
+      campus: 'saint-etienne',
       mailClass: 'student',
     });
+    // The class is the one thing the answer must not claim unwritten (the relay reads the column).
     expect(user.mailClass).toBeNull();
+    // Every other claim joins the answer whatever the write did, exactly as before the mail class.
+    expect(user).toMatchObject({ campus: 'saint-etienne', displayName: 'A B 2' });
     warn.mockRestore();
   });
 

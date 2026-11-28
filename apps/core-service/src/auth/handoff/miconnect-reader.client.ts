@@ -52,7 +52,7 @@ export interface MiconnectAccount {
  * handoff mint passes a person through the consent flow's bindings only when they accepted THIS
  * text, which is what the flow itself would have asked of them.
  */
-export const CONSENT_VERSION = '2026-11-24';
+export const CONSENT_VERSION = '2026-11-28';
 
 /** The consent flow's slug: the only flow on which bindings are recognised by an allowlist. */
 export const CONSENT_FLOW_SLUG = 'miconnect-authorization';

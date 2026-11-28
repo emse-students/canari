@@ -158,6 +158,23 @@ describe('ZimbraSoapClient', () => {
     expect(streams[1].written).toHaveLength(1);
   });
 
+  it('re-sends a call that was NEVER SENT exactly once, on a fresh connection', async () => {
+    const { soap, streams } = client((s) => {
+      // The first connection answers its first call and says it closes: B, queued behind it,
+      // never left, and goes out on the next connection.
+      const close = streams.indexOf(s) === 0 ? 'Connection: close\r\n' : '';
+      const json = '{"Body":{"R":{}}}';
+      s.push(`HTTP/1.1 200 X\r\n${close}Content-Length: ${utf8(json).length}\r\n\r\n${json}`);
+    });
+    const [a, b] = await Promise.all([soap.call({ A: {} }), soap.call({ B: {} })]);
+    expect(a).toEqual({ R: {} });
+    expect(b).toEqual({ R: {} });
+    expect(streams).toHaveLength(2);
+    expect(streams[0].written).toHaveLength(1);
+    expect(streams[1].written).toHaveLength(1);
+    expect(streams[1].written[0]).toContain('"B":{}');
+  });
+
   it('close ends the stream', async () => {
     const { soap, streams } = client((s) => s.push(answer(200, '{"Body":{"R":{}}}')));
     await soap.call({ A: {} });

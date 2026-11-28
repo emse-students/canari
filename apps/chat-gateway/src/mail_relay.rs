@@ -6,16 +6,19 @@
 // named by configuration. It never terminates TLS and never reads past a record header - it counts
 // record types for its log, and that is all it knows of what crosses it.
 //
-// What it admits, in order (each refusal before the upgrade, as an HTTP status):
+// What it admits, in order. The REQUEST is refused before the upgrade, as an HTTP status:
 //   - the switch is on (`MAIL_RELAY_ENABLED`, off by default, D12), or 404;
 //   - the page's origin, exactly as `/api/ws` (`crate::origin`), or 403;
-//   - an ACCESS token, exactly as `/api/ws` (cookie, else `?token=`), or 401;
-//   - a place under the caps below, or 503;
+//   - an ACCESS token, exactly as `/api/ws` (cookie, else `?token=`), or 401.
+// The ACCOUNT is refused AFTER the upgrade, with a close code (`close_code`), because a browser
+// cannot read the status of a refused upgrade - every refusal would reach the page as one 1006:
+//   - a place under the caps below (connections held, new connections per minute, bytes over the
+//     rolling window - per account - and connections in all), or 4006;
 //   - an ELIGIBLE account: its stored mail class is one of `MAIL_CLASSES` (D1), asked of
-//     core-service, or 403 - and 503 when core-service could not say;
-//   - the upstream answered the TCP connect within its deadline, or 502.
+//     core-service, or 4005 - and 4007 when core-service could not say.
+// Then the upstream must answer the TCP connect within its deadline, or 502 before the upgrade.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -55,13 +58,37 @@ pub const MAX_CLIENT_MESSAGE_BYTES: usize = 1024 * 1024;
 /// How long the TCP connect to the upstream may take before the upgrade is answered 502.
 pub const UPSTREAM_CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 /// How long a connection may carry nothing, either way, before the relay ends it itself with
-/// [`close_code::IDLE`]. Below nginx's 120 s bound on the location (`proxy_read_timeout`,
-/// `proxy_send_timeout`), so an idle keep-alive connection ends as an ORDINARY end the client
-/// classifies, rather than as nginx's cut, which reaches it as an unexplained 1006.
-pub const IDLE_DEADLINE: Duration = Duration::from_secs(100);
+/// [`close_code::IDLE`]. CLEARLY BELOW EVERY HOP that would cut a silent connection: nginx's 120 s
+/// on the location (`proxy_read_timeout`, `proxy_send_timeout`) and the Cloudflare edge's 100 s
+/// (its proxy read timeout, which ends an idle proxied WebSocket too). An idle keep-alive
+/// connection then ends as an ORDINARY end the client classifies, never as a hop's cut, which
+/// reaches it as an unexplained 1006. Ten seconds of margin, so the two never race
+/// (`.github/scripts/tests/mail-relay-route.test.mjs` holds both bounds).
+pub const IDLE_DEADLINE: Duration = Duration::from_secs(90);
 /// How long the eligibility question to core-service may take. core-service answers it with ONE
 /// primary-key read of `users.mailClass` and asks nobody else, so a slower answer is a fault.
 pub const ELIGIBILITY_DEADLINE: Duration = Duration::from_secs(5);
+/// New relay connections one account may open in [`NEW_CONNECTION_WINDOW`]. Every connection the
+/// relay makes to Partage leaves from ONE egress address, which RENATER sees for every student at
+/// once: an account that reconnects in a loop must not spend that address's standing. An honest
+/// client holds one keep-alive connection and replaces it on an idle close (every 90 s at most) or
+/// a spent connection - a few a minute, two devices included.
+pub const MAX_NEW_CONNECTIONS_PER_WINDOW: usize = 20;
+/// The rolling window [`MAX_NEW_CONNECTIONS_PER_WINDOW`] is counted over.
+pub const NEW_CONNECTION_WINDOW: Duration = Duration::from_secs(60);
+/// Bytes one account may move through the relay, both ways and all its connections together, in
+/// [`BYTE_BUDGET_WINDOW`]. [`MAX_BYTES_PER_CONNECTION`] bounds one socket only: without this an
+/// account could open a new one each time and pull without end through the one egress address. A
+/// mailbox read heavily (attachments of up to 30 MB, Partage's limit) stays far below it.
+pub const ACCOUNT_BYTE_BUDGET: u64 = 512 * 1024 * 1024;
+/// The rolling window [`ACCOUNT_BYTE_BUDGET`] is counted over.
+pub const BYTE_BUDGET_WINDOW: Duration = Duration::from_secs(60 * 60);
+/// The granularity of the byte ledger: bytes moved within one slot are one entry, so an account's
+/// ledger holds at most `BYTE_BUDGET_WINDOW / BYTE_SLOT` entries, whatever its frame sizes.
+const BYTE_SLOT: Duration = Duration::from_secs(1);
+/// Past this many accounts in the ledger, an admission sweeps out every account with nothing held
+/// and nothing left in either window: what bounds the ledger's memory, by count and not by clock.
+const LEDGER_SWEEP_ABOVE: usize = 1_024;
 /// Bytes read from the upstream at a time, and so the largest frame the relay sends.
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -83,6 +110,15 @@ pub mod close_code {
     pub const PROTOCOL: u16 = 4003;
     /// Nothing crossed for [`super::IDLE_DEADLINE`]: an ordinary end, like the upstream closing.
     pub const IDLE: u16 = 4004;
+    /// The account holds no eligible mail class (D1): refused after the upgrade, never retried.
+    pub const NOT_ELIGIBLE: u16 = 4005;
+    /// A cap was reached: the account's connections held, its new connections per minute, its
+    /// bytes over the rolling window (at admission, or mid-connection), or the relay's connections
+    /// in all. A later attempt may pass.
+    pub const CAP: u16 = 4006;
+    /// The account's eligibility could not be established (core-service down, slow or refusing
+    /// the secret): a fault on our side, never an answer about the account.
+    pub const UNAVAILABLE: u16 = 4007;
 }
 
 /// Whether `class` is one of [`MAIL_CLASSES`]: exact, as core-service stores it.
@@ -312,15 +348,54 @@ fn urlencode_segment(s: &str) -> String {
     out
 }
 
-// ── Places ───────────────────────────────────────────────────────────────────────────────────────
+// ── Places, rates and budgets ────────────────────────────────────────────────────────────────────
 
-/// Why a place was refused.
+/// Why a place was refused - every one closes with [`close_code::CAP`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaceRefusal {
     /// The account holds its [`MAX_MAIL_CONNECTIONS_PER_ACCOUNT`].
     Account,
     /// The process holds its [`MAX_MAIL_CONNECTIONS`].
     Process,
+    /// The account opened [`MAX_NEW_CONNECTIONS_PER_WINDOW`] in the last [`NEW_CONNECTION_WINDOW`].
+    Rate,
+    /// The account moved its [`ACCOUNT_BYTE_BUDGET`] in the last [`BYTE_BUDGET_WINDOW`].
+    Budget,
+}
+
+/// What one account is using: its connections held, when it opened its recent ones, and what it
+/// moved in the byte window (one entry per [`BYTE_SLOT`]).
+#[derive(Debug, Default)]
+struct AccountUse {
+    held: usize,
+    opens: VecDeque<Instant>,
+    bytes: VecDeque<(Instant, u64)>,
+    bytes_total: u64,
+}
+
+impl AccountUse {
+    /// Drops what left the windows at `now`.
+    fn prune(&mut self, now: Instant, rate_window: Duration, byte_window: Duration) {
+        while self
+            .opens
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= rate_window)
+        {
+            self.opens.pop_front();
+        }
+        while let Some(&(t, n)) = self.bytes.front() {
+            if now.saturating_duration_since(t) < byte_window {
+                break;
+            }
+            self.bytes.pop_front();
+            self.bytes_total -= n;
+        }
+    }
+
+    /// Nothing held and nothing in either window: the entry says nothing and may go.
+    fn is_idle(&self) -> bool {
+        self.held == 0 && self.opens.is_empty() && self.bytes.is_empty()
+    }
 }
 
 /// The relay, as the router holds it.
@@ -332,7 +407,11 @@ pub struct MailRelay {
     pub max_total: usize,
     pub max_bytes: u64,
     pub idle: Duration,
-    places: Mutex<HashMap<String, usize>>,
+    pub max_new_per_window: usize,
+    pub new_connection_window: Duration,
+    pub byte_budget: u64,
+    pub byte_budget_window: Duration,
+    accounts: Mutex<HashMap<String, AccountUse>>,
     refusals: crate::log_repeat::RepeatCounter,
 }
 
@@ -344,12 +423,13 @@ pub struct Place {
 
 impl Drop for Place {
     fn drop(&mut self) {
-        let mut places = self.relay.places.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(n) = places.get_mut(&self.account) {
-            *n -= 1;
-            if *n == 0 {
-                places.remove(&self.account);
-            }
+        let mut accounts = self
+            .relay
+            .accounts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(usage) = accounts.get_mut(&self.account) {
+            usage.held = usage.held.saturating_sub(1);
         }
     }
 }
@@ -364,31 +444,66 @@ impl MailRelay {
             max_total: MAX_MAIL_CONNECTIONS,
             max_bytes: MAX_BYTES_PER_CONNECTION,
             idle: IDLE_DEADLINE,
-            places: Mutex::new(HashMap::new()),
+            max_new_per_window: MAX_NEW_CONNECTIONS_PER_WINDOW,
+            new_connection_window: NEW_CONNECTION_WINDOW,
+            byte_budget: ACCOUNT_BYTE_BUDGET,
+            byte_budget_window: BYTE_BUDGET_WINDOW,
+            accounts: Mutex::new(HashMap::new()),
             refusals: crate::log_repeat::RepeatCounter::new(4_096),
         }
     }
 
-    /// Takes a place for `account`, counted and registered in one step under the lock, the
-    /// account before the process (the narrower reason is named).
-    pub fn admit(self: &Arc<Self>, account: &str) -> Result<Place, PlaceRefusal> {
-        let mut places = self.places.lock().unwrap_or_else(|p| p.into_inner());
-        let held = places.get(account).copied().unwrap_or(0);
-        if held >= self.max_per_account {
+    /// Takes a place for `account` at `now`, counted and registered in one step under the lock.
+    /// The account's own caps come before the process's (the narrower reason is named): the
+    /// connections it holds, then the process's, then its new connections in the window, then its
+    /// bytes in the window. An admitted open counts towards the rate; a refused one does not.
+    pub fn admit(self: &Arc<Self>, account: &str, now: Instant) -> Result<Place, PlaceRefusal> {
+        let mut accounts = self.accounts.lock().unwrap_or_else(|p| p.into_inner());
+        if accounts.len() > LEDGER_SWEEP_ABOVE {
+            for usage in accounts.values_mut() {
+                usage.prune(now, self.new_connection_window, self.byte_budget_window);
+            }
+            accounts.retain(|_, usage| !usage.is_idle());
+        }
+        let total: usize = accounts.values().map(|u| u.held).sum();
+        let usage = accounts.entry(account.to_string()).or_default();
+        usage.prune(now, self.new_connection_window, self.byte_budget_window);
+        if usage.held >= self.max_per_account {
             return Err(PlaceRefusal::Account);
         }
-        if places.values().sum::<usize>() >= self.max_total {
+        if total >= self.max_total {
             return Err(PlaceRefusal::Process);
         }
-        places.insert(account.to_string(), held + 1);
+        if usage.opens.len() >= self.max_new_per_window {
+            return Err(PlaceRefusal::Rate);
+        }
+        if usage.bytes_total >= self.byte_budget {
+            return Err(PlaceRefusal::Budget);
+        }
+        usage.held += 1;
+        usage.opens.push_back(now);
         // Admitted with room to spare ends the episode of refusals (crate::log_repeat).
-        if held + 1 < self.max_per_account {
+        if usage.held < self.max_per_account {
             self.refusals.forget(account);
         }
         Ok(Place {
             relay: self.clone(),
             account: account.to_string(),
         })
+    }
+
+    /// Charges `n` bytes moved at `now` to `account`'s window. Answers what the window then holds,
+    /// and whether that is still within the budget ([`ACCOUNT_BYTE_BUDGET`]).
+    pub fn charge(&self, account: &str, n: u64, now: Instant) -> (u64, bool) {
+        let mut accounts = self.accounts.lock().unwrap_or_else(|p| p.into_inner());
+        let usage = accounts.entry(account.to_string()).or_default();
+        usage.prune(now, self.new_connection_window, self.byte_budget_window);
+        match usage.bytes.back_mut() {
+            Some((slot, moved)) if now.saturating_duration_since(*slot) < BYTE_SLOT => *moved += n,
+            _ => usage.bytes.push_back((now, n)),
+        }
+        usage.bytes_total += n;
+        (usage.bytes_total, usage.bytes_total <= self.byte_budget)
     }
 }
 
@@ -480,19 +595,26 @@ pub async fn mail_relay_handler(
     };
     let short = short_id(&account);
 
-    // THE PLACE IS TAKEN BEFORE ANYTHING IS ASKED OF ANYONE: an account at its cap is refused
-    // without a question to core-service or a connect to the upstream.
-    let place = match relay.admit(&account) {
+    // THE PLACE IS TAKEN BEFORE ANYTHING IS ASKED OF ANYONE: an account at a cap is refused
+    // without a question to core-service or a connect to the upstream. Every line about an account
+    // names it by `short` (the first 8 characters of its Canari id), so an abuse window seen from
+    // the egress address can be put on the account that made it.
+    let place = match relay.admit(&account, Instant::now()) {
         Ok(place) => place,
         Err(refusal) => {
             if let Some(n) = relay.refusals.hit(&account) {
                 tracing::warn!(
-                    "[mail-relay] REFUSED for {short} ({refusal:?}; limits {} per account, {} in all) - refusal #{n} of this episode",
+                    "[mail-relay] REFUSED for {short} ({refusal:?}; limits {} held per account, {} in all, {} new per {} s, {} bytes per {} s) - closed {}, refusal #{n} of this episode",
                     relay.max_per_account,
-                    relay.max_total
+                    relay.max_total,
+                    relay.max_new_per_window,
+                    relay.new_connection_window.as_secs(),
+                    relay.byte_budget,
+                    relay.byte_budget_window.as_secs(),
+                    close_code::CAP
                 );
             }
-            return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
+            return refuse_after_upgrade(ws, close_code::CAP);
         }
     };
 
@@ -505,15 +627,19 @@ pub async fn mail_relay_handler(
             // a client that keeps asking is a client the tab should not have been shown to.
             if let Some(n) = relay.refusals.hit(&format!("ineligible:{account}")) {
                 tracing::info!(
-                    "[mail-relay] {short} is not eligible (class {:?}) - 403, refusal #{n}",
-                    class.as_deref().unwrap_or("none")
+                    "[mail-relay] {short} is not eligible (class {:?}) - closed {}, refusal #{n}",
+                    class.as_deref().unwrap_or("none"),
+                    close_code::NOT_ELIGIBLE
                 );
             }
-            return (StatusCode::FORBIDDEN, "Not eligible").into_response();
+            return refuse_after_upgrade(ws, close_code::NOT_ELIGIBLE);
         }
         Err(e) => {
-            tracing::warn!("[mail-relay] eligibility of {short} UNKNOWN, answering 503: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, "Eligibility unavailable").into_response();
+            tracing::warn!(
+                "[mail-relay] eligibility of {short} UNKNOWN, closing {}: {e}",
+                close_code::UNAVAILABLE
+            );
+            return refuse_after_upgrade(ws, close_code::UNAVAILABLE);
         }
     }
 
@@ -545,9 +671,25 @@ pub async fn mail_relay_handler(
     ws.max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            pipe(socket, stream, relay.max_bytes, relay.idle, short).await;
+            pipe(socket, stream, &relay, &account, short).await;
             drop(place);
         })
+}
+
+/// Upgrades, then closes at once with `code`: how the relay refuses an ACCOUNT. A browser reads
+/// the close code of an open socket, while a refused upgrade reaches the page as a bare 1006
+/// whatever its status. No place is held and no upstream is dialled for it.
+fn refuse_after_upgrade(ws: WebSocketUpgrade, code: u16) -> Response {
+    ws.on_upgrade(move |mut socket| async move {
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code,
+                reason: "".into(),
+            })))
+            .await;
+        // Flushes the Close; its error is the client already gone - nothing to say.
+        let _ = SinkExt::close(&mut socket).await;
+    })
 }
 
 /// The first eight characters of an account id: enough to follow one account through the log.
@@ -566,6 +708,8 @@ pub enum RelayEnd {
     Idle,
     /// The connection carried its byte cap.
     ByteCap,
+    /// The account moved its byte budget over the rolling window, on this and its other connections.
+    Budget,
     /// The client sent a frame that is not binary.
     Protocol,
     /// The client's socket failed with something other than a reset.
@@ -588,11 +732,15 @@ struct Tally {
 async fn pipe(
     socket: WebSocket,
     stream: TcpStream,
-    max_bytes: u64,
-    idle_after: Duration,
+    relay: &MailRelay,
+    account: &str,
     short: String,
 ) {
+    let max_bytes = relay.max_bytes;
+    let idle_after = relay.idle;
     let started = Instant::now();
+    // What the account's window held at the last charge, for the end line.
+    let mut window_bytes = 0u64;
     let idle = tokio::time::sleep(idle_after);
     tokio::pin!(idle);
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -608,6 +756,11 @@ async fn pipe(
                     tally.up_bytes += bytes.len() as u64;
                     if tally.up_bytes + tally.down_bytes > max_bytes {
                         break RelayEnd::ByteCap;
+                    }
+                    let (held, within) = relay.charge(account, bytes.len() as u64, Instant::now());
+                    window_bytes = held;
+                    if !within {
+                        break RelayEnd::Budget;
                     }
                     tally.up_records.observe(&bytes);
                     if tcp_tx.write_all(&bytes).await.is_err() {
@@ -634,6 +787,11 @@ async fn pipe(
                     if tally.up_bytes + tally.down_bytes > max_bytes {
                         break RelayEnd::ByteCap;
                     }
+                    let (held, within) = relay.charge(account, n as u64, Instant::now());
+                    window_bytes = held;
+                    if !within {
+                        break RelayEnd::Budget;
+                    }
                     tally.down_records.observe(&buf[..n]);
                     if ws_tx.send(Message::Binary(buf[..n].to_vec().into())).await.is_err() {
                         break RelayEnd::ClientClosed;
@@ -655,6 +813,7 @@ async fn pipe(
         RelayEnd::UpstreamClosed => Some(close_code::UPSTREAM_CLOSED),
         RelayEnd::Idle => Some(close_code::IDLE),
         RelayEnd::ByteCap => Some(close_code::BYTE_CAP),
+        RelayEnd::Budget => Some(close_code::CAP),
         RelayEnd::UpstreamFault => Some(close_code::UPSTREAM_ERROR),
         RelayEnd::Protocol => Some(close_code::PROTOCOL),
     };
@@ -672,18 +831,22 @@ async fn pipe(
     let _ = tcp_tx.shutdown().await;
 
     let line = format!(
-        "[mail-relay] {short} ended: {end:?} after {} ms - up {} bytes ({}), down {} bytes ({})",
+        "[mail-relay] {short} ended: {end:?} after {} ms - up {} bytes ({}), down {} bytes ({}); the account's window holds {} of {} bytes per {} s",
         started.elapsed().as_millis(),
         tally.up_bytes,
         tally.up_records,
         tally.down_bytes,
-        tally.down_records
+        tally.down_records,
+        window_bytes,
+        relay.byte_budget,
+        relay.byte_budget_window.as_secs()
     );
     match end {
         RelayEnd::ClientClosed | RelayEnd::UpstreamClosed | RelayEnd::Idle => {
             tracing::info!("{line}")
         }
         RelayEnd::ByteCap
+        | RelayEnd::Budget
         | RelayEnd::Protocol
         | RelayEnd::ClientFault
         | RelayEnd::UpstreamFault => {

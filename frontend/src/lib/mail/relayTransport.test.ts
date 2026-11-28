@@ -66,6 +66,15 @@ describe('relayEnd', () => {
     expect(relayEnd(RELAY_CLOSE.BYTE_CAP, false)).toEqual({ kind: 'byte_cap' });
     expect(relayEnd(RELAY_CLOSE.UPSTREAM_ERROR, false).kind).toBe('failed');
     expect(relayEnd(RELAY_CLOSE.PROTOCOL, false).kind).toBe('failed');
+    expect(relayEnd(RELAY_CLOSE.NOT_ELIGIBLE, false)).toEqual({
+      kind: 'refused',
+      reason: 'not_eligible',
+    });
+    expect(relayEnd(RELAY_CLOSE.CAP, false)).toEqual({ kind: 'refused', reason: 'cap' });
+    expect(relayEnd(RELAY_CLOSE.UNAVAILABLE, false)).toEqual({
+      kind: 'refused',
+      reason: 'unavailable',
+    });
     expect(relayEnd(1006, false).kind).toBe('failed');
     expect(relayEnd(1006, true)).toEqual({ kind: 'closed_by_us' });
   });
@@ -100,6 +109,14 @@ describe('relayTransport', () => {
     sockets[0].shut(1006);
     expect(ends).toEqual([{ kind: 'byte_cap' }]);
     await expect(transport.send(new Uint8Array([1]))).rejects.toMatchObject({ kind: 'closed' });
+  });
+
+  it('a refusal after the upgrade ends the transport typed by its code', async () => {
+    const { sockets, pending, ends } = opener();
+    sockets[0].accept();
+    await pending;
+    sockets[0].shut(RELAY_CLOSE.NOT_ELIGIBLE);
+    expect(ends).toEqual([{ kind: 'refused', reason: 'not_eligible' }]);
   });
 
   it('our close is closed_by_us; a text frame from the relay closes the socket', async () => {

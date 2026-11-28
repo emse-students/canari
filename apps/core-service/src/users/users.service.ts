@@ -377,18 +377,21 @@ export class UsersService implements OnModuleInit {
         if (mailClass !== undefined) changes.mailClass = mailClass;
       }
       if (Object.keys(changes).length > 0) {
+        // The mail class alone joins the returned row only once it is WRITTEN: the callback hands
+        // the school address out only for a class that is stored, and the relay admits on the
+        // column (docs/wiki/mail-client-transport.md#eligibility). Every other claim joins it
+        // whatever the write did, as before the mail class existed: the sign-in answer reads them.
+        const { mailClass: classChange, ...otherChanges } = changes;
         try {
           await updateUserColumns(this.userRepository, id, changes, 'oidc.upsert', this.logger);
-          // THE RETURNED ROW IS THE STORED ONE: changes join it only once they are written, so a
-          // caller reading it (the callback hands the school address out only for a class that is
-          // stored) never acts on a value the database refused.
-          Object.assign(user, changes);
+          if (classChange !== undefined) Object.assign(user, { mailClass: classChange });
         } catch (err) {
           // The row is gone since the read: the caller refuses the sign-in, nothing is re-created.
           if (err instanceof UserRowGoneError) throw err;
           // Any other database refusal costs the refresh of the claims, never the sign-in.
           this.logger.warn(`OIDC upsert of ${id.slice(0, 8)} not saved: ${String(err)}`);
         }
+        Object.assign(user, otherChanges);
       }
       return user;
     }

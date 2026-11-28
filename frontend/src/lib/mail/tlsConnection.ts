@@ -313,10 +313,16 @@ export class TlsConnection implements PlaintextStream {
     for (const wake of readers) wake();
   }
 
-  /** The error a use after the end throws: the TLS failure itself, or a transport `closed`. */
+  /**
+   * The error a use after the end throws: the TLS failure itself, the relay's refusal (typed, so
+   * the caller tells "not eligible" from "try later" without reading prose), or a transport `closed`.
+   */
   private endError(): Error {
     const end = this.endedWith;
     if (end?.kind === 'tls') return end.error;
+    if (end?.kind === 'refused') {
+      return new MailTransportError('refused', 'the relay refused this account', end.reason);
+    }
     return new MailTransportError('closed', `connection ended (${end?.kind ?? 'unknown'})`);
   }
 }

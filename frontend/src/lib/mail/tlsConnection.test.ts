@@ -92,6 +92,17 @@ describe('TlsConnection', () => {
     expect((err as MailTransportError).kind).toBe('closed');
   });
 
+  it("the relay's refusal fails the handshake typed, with its reason", async () => {
+    const transport = new FakeTransport();
+    const pending = connectTls(transport.open, () => new FakeEngine());
+    await until(() => transport.sent.includes('HELLO'));
+    transport.end({ kind: 'refused', reason: 'cap' });
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MailTransportError);
+    expect((err as MailTransportError).kind).toBe('refused');
+    expect((err as MailTransportError).refusal).toBe('cap');
+  });
+
   it('a transport that cannot open is unreachable, and nothing is left pending', async () => {
     const transport = new FakeTransport();
     transport.refuseWith = new MailTransportError('unreachable', 'refused');

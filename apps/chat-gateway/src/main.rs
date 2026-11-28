@@ -245,11 +245,15 @@ async fn main() {
         ),
         Ok(Some(config)) => {
             tracing::info!(
-                "[mail-relay] ON: one upstream, {}; at most {} connections per account, {} in all, {} bytes per connection",
+                "[mail-relay] ON: one upstream, {}; at most {} connections per account, {} in all, {} bytes per connection; per account {} new connections per {} s and {} bytes per {} s",
                 config.upstream,
                 mail_relay::MAX_MAIL_CONNECTIONS_PER_ACCOUNT,
                 mail_relay::MAX_MAIL_CONNECTIONS,
-                mail_relay::MAX_BYTES_PER_CONNECTION
+                mail_relay::MAX_BYTES_PER_CONNECTION,
+                mail_relay::MAX_NEW_CONNECTIONS_PER_WINDOW,
+                mail_relay::NEW_CONNECTION_WINDOW.as_secs(),
+                mail_relay::ACCOUNT_BYTE_BUDGET,
+                mail_relay::BYTE_BUDGET_WINDOW.as_secs()
             );
             app_state.mail_relay = Some(Arc::new(mail_relay::MailRelay::new(config)));
         }

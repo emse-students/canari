@@ -9,9 +9,12 @@
  *   address, `limit_req_status 429`, a refusal logged at `warn`): without it a loop or a flood of
  *   upgrades each costs the gateway a token check and an eligibility answer;
  * - it carries the upgrade headers and the same auth_request lines as `/api/ws`;
- * - nginx's own bound (`proxy_read_timeout`) stays ABOVE the gateway's idle deadline
- *   (`IDLE_DEADLINE` in apps/chat-gateway/src/mail_relay.rs), so an idle connection ends with the
- *   relay's close code, which the client reads as an ordinary end, and never with nginx's cut.
+ * - the gateway's idle deadline (`IDLE_DEADLINE` in apps/chat-gateway/src/mail_relay.rs) stays
+ *   CLEARLY BELOW every hop that cuts a silent connection - nginx's own bound
+ *   (`proxy_read_timeout`) and the Cloudflare edge's (`CLOUDFLARE_EDGE_IDLE_S` below: its proxy read
+ *   timeout, 100 s, which also ends an idle proxied WebSocket) - by `MARGIN_S`, so an idle
+ *   connection ends with the relay's close code, which the client reads as an ordinary end, and
+ *   never with a hop's cut, which it reads as an unexplained 1006.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +24,11 @@ const read = (...p) => readFileSync(join(REPO, ...p), 'utf8');
 
 const NGINX = read('infrastructure', 'local', 'Dockerfile.frontend');
 const RELAY = read('apps', 'chat-gateway', 'src', 'mail_relay.rs');
+
+/** The Cloudflare edge's idle bound on a proxied connection, in seconds (its proxy read timeout). */
+const CLOUDFLARE_EDGE_IDLE_S = 100;
+/** How far below every hop the relay's idle close must fall, so the two never race. */
+const MARGIN_S = 10;
 
 const failures = [];
 const need = (cond, what) => {
@@ -52,13 +60,20 @@ const nginxRead = Number(block.match(/proxy_read_timeout (\d+)s;/)?.[1]);
 const idle = Number(RELAY.match(/pub const IDLE_DEADLINE: Duration = Duration::from_secs\((\d+)\);/)?.[1]);
 need(Number.isFinite(nginxRead), 'the relay location names no proxy_read_timeout in seconds');
 need(Number.isFinite(idle), 'mail_relay.rs names no IDLE_DEADLINE in seconds');
-need(
-  idle < nginxRead,
-  `the relay's idle deadline (${idle} s) must end a silent connection before nginx does (${nginxRead} s)`
-);
+for (const [hop, bound] of [
+  ['nginx (proxy_read_timeout)', nginxRead],
+  ['the Cloudflare edge', CLOUDFLARE_EDGE_IDLE_S],
+]) {
+  need(
+    idle + MARGIN_S <= bound,
+    `the relay's idle deadline (${idle} s) must end a silent connection at least ${MARGIN_S} s before ${hop} does (${bound} s)`
+  );
+}
 
 if (failures.length) {
   for (const f of failures) console.error(`FAIL ${f}`);
   process.exit(1);
 }
-console.log('mail-relay-route: rate limited per address, upgrade and auth lines kept, idle ends before nginx');
+console.log(
+  'mail-relay-route: rate limited per address, upgrade and auth lines kept, idle ends before nginx and the Cloudflare edge'
+);

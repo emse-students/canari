@@ -20,7 +20,7 @@
    * 45-consent.yaml, so every account is asked once more; a MINOR revision moves `updated` alone and
    * asks nobody. check-consent-version.sh pins this value to the other four places.
    */
-  const acceptedVersion = '2026-11-24';
+  const acceptedVersion = '2026-11-28';
   const acceptedVersionLabel = acceptedVersion.split('-').reverse().join('/');
 </script>
 
@@ -32,7 +32,7 @@
 <LegalDocument
   title={m.legal_miconnect_title()}
   subtitle={m.legal_miconnect_subtitle()}
-  updated="27/11/2026"
+  updated="28/11/2026"
   {sections}
 >
   <section id="objet">

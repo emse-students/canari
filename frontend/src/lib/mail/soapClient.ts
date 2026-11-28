@@ -1,13 +1,15 @@
 import { Log } from '$lib/utils/Log';
-import { Http1Connection } from './http1';
+import { Http1Connection, HttpProtocolError, type HttpRequest } from './http1';
 import type { PlaintextStream } from './tlsConnection';
 
 /**
  * ZIMBRA JSON SOAP OVER THE MAIL CLIENT'S OWN TLS (docs/wiki/mail-client.md D2).
  *
  * One persistent connection serves every call; when the server ends it (keep-alive expiry, the
- * relay's idle bound) the NEXT call opens a new one. A call is never re-sent on its own: `SendMsg`
- * is not idempotent, and a call whose connection died mid-flight may have been carried out.
+ * relay's idle bound) the NEXT call opens a new one. A call is re-sent ONLY when it never left
+ * (`HttpProtocolError` `not_sent`: it was queued behind an answer that spent the connection), and
+ * then exactly once, on a fresh connection. A call that left and whose connection then died
+ * (`ended`) is never re-sent: `SendMsg` is not idempotent, and it may have been carried out.
  */
 
 /** The mailbox host: the `Host` header, and the one name the TLS certificate must carry. */
@@ -102,15 +104,27 @@ export class ZimbraSoapClient {
   /** Calls Zimbra with `body` (`{ GetInfoRequest: {...} }`), resolving with the answer's `Body`. */
   async call(body: Record<string, unknown>, authToken?: string): Promise<Record<string, unknown>> {
     const request = Object.keys(body).join(',');
-    const connection = await this.usableConnection();
     const payload = new TextEncoder().encode(JSON.stringify(soapEnvelope(body, authToken)));
     Log.d('MAIL-SOAP', `${request} (${payload.length} bytes)`);
-    const response = await connection.request({
+    const http: HttpRequest = {
       method: 'POST',
       path: SOAP_PATH,
       headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json' },
       body: payload,
-    });
+    };
+    let response;
+    try {
+      response = await (await this.usableConnection()).request(http);
+    } catch (err) {
+      // Typed at the throw (http1.ts): `not_sent` is the one failure that PROVES no byte of the
+      // call left this device, so sending it once more cannot carry it out twice.
+      if (!(err instanceof HttpProtocolError && err.kind === 'not_sent')) throw err;
+      Log.d(
+        'MAIL-SOAP',
+        `${request} was never sent (connection spent) - sending it once on a new one`
+      );
+      response = await (await this.usableConnection()).request(http);
+    }
     try {
       const answer = readSoapAnswer(response.status, response.body);
       Log.d('MAIL-SOAP', `${request} answered`);

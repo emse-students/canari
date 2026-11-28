@@ -17,6 +17,9 @@ export const RELAY_CLOSE = {
   UPSTREAM_ERROR: 4002,
   PROTOCOL: 4003,
   IDLE: 4004,
+  NOT_ELIGIBLE: 4005,
+  CAP: 4006,
+  UNAVAILABLE: 4007,
 } as const;
 
 /**
@@ -37,7 +40,7 @@ export function relayEnd(code: number, ours: boolean): TransportEnd {
   if (ours) return { kind: 'closed_by_us' };
   switch (code) {
     case RELAY_CLOSE.UPSTREAM_CLOSED:
-    // The relay ends a connection nothing crossed for 100 s, before nginx's cut: ordinary.
+    // The relay ends a connection nothing crossed for 90 s, before any hop's cut: ordinary.
     case RELAY_CLOSE.IDLE:
       return { kind: 'peer_closed' };
     case RELAY_CLOSE.BYTE_CAP:
@@ -46,6 +49,14 @@ export function relayEnd(code: number, ours: boolean): TransportEnd {
       return { kind: 'failed', detail: 'the relay lost the upstream' };
     case RELAY_CLOSE.PROTOCOL:
       return { kind: 'failed', detail: 'the relay refused a frame' };
+    // The relay's refusals: it upgrades, then closes with one of these, because a browser cannot
+    // read the status of a refused upgrade (every refusal would read as the same 1006).
+    case RELAY_CLOSE.NOT_ELIGIBLE:
+      return { kind: 'refused', reason: 'not_eligible' };
+    case RELAY_CLOSE.CAP:
+      return { kind: 'refused', reason: 'cap' };
+    case RELAY_CLOSE.UNAVAILABLE:
+      return { kind: 'refused', reason: 'unavailable' };
     default:
       // 1006 (no close frame: a reset, the 120 s idle bound of nginx) and anything unforeseen.
       return { kind: 'failed', detail: `relay socket closed with code ${code}` };
@@ -54,8 +65,10 @@ export function relayEnd(code: number, ours: boolean): TransportEnd {
 
 /**
  * Opens the web transport: a WebSocket to the relay at `url`. A browser hides why a WebSocket
- * failed to open (the relay's 403, 503 or 502 all read the same), so a refused open is
- * `unreachable`, said with the redacted URL.
+ * failed to open, so the relay refuses an ACCOUNT after the upgrade, with a close code
+ * ({@link relayEnd}: `refused`, typed). What it still refuses before the upgrade - the switch off,
+ * a foreign origin, no token, the upstream unreachable - and nginx's rate limit read the same
+ * here, so a refused open is `unreachable`, said with the redacted URL.
  */
 export function relayTransport(
   url: string,
@@ -110,7 +123,7 @@ export function relayTransport(
         if (ended) return;
         ended = true;
         const end = relayEnd(event.code, closedByUs);
-        if (end.kind === 'failed') Log.w('MAIL-RELAY', 'ended', end);
+        if (end.kind === 'failed' || end.kind === 'refused') Log.w('MAIL-RELAY', 'ended', end);
         else Log.d('MAIL-RELAY', 'ended', end);
         handlers.onEnd(end);
       };
