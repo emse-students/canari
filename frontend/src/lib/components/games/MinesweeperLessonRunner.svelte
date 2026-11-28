@@ -171,6 +171,7 @@
     <div class="relative flex w-full flex-col gap-2.5">
       {#if place.next}
         <Button
+          variant="success"
           href={nextHref}
           class="font-display min-h-14 w-full text-lg font-bold"
           data-testid="tutorial-solved-next"

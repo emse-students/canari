@@ -15,8 +15,7 @@
 
 <PageContainer width="reading">
   <PageHeader
-    title={m.minesweeper_tutorial_title()}
-    subtitle={m.minesweeper_tutorial_subtitle()}
+    title={m.minesweeper_path_title()}
     backHref={resolve('/games')}
     backLabel={m.games_page_title()}
   />

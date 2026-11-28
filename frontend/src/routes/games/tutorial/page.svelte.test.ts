@@ -181,3 +181,49 @@ describe('the tutorial path page', () => {
     expect(tab('Motifs').getAttribute('aria-selected')).toBe('true');
   });
 });
+
+describe('the path follows the design (owner, 2026-11-28)', () => {
+  it('has the short header, and the path runs upward without moving the DOM order', () => {
+    store([]);
+    open();
+    expect(document.querySelector('h1')?.textContent?.trim()).toBe('Apprendre');
+    expect(document.querySelector('[data-testid="path-stack"]')?.className).toContain(
+      'flex-col-reverse'
+    );
+    expect(document.querySelector('[data-testid="path-family"] ol')?.className).toContain(
+      'flex-col-reverse'
+    );
+    // The first lesson is still the first tile in the DOM and in the tab order.
+    expect(tiles()[0].dataset.lesson).toBe(LESSONS[0].id);
+  });
+
+  it('draws the scenery as decoration only', () => {
+    open();
+    const scenery = document.querySelectorAll('[data-testid="path-stack"] > svg');
+    expect(scenery).toHaveLength(2);
+    for (const svg of scenery) expect(svg.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('puts a catalogue button beside a GREEN "Continuer", and the catalogue opens the Motifs tab', () => {
+    store([]);
+    open();
+    expect(continueButton().className).toContain('bg-green-solid');
+    const catalogue = document.querySelector<HTMLButtonElement>(
+      '[data-testid="tutorial-catalogue"]'
+    )!;
+    expect(catalogue.getAttribute('aria-label')).toBe('Catalogue des motifs');
+    catalogue.click();
+    flushSync();
+    expect(tab('Motifs').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('marks a complete "Les bases" tab with a check, and only then', () => {
+    store([]);
+    open();
+    expect(tab('Les bases').querySelector('svg')).toBeNull();
+    document.body.innerHTML = '';
+    store(LESSONS.map((l) => l.id));
+    open();
+    expect(tab('Les bases').querySelector('svg')).not.toBeNull();
+  });
+});

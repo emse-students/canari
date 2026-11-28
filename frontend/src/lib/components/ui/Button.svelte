@@ -16,6 +16,8 @@
    *  - `ghost`     no fill and no edge, for a low-ranking action beside a primary one;
    *  - `danger-outline` a destructive action on a list row or a panel: red text and a thin red edge on
    *    the neutral fill, so it reads as destructive without outshouting the primary;
+   *  - `success`   SOLID green, for the "go on" of the minesweeper's learning path (owner, 2026-11-28): progress is
+   *    green there and yellow stays the primary everywhere else;
    *  - `danger`    SOLID red, for the final confirm inside a confirmation (delete, leave, revoke);
    *  - `link`      NO BOX: accent text inside a line of prose or metadata ("19 h · Suggestion ·
    *    Suivre", owner 2026-11-10). It drops `.ui-control`'s height, edge and padding and keeps the
@@ -50,6 +52,7 @@
       | 'secondary'
       | 'soft'
       | 'ghost'
+      | 'success'
       | 'danger'
       | 'danger-outline'
       | 'link'
@@ -83,6 +86,7 @@
     soft: 'border-transparent bg-cn-surface-alt text-text-main hover:bg-cn-border',
     ghost:
       'border-transparent bg-transparent text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10',
+    success: 'border-transparent bg-green-solid text-white hover:brightness-90',
     danger: 'border-transparent bg-red-solid text-white hover:brightness-90',
     'danger-outline':
       'border-red-err/50 bg-cn-surface text-red-solid hover:bg-red-err/10 dark:text-red-err',

@@ -48,3 +48,12 @@ describe('Button variant="bare"', () => {
     expect(render({ variant: 'ghost' }).className).toContain('ui-control');
   });
 });
+
+describe('Button variant="success"', () => {
+  it('is a solid green fill for white text, the learning path\'s "go on"', () => {
+    const b = render({ variant: 'success' });
+    expect(b.className).toContain('bg-green-solid');
+    expect(b.className).toContain('text-white');
+    expect(b.className).toContain('ui-control');
+  });
+});
