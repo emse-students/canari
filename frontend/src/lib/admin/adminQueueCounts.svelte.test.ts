@@ -17,6 +17,8 @@ vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => 'https://social.test' }));
 const account = vi.hoisted(() => ({ id: 'adm' as string | null }));
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => account.id }));
+const shell = vi.hoisted(() => ({ native: false }));
+vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => shell.native }));
 const ended = vi.hoisted(() => ({ listeners: [] as (() => void)[] }));
 const link = vi.hoisted(() => ({ listeners: [] as (() => void)[] }));
 vi.mock('$lib/stores/connectivity.svelte', () => ({
@@ -138,6 +140,49 @@ describe('adminQueueCounts', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await Promise.resolve();
     expect(apiFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('on a native shell the foreground edge asks nothing: the socket reopen asks, once', async () => {
+    shell.native = true;
+    try {
+      apiFetch.mockResolvedValue(answer(200, { counts: { agenda: 3 } }));
+      const stop = followAdminQueueCounts();
+      await vi.waitFor(() => expect(adminQueueCounts.total).toBe(3));
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+
+      adminQueuesChanged('socket-open');
+      await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+      stop();
+    } finally {
+      shell.native = false;
+    }
+  });
+
+  it('on a native shell the edge asks when the socket SURVIVED the background: no reopen is coming', async () => {
+    shell.native = true;
+    try {
+      apiFetch.mockResolvedValue(answer(200, { counts: { agenda: 3 } }));
+      let held = true;
+      const stop = followAdminQueueCounts(() => held);
+      await vi.waitFor(() => expect(adminQueueCounts.total).toBe(3));
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+
+      // The pause released the socket: the reopen asks, the edge does not.
+      held = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      shell.native = false;
+    }
   });
 
   it('no clock ever asks: an hour passes with nothing sent', async () => {

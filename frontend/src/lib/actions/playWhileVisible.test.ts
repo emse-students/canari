@@ -14,6 +14,11 @@ describe('isExpectedPlayInterruption', () => {
     expect(isExpectedPlayInterruption('AbortError', { ...base, sourceChanged: true })).toBe(true);
   });
 
+  it('an AbortError of a play a newer play replaced is explained (background then back)', () => {
+    expect(isExpectedPlayInterruption('AbortError', { ...base, superseded: true })).toBe(true);
+    expect(isExpectedPlayInterruption('AbortError', { ...base, superseded: false })).toBe(false);
+  });
+
   it('an AbortError with no explaining fact stays a warning', () => {
     expect(isExpectedPlayInterruption('AbortError', base)).toBe(false);
   });
@@ -62,6 +67,31 @@ describe('a play() aborted by scrolling past', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(warn).not.toHaveBeenCalled();
+    (action as { destroy?: () => void }).destroy?.();
+  });
+
+  it('an older play aborted after a newer one started leaves the newer one an ambient start', async () => {
+    const { Log } = await import('$lib/utils/Log');
+    const said = vi.spyOn(Log, 'd');
+    const video = document.createElement('video');
+    const rejects: ((e: unknown) => void)[] = [];
+    vi.spyOn(video, 'play').mockImplementation(
+      () => new Promise<void>((_, r) => rejects.push(r)) as Promise<void>
+    );
+    const action = playWhileVisible(video);
+    enter(video, true); // play #1
+    enter(video, false); // a pause aborts it, as the background does
+    enter(video, true); // play #2 before #1's rejection lands
+    rejects[0](new DOMException('interrupted', 'AbortError'));
+    await Promise.resolve();
+    await Promise.resolve();
+    // #2's own 'play' event must still read as the feed's start, never as the reader's.
+    video.dispatchEvent(new Event('play'));
+    said.mockClear();
+    enter(video, true); // a further intersection: would log "reader started" if the marker was lost
+    expect(said.mock.calls.map(([, line]) => String(line)).join('|')).not.toContain(
+      'resuming a video the reader started'
+    );
     (action as { destroy?: () => void }).destroy?.();
   });
 

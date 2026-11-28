@@ -1,6 +1,6 @@
 ## P3 - On Android, work cut by the OS suspension is logged as the server being unreachable (1.6.8 logs, 2026-11-09)
 
-target: 1.10.0
+target: 1.8.4
 
 About 5 s after `App in background - connection paused`, requests still in flight are cut by the OS
 suspension and fail in transport. Each is then reported as if the server had been the problem, in one
@@ -21,3 +21,9 @@ under ~10 s:
 
 Shape 2 is the smaller one and needs no per-site abort wiring; it must not hide a real outage that
 merely overlaps a pause (the epoch only covers requests that STRADDLE the edge).
+
+**2026-11-28 (1.8.2 log, 1.8.4):** the HISTORY pass of `reconcileAllGroups` was one of the sites: it
+kept asking 12 s after a pause. It now stops on the fact (the app left the screen, the server is
+unreachable) and leaves the rest owed - [chat](../frontend/modules/chat.md#the-connection-pass-stops-on-a-fact-and-counts-instead-of-listing-owners-log-of-2026-11-27-184).
+What stays open is the other catch sites and shape 2 (the suspension epoch at `trackedFetch`), unchanged
+above.

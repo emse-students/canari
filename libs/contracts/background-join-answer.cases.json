@@ -1,0 +1,21 @@
+{
+  "comment": "What nativeProcessWelcomeBackground answers across the JNI: `joined`, or `failed:<cause>:<prospect>`. Written by Rust (BackgroundJoinError::token), read by BackgroundJoinAnswer.kt. Both sides' tests read this file: the cause set is CLOSED and the prospect is exactly not-yet or never; anything else is `unreadable`.",
+  "causes": ["state-unreadable", "welcome-malformed", "welcome-refused", "write-refused", "jni"],
+  "prospects": ["not-yet", "never"],
+  "cases": [
+    { "token": "joined", "outcome": "joined" },
+    { "token": "failed:state-unreadable:never", "outcome": "failed", "cause": "state-unreadable", "prospect": "never" },
+    { "token": "failed:state-unreadable:not-yet", "outcome": "failed", "cause": "state-unreadable", "prospect": "not-yet" },
+    { "token": "failed:welcome-malformed:never", "outcome": "failed", "cause": "welcome-malformed", "prospect": "never" },
+    { "token": "failed:welcome-refused:never", "outcome": "failed", "cause": "welcome-refused", "prospect": "never" },
+    { "token": "failed:welcome-refused:not-yet", "outcome": "failed", "cause": "welcome-refused", "prospect": "not-yet" },
+    { "token": "failed:write-refused:not-yet", "outcome": "failed", "cause": "write-refused", "prospect": "not-yet" },
+    { "token": "failed:jni:not-yet", "outcome": "failed", "cause": "jni", "prospect": "not-yet" },
+    { "token": "false", "outcome": "unreadable" },
+    { "token": "", "outcome": "unreadable" },
+    { "token": "failed:bogus:never", "outcome": "unreadable" },
+    { "token": "failed:write-refused:maybe", "outcome": "unreadable" },
+    { "token": "failed:write-refused", "outcome": "unreadable" },
+    { "token": "failed:write-refused:not-yet:extra", "outcome": "unreadable" }
+  ]
+}

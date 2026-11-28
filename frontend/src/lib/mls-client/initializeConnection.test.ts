@@ -46,18 +46,43 @@ vi.mock('$lib/db', () => ({
   getStorage: async () => ({ messageStoreIncarnation: incarnationMock }),
 }));
 
-const { reconcileAllGroupsMock } = vi.hoisted(() => ({
-  reconcileAllGroupsMock: vi.fn().mockResolvedValue([] as string[]),
-}));
+const { reconcileAllGroupsMock, pass } = vi.hoisted(() => {
+  /** A pass result with the quiet defaults, so a case names only what it is about. */
+  const pass = (p: {
+    asked: string[];
+    complete: boolean;
+    stopped?: string | null;
+    unreachable?: string[];
+    threw?: number;
+    coalesced?: number;
+  }) => ({ stopped: null, unreachable: [] as string[], threw: 0, coalesced: 0, ...p });
+  return {
+    pass,
+    reconcileAllGroupsMock: vi.fn().mockResolvedValue(pass({ asked: [], complete: true })),
+  };
+});
 vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>();
   return { ...actual, reconcileAllGroups: reconcileAllGroupsMock };
 });
 
-import { initializeConnection, openGatewayConnection } from './initializeConnection';
+import {
+  disarmForegroundRerun,
+  initializeConnection,
+  openGatewayConnection,
+} from './initializeConnection';
 import { markGroupInCreation } from '$lib/utils/chat/groupsInCreation';
-import { noteConnection, resetAuditRecord } from '$lib/utils/chat/historyReconcile';
+import {
+  closeOpenSweep,
+  groupsAskedInOpenSweep,
+  noteConnection,
+  resetAuditRecord,
+} from '$lib/utils/chat/historyReconcile';
+import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
+import { flushMacrotask } from '../../test/flush';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+
+const BG = 'the app went to the background';
 
 describe('initializeConnection (realistic connect + membership sync)', () => {
   beforeEach(() => {
@@ -533,7 +558,9 @@ describe('initializeConnection - the history pass leaves a group being created o
 
   beforeEach(() => {
     getIsTabLeaderMock.mockReturnValue(true);
-    reconcileAllGroupsMock.mockClear();
+    reconcileAllGroupsMock.mockReset();
+    reconcileAllGroupsMock.mockResolvedValue(pass({ asked: [], complete: true }));
+    disarmForegroundRerun();
     resetAuditRecord('u-c', 'dev-c');
     try {
       localStorage.clear();
@@ -573,7 +600,12 @@ describe('initializeConnection - the history pass leaves a group being created o
    * one is no evidence about it.
    */
   it('a store that is not the one the records were written against sweeps every group, then settles', async () => {
-    reconcileAllGroupsMock.mockResolvedValueOnce(['g-old', 'g-creating']);
+    reconcileAllGroupsMock.mockResolvedValueOnce(
+      pass({
+        asked: ['g-old', 'g-creating'],
+        complete: true,
+      })
+    );
     incarnationMock.mockResolvedValue('store-1');
     await connect(creatingMls());
     reconcileAllGroupsMock.mockClear();
@@ -591,6 +623,147 @@ describe('initializeConnection - the history pass leaves a group being created o
     );
     expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old', 'g-creating']);
     incarnationMock.mockResolvedValue('store-1');
+  });
+
+  it('a sweep cut short is not recorded as done: the next connection sweeps again', async () => {
+    incarnationMock.mockResolvedValue('store-cut');
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: ['g-old'], complete: false }));
+    await connect(creatingMls());
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+    reconcileAllGroupsMock.mockClear();
+
+    const log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cut sweep restarts where it stopped: the groups it asked are not asked again', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-tail');
+    const three = () => {
+      const mls = creatingMls();
+      mls.getLocalGroups.mockReturnValue(['g-a', 'g-b', 'g-c']);
+      return mls;
+    };
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: ['g-a'], complete: false }));
+    await connect(three());
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-a', 'g-b', 'g-c']);
+    reconcileAllGroupsMock.mockClear();
+
+    // The tail is asked next; the head, already asked, is not.
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: ['g-b', 'g-c'], complete: true }));
+    await connect(three());
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-b', 'g-c']);
+
+    // A completed sweep closes the open one: nothing is owed afterwards.
+    expect(groupsAskedInOpenSweep('u-c', 'dev-c', 'store-tail').size).toBe(0);
+  });
+
+  it('a stopped pass is re-run when the app returns to the foreground', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-fg');
+    (window as unknown as Record<string, unknown>).__canariForeground = false;
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: [], complete: false, stopped: BG }));
+    await connect(creatingMls());
+    reconcileAllGroupsMock.mockClear();
+    reconcileAllGroupsMock.mockResolvedValue(pass({ asked: ['g-old'], complete: true }));
+
+    (window as unknown as Record<string, unknown>).__canariForeground = true;
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+    await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1));
+    delete (window as unknown as Record<string, unknown>).__canariForeground;
+  });
+
+  it('arms the rerun for a background stop even when the app is already back, and runs it at once', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-back');
+    (window as unknown as Record<string, unknown>).__canariForeground = true;
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: [], complete: false, stopped: BG }));
+    reconcileAllGroupsMock.mockResolvedValue(pass({ asked: ['g-old'], complete: true }));
+    await connect(creatingMls());
+    // No foreground edge is ever fired: the app was already on screen when the pass ended.
+    await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(2));
+    delete (window as unknown as Record<string, unknown>).__canariForeground;
+  });
+
+  it('a rerun disarmed by the session teardown never fires', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-disarm');
+    (window as unknown as Record<string, unknown>).__canariForeground = false;
+    reconcileAllGroupsMock.mockResolvedValueOnce(pass({ asked: [], complete: false, stopped: BG }));
+    await connect(creatingMls());
+    await Promise.resolve();
+    reconcileAllGroupsMock.mockClear();
+
+    disarmForegroundRerun();
+    (window as unknown as Record<string, unknown>).__canariForeground = true;
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(reconcileAllGroupsMock).not.toHaveBeenCalled();
+    delete (window as unknown as Record<string, unknown>).__canariForeground;
+  });
+
+  it('runs ONE connection pass at a time: a second caller awaits it and does not rerun a whole one', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-one');
+    let finish!: (r: ReturnType<typeof pass>) => void;
+    reconcileAllGroupsMock.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    const first = connect(creatingMls());
+    await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1));
+    const second = connect(creatingMls());
+    await flushMacrotask();
+    // The second connection's pass waits for the first instead of running beside it.
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+    finish(pass({ asked: ['g-old', 'g-creating'], complete: true }));
+    await Promise.all([first, second]);
+    // The first covered everything: nothing is owed, so the second asked nobody again.
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a second caller reruns when the pass it waited for was cut short', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-two');
+    let finish!: (r: ReturnType<typeof pass>) => void;
+    reconcileAllGroupsMock.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    reconcileAllGroupsMock.mockResolvedValue(pass({ asked: ['g-old'], complete: true }));
+    const first = connect(creatingMls());
+    await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1));
+    const second = connect(creatingMls());
+    finish(pass({ asked: [], complete: false, unreachable: ['g-old'] }));
+    await Promise.all([first, second]);
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a group unreachable pass after pass stops holding the sweep open, and is named at warn', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-stuck');
+    const stuck = pass({ asked: ['g-creating'], complete: false, unreachable: ['g-old'] });
+    reconcileAllGroupsMock.mockResolvedValue(stuck);
+    let log = await connect(creatingMls());
+    log = await connect(creatingMls());
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('no longer hold the sweep open'));
+    log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('WARN 1 group(s) stayed unreachable'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('g-old'));
+    // The sweep is closed: the connection is recorded, and the next one is not a sweep.
+    expect(groupsAskedInOpenSweep('u-c', 'dev-c', 'store-stuck').size).toBe(0);
+    reconcileAllGroupsMock.mockClear();
+    log = await connect(creatingMls());
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
+  });
+
+  it('an unreachable group of a pass the BACKGROUND cut is not counted against it', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-cutcount');
+    const cut = pass({ asked: [], complete: false, stopped: BG, unreachable: ['g-old'] });
+    reconcileAllGroupsMock.mockResolvedValue(cut);
+    (window as unknown as Record<string, unknown>).__canariForeground = false;
+    let log = vi.fn();
+    for (let i = 0; i < 4; i++) log = await connect(creatingMls(), vi.fn());
+    delete (window as unknown as Record<string, unknown>).__canariForeground;
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('no longer hold the sweep open'));
+    disarmForegroundRerun();
   });
 
   it('a store that cannot name its incarnation is read as a new one', async () => {

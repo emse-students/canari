@@ -610,9 +610,8 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     path: &std::path::Path,
     loaded_digest: &[u8; 32],
     data: &[u8],
-) -> Result<(), String> {
+) -> Result<(), BackgroundWriteRefused> {
     background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false, || ())
-        .map_err(|e| e.to_string())
 }
 
 /// [`background_write_mls_bin_if_unchanged`], AND ALSO REFUSED IN A WARM PROCESS - the writer of
@@ -656,7 +655,7 @@ pub(crate) fn background_write_mls_bin_if_unchanged_and_cold_then<R>(
 /// Why a background `mls.bin` write was refused, classified where it is decided.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BackgroundWriteRefused {
+pub enum BackgroundWriteRefused {
     /// A foreground manager is loaded (or loading) in this process: a resume would persist over it.
     WarmProcess,
     /// Anything else - the foreground is active, `mls.bin` moved since it was loaded, an I/O or lock

@@ -120,15 +120,25 @@ export function holdPlayback(reason: string): () => void {
  * feed itself pauses a video that leaves the screen, and on a weak link a play stays pending for
  * seconds, so scrolling on aborts it. That is the feed's own decision, not a refusal:
  * - the video left the viewport (`!stillVisible`) or is paused: the leave (or the arbiter) did it;
- * - the element's `src` changed: a new load replaced the one asked on.
+ * - the element's `src` changed: a new load replaced the one asked on;
+ * - a NEWER `play()` was already asked on the element (`superseded`): the app left the screen and
+ *   came back within the pending play, so the pause that aborted this one was followed by the play
+ *   that replaced it - by the time the rejection lands the element is playing, neither paused nor
+ *   hidden (owner's log, 2026-11-26: the warning at a resume from a notification).
  * An `AbortError` with none of those facts is unexplained and stays a warning.
  */
 export function isExpectedPlayInterruption(
   name: string,
-  facts: { stillVisible: boolean; paused: boolean; sourceChanged: boolean }
+  facts: { stillVisible: boolean; paused: boolean; sourceChanged: boolean; superseded?: boolean }
 ): boolean {
-  return name === 'AbortError' && (!facts.stillVisible || facts.paused || facts.sourceChanged);
+  return (
+    name === 'AbortError' &&
+    (!facts.stillVisible || facts.paused || facts.sourceChanged || facts.superseded === true)
+  );
 }
+
+/** The latest `play()` asked on each ambient video: a rejection of an older one was superseded. */
+const playGeneration = new WeakMap<HTMLVideoElement, number>();
 
 /**
  * The ONE ambient start - a video come into view, or the last one resumed - so the reader's
@@ -144,14 +154,20 @@ function tryPlay(video: HTMLVideoElement) {
   }
   ambientStarts.add(video);
   const askedSrc = video.currentSrc || video.src;
+  const generation = (playGeneration.get(video) ?? 0) + 1;
+  playGeneration.set(video, generation);
   video.play().catch((err: unknown) => {
-    ambientStarts.delete(video);
+    // ONLY THE LATEST PLAY'S MARKER IS THIS REJECTION'S TO CLEAR: an older play aborted by a pause
+    // lands after a newer one was asked, and deleting the marker then made the newer play's own
+    // `play` event read as the reader's (it would then be resumed as theirs after a viewer).
+    if (playGeneration.get(video) === generation) ambientStarts.delete(video);
     const name = playRejectionName(err);
     if (
       isExpectedPlayInterruption(name, {
         stillVisible: visibleInline.has(video),
         paused: video.paused,
         sourceChanged: (video.currentSrc || video.src) !== askedSrc,
+        superseded: playGeneration.get(video) !== generation,
       })
     ) {
       Log.d('VIDEO', `playWhileVisible: play() interrupted (${name}) by a pause or a new load`);

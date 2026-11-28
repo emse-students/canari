@@ -159,6 +159,7 @@ import {
 } from '$lib/utils/graine/retention';
 import { endSessionStatePersister, whenEndedSessionStateWritten } from './sessionStatePersisterEnd';
 import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
+import { disarmForegroundRerun } from '$lib/mls-client/initializeConnection';
 import {
   setupMessageHandler,
   openGatewayConnection,
@@ -3828,6 +3829,9 @@ export function tearDownLiveSession(
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);
+  // A pass that stopped in the background armed a rerun for THIS session; it must not fire into the
+  // next sign-in's (or into none).
+  disarmForegroundRerun();
   // Same reason, and the presence poll outlives a logout: an edge arriving afterwards would
   // reconcile history for the user who just signed out.
   unregisterPeerReturn?.();

@@ -4,6 +4,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 import { Log } from '$lib/utils/Log';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { SessionExpiredError } from '$lib/stores/auth';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
@@ -144,7 +145,11 @@ let tabChannel: BroadcastChannel | null = null;
 /** How many followers are running: a socket reopen asks nothing of a reader who has no badge. */
 let following = 0;
 
-/** Asks for the counts unless the app is hidden - its return to the foreground asks anyway. */
+/**
+ * Asks for the counts unless the app is hidden. Its return asks anyway: through the visibility edge on
+ * the web, and on a native shell through the socket reopen the resume always causes
+ * ({@link followAdminQueueCounts}).
+ */
 function recountIfVisible(why: string): void {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     Log.d('adminQueueCounts', `${why} while hidden: asked on the return to the foreground`);
@@ -178,12 +183,14 @@ export function adminQueuesChanged(why: 'frame' | 'socket-open'): void {
  * 2026-11-18): the counts are asked at once, then again on each `admin.queues.changed` frame the
  * server sends when an item enters or leaves a queue this reader may act on, on every socket
  * (re)open (a frame sent while it was down is never replayed) - both through
- * {@link adminQueuesChanged}, relayed to the other tabs - and on the app coming back to the
- * foreground and the link coming back. No timer. The CALLER decides when - the root layout runs it inside an
+ * {@link adminQueuesChanged}, relayed to the other tabs - and on the link coming back. The return to
+ * the foreground asks on the WEB (the visibility edge); on a native shell it is the socket reopen
+ * that asks, once, so the visibility edge asks nothing there - unless `socketHeld` says the socket
+ * survived the background (the pause never released it), when no reopen is coming and the edge asks. No timer. The CALLER decides when - the root layout runs it inside an
  * effect over the tier stores, so a tier published late starts it and an account that loses every
  * tier stops it. Returns the cleanup.
  */
-export function followAdminQueueCounts(): () => void {
+export function followAdminQueueCounts(socketHeld: () => boolean = () => false): () => void {
   following++;
   if (!tabChannel && typeof BroadcastChannel !== 'undefined') {
     tabChannel = new BroadcastChannel(TAB_CHANNEL);
@@ -192,6 +199,16 @@ export function followAdminQueueCounts(): () => void {
   void loadAdminQueueCounts();
   const onVisibility = () => {
     if (document.visibilityState !== 'visible') return;
+    // ON A NATIVE SHELL THE RESUME ASKS ONCE, THROUGH THE SOCKET: the pause released the socket, so
+    // the foreground reopens it and `adminQueuesChanged('socket-open')` asks - and this edge,
+    // firing a second or two earlier, was a second request for the same moment (owner's log,
+    // 2026-11-26: two asks 2.5 s apart on one resume). A reopen that fails is the link-back ask's.
+    // THE SAME FACT AS THE HISTORY PASS'S RERUN (`initializeConnection`): a socket that SURVIVED the
+    // background is never reopened, so nothing else would ask - when it is still held, this edge asks.
+    if (isTauriRuntime() && !socketHeld()) {
+      Log.d('adminQueueCounts', 'back in the foreground: the socket reopen asks');
+      return;
+    }
     Log.d('adminQueueCounts', 'back in the foreground: counts asked again');
     void loadAdminQueueCounts();
   };

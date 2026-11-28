@@ -1109,29 +1109,18 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     device_id: jni::objects::JString,
     welcome_b64: jni::objects::JString,
     ratchet_tree_b64: jni::objects::JString,
-) -> jni::sys::jboolean {
-    let result = (|| -> Result<(), String> {
-        let files_dir_str: String = env
-            .get_string(&files_dir)
-            .map_err(|e| e.to_string())?
-            .into();
-        let state_vec = env
-            .convert_byte_array(&state_bytes)
-            .map_err(|e| e.to_string())?;
-        let key_b64_str: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
-        let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
-        let device_id_str: String = env
-            .get_string(&device_id)
-            .map_err(|e| e.to_string())?
-            .into();
-        let welcome_b64_str: String = env
-            .get_string(&welcome_b64)
-            .map_err(|e| e.to_string())?
-            .into();
-        let rt_b64_str: String = env
-            .get_string(&ratchet_tree_b64)
-            .map_err(|e| e.to_string())?
-            .into();
+) -> jni::sys::jstring {
+    use mobile::background::BackgroundJoinError::Jni;
+    // A marshalling fault is thrown as `Jni`: nothing the Welcome says can be judged (NOT_YET).
+    let result = (|| -> Result<(), mobile::background::BackgroundJoinError> {
+        let jni = |e: jni::errors::Error| Jni(e.to_string());
+        let files_dir_str: String = env.get_string(&files_dir).map_err(jni)?.into();
+        let state_vec = env.convert_byte_array(&state_bytes).map_err(jni)?;
+        let key_b64_str: String = env.get_string(&key_b64).map_err(jni)?.into();
+        let user_id_str: String = env.get_string(&user_id).map_err(jni)?.into();
+        let device_id_str: String = env.get_string(&device_id).map_err(jni)?.into();
+        let welcome_b64_str: String = env.get_string(&welcome_b64).map_err(jni)?.into();
+        let rt_b64_str: String = env.get_string(&ratchet_tree_b64).map_err(jni)?.into();
 
         mobile::background::process_welcome_background_with_key(
             std::path::Path::new(&files_dir_str),
@@ -1144,11 +1133,22 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
         )
     })();
 
-    match result {
-        Ok(()) => 1,
+    // The answer is the token `joined`, or `failed:<cause>:<prospect>`: the Kotlin log carries the
+    // typed cause, which this Rust line (lost in a killed app, no logger yet) could not.
+    let token = match result {
+        Ok(()) => mobile::background::JOINED_TOKEN.to_string(),
         Err(e) => {
-            log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {e}");
-            0
+            e.log("nativeProcessWelcomeBackground");
+            e.token()
+        }
+    };
+    // A string that cannot be built is logged and answered null (read as unreadable by Kotlin): an
+    // `unwrap` here would panic across the FFI boundary.
+    match env.new_string(token) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            log::error!("[BG_JOIN] nativeProcessWelcomeBackground: answer string not built: {e}");
+            std::ptr::null_mut()
         }
     }
 }

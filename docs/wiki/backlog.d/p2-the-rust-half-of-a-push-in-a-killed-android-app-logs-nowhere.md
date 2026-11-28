@@ -19,3 +19,9 @@ read afterwards from the foreground start (`[WELCOME] key group ... already held
 ignored (idempotent)`, then the leaf found gone and an external-commit re-join). So the fix carries
 two halves: the logger above, and a typed outcome back across JNI, so that "a Welcome for a group the
 state already holds" is a named case logged at its own level, not a failure.
+
+**2026-11-28 (1.8.4): the typed outcome half is DONE for the Welcome join** - the JNI answers
+`joined` / `failed:<cause>:<prospect>`, so the Kotlin line carries the cause with no Rust logger
+([mobile](../frontend/mobile.md#the-background-join-says-why-it-failed-owners-log-of-2026-11-27-184)).
+Open: the logger half above, and the same typed answer for the other native entry points that still
+answer a bare boolean.

@@ -66,6 +66,15 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
 const converged = new Map<string, string>();
 
 /**
+ * The version whose SKIP was already said, per scope. A skip on an unchanged version is the expected
+ * outcome of every resume, so it is said ONCE per version and then silent (owner's log, 2026-11-27:
+ * 961 identical lines for 8 + 12 scopes over a session, the same precedent as `declinedSalons`):
+ * what the line exists for survives - a pass that RAN is always said (the changed / not-where-it-was
+ * lines below), so a resume with no such line skipped. Withdrawn with the record.
+ */
+const skipSaid = new Map<string, string>();
+
+/**
  * Withdrawals per scope, EVER - never cleared, not even at sign-out: a count that went back to
  * zero would let a ticket taken before it match again (see {@link forgetAllKeyGroupConvergence}).
  * One integer per account, device and scope seen.
@@ -106,8 +115,9 @@ export function convergenceTicket(scope: DistributionScope): ConvergenceTicket {
 
 /**
  * Whether `scope`'s roster pass may be skipped on `version` (see the module doc for the two
- * conditions). Says which way it went when a record exists, so a skipped pass and a pass that ran
- * are told apart in the log; a scope with no record runs silently, as every first pass does.
+ * conditions). A pass that RUNS despite a record is always said; a skip is said once per version
+ * ({@link skipSaid}), so a resume's silence about a scope means it skipped; a scope with no record
+ * runs silently, as every first pass does.
  */
 export async function convergedPassCanBeSkipped(
   mlsService: IMlsService,
@@ -145,9 +155,12 @@ export async function convergedPassCanBeSkipped(
     );
     return false;
   }
-  log(
-    `[GRAINE] ${label}: key group and roster unchanged since the last converged pass, tree at the active epoch ${version.activeEpoch} - roster pass skipped (no read owed)`
-  );
+  if (skipSaid.get(key) !== version.version) {
+    skipSaid.set(key, version.version);
+    log(
+      `[GRAINE] ${label}: key group and roster unchanged since the last converged pass, tree at the active epoch ${version.activeEpoch} - roster pass skipped (no read owed), said once per version`
+    );
+  }
   return true;
 }
 
@@ -183,6 +196,7 @@ export function recordKeyGroupConvergence(
     );
   }
   converged.set(key, version.version);
+  skipSaid.delete(key);
 }
 
 /** Drops `scope`'s record and counts the withdrawal: a pass that did not converge vouches against it. */
@@ -190,6 +204,7 @@ export function forgetKeyGroupConvergence(scope: DistributionScope): void {
   const key = keyOf(scope);
   if (!key) return;
   converged.delete(key);
+  skipSaid.delete(key);
   withdrawals.set(key, (withdrawals.get(key) ?? 0) + 1);
 }
 
@@ -204,5 +219,6 @@ export function forgetKeyGroupConvergence(scope: DistributionScope): void {
  */
 export function forgetAllKeyGroupConvergence(): void {
   converged.clear();
+  skipSaid.clear();
   sessionsEnded += 1;
 }
