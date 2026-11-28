@@ -16,28 +16,39 @@
  * - "Drained" is NOT a proof - applied is not current. The one exception is a server that answers
  *   WITHOUT an epoch (a build predating the field): then a held group drained on this link is the
  *   only fact there is, and it is accepted, said.
- * - AN OWN COMMIT OF THE GROUP STAGED, IN FLIGHT OR UNRESOLVED (`ownCommitPending`) means
- *   "something is coming": its settlement moves the epochs and wakes the wait. While it stands the
- *   wait asks no pull and gives no verdict. A staged commit leaves the local epoch BELOW the
- *   server's once the server accepted it, until `mergeAccepted`; a local epoch ABOVE the server's
- *   is a commit of ours not accepted yet, or an external rejoin in flight. Neither proves anything.
+ * - AN OWN COMMIT OF THE GROUP (`ownCommitState`) means "something is coming", and no pull and no
+ *   verdict while it stands. One IN FLIGHT (holding the MLS mutex) settles by itself and wakes the
+ *   wait. One UNRESOLVED (kept, its outcome unknown) is settled by nothing until the next send or
+ *   reconnect, so the wait asks its settlement (`settleUnresolvedCommits([group])`) once per state of
+ *   the facts; still unresolved after it, the wait ends ({@link CallGroupCommitUnresolvedError}).
+ *
+ * OFFLINE IS A WAIT, NEVER A FAILURE. While the gateway socket is down the wait asks nothing - no
+ * pull, no settlement - says `network` to the call screen, and waits for the reconnect's catch-up.
  *
  * WHEN THE FACTS DISAGREE AND NOTHING IS COMING, THE WAIT ASKS: the server's epoch unreadable, the
  * group drained at an epoch other than the server's, or not held at all, ISSUES a pull for the group
  * (`pullForGroup`) and reads everything again at its end. One ask per state of the facts. A pull
- * that could not list the mailbox (`incomplete`) is said at WARN and allows one more ask; a second
- * incomplete one ends the wait ({@link CallGroupUnlistedError}).
+ * that could not list the mailbox while the link stayed up (`incomplete`) is said at WARN and may be
+ * asked again AFTER THE NEXT EVENT; a second such one in a row ends the wait
+ * ({@link CallGroupUnlistedError}). One that came back incomplete because the link went down counts
+ * for nothing: offline is a wait.
  *
- * A STATE THAT HELD ACROSS A COMPLETE PULL THIS WAIT ASKED FOR, WITH NOTHING OF OURS COMING, IS AN
- * ANSWER, typed ({@link CallGroupUnprovenError}): behind the server ({@link CallGroupStuckError} -
- * the group is handed to the epoch-gap ladder, NON-destructively, at the wait's settlement), ahead
- * of it, not held, or its epoch still unreadable. The call fails visibly; the call path never
- * repairs a group itself.
+ * A GROUP DRAINED BELOW THE SERVER AFTER A COMPLETE PULL IS CAUGHT UP FROM THE COMMIT LOG FIRST -
+ * the same first, non-destructive rung a refused commit takes (`catchUpFromCommitLog`: rung 1, its
+ * own books marking and un-marking the epoch gap). The post-commit fan-out to this device is best
+ * effort, and the server's row can read N+1 before the fan-out row exists: the log has the commit
+ * the mailbox lacks. Only a replay that cannot heal ends the wait ({@link CallGroupStuckError}); the
+ * call path itself marks nothing and repairs nothing destructively.
  *
- * THE EVENTS the facts are re-read on, each a waiter REMOVED when the wait moves on or stops: a
- * frame of the group applied or a commit of it settled (`whenGroupFrameApplied`), a pull ending
- * (`whenGroupDrained`), a connection's catch-up ending (`whenNextCatchUp`), the end of a pull the
- * wait asked for. No clock.
+ * ANY OTHER STATE THAT HELD ACROSS A COMPLETE PULL THIS WAIT ASKED FOR, WITH NOTHING OF OURS COMING,
+ * IS AN ANSWER, typed ({@link CallGroupUnprovenError}): ahead of the server, not held, or its epoch
+ * still unreadable. The call fails visibly.
+ *
+ * ARM, THEN CHECK. Each round registers its waiters first - a frame of the group applied or a commit
+ * of it settled (`whenGroupFrameApplied`), a pull ending (`whenGroupDrained`), a connection's
+ * catch-up ending (`whenNextCatchUp`) - THEN reads the facts, every one after the round's last
+ * await: an event landing while the round reads is never missed, and no verdict stands on a fact
+ * read before an await. Every waiter is REMOVED when the round moves on or the wait stops. No clock.
  *
  * THE WAYS OUT, and only these: the proof; a typed answer above; {@link CallGroupWait.stop} (the
  * user hung up, or the caller's hangup ended the call); the session ending (a sign-out, an account
@@ -79,7 +90,13 @@ export class CallGroupClientReplacedError extends CallGroupSessionEndedError {
 }
 
 /** The kinds of {@link CallGroupUnprovenError}. */
-export type CallGroupUnprovenKind = 'behind' | 'ahead' | 'not-held' | 'epoch-unknown' | 'unlisted';
+export type CallGroupUnprovenKind =
+  | 'behind'
+  | 'ahead'
+  | 'not-held'
+  | 'epoch-unknown'
+  | 'unlisted'
+  | 'commit-unresolved';
 
 /**
  * THE GROUP CANNOT BE PROVEN CURRENT, AND THAT IS AN ANSWER, never a wait: the call fails, visibly.
@@ -101,13 +118,16 @@ export abstract class CallGroupUnprovenError extends Error {
   }
 }
 
-/** Held and drained BELOW the server across a complete pull, nothing of ours coming. */
+/**
+ * Held and drained BELOW the server across a complete pull, nothing of ours coming, and the commit
+ * log could not close the gap (rung 1 left it to the sync watchdog).
+ */
 export class CallGroupStuckError extends CallGroupUnprovenError {
   readonly kind = 'behind' as const;
   override readonly name = 'CallGroupStuckError';
 }
 
-/** ABOVE the server across a complete pull, with no commit of ours staged or unresolved. */
+/** ABOVE the server across a complete pull, with no commit of ours in flight or unresolved. */
 export class CallGroupAheadError extends CallGroupUnprovenError {
   readonly kind = 'ahead' as const;
   override readonly name = 'CallGroupAheadError';
@@ -125,10 +145,21 @@ export class CallGroupEpochUnknownError extends CallGroupUnprovenError {
   override readonly name = 'CallGroupEpochUnknownError';
 }
 
-/** Two pulls asked in a row could not list the mailbox. */
+/** Two pulls asked in a row, the link up, could not list the mailbox. */
 export class CallGroupUnlistedError extends CallGroupUnprovenError {
   readonly kind = 'unlisted' as const;
   override readonly name = 'CallGroupUnlistedError';
+}
+
+/** A kept commit of ours is still unresolved after the settlement the wait asked for. */
+export class CallGroupCommitUnresolvedError extends CallGroupUnprovenError {
+  readonly kind = 'commit-unresolved' as const;
+  override readonly name = 'CallGroupCommitUnresolvedError';
+}
+
+/** The kinds that say the network or the server could not answer, rather than the group's state. */
+export function callGroupUnreachable(kind: CallGroupUnprovenKind): boolean {
+  return kind === 'epoch-unknown' || kind === 'unlisted' || kind === 'commit-unresolved';
 }
 
 /** The client surface the wait reads. */
@@ -139,10 +170,13 @@ export type CallGroupMls = Pick<
   | 'getGroupServerStatus'
   | 'whenGroupFrameApplied'
   | 'whenGroupDrained'
-  | 'isGroupDrained'
+  | 'groupDrainedNow'
+  | 'isWsOpen'
   | 'leadGroup'
   | 'pullForGroup'
-  | 'ownCommitPending'
+  | 'ownCommitState'
+  | 'settleUnresolvedCommits'
+  | 'catchUpFromCommitLog'
 >;
 
 /** What the wait reads; injected so the ordering is tested without a client. */
@@ -157,11 +191,6 @@ export interface CallGroupCurrentDeps {
   whenNextCatchUp(signal?: AbortSignal): Promise<void>;
   /** What the wait now waits for, for the call screen; `null` once it ended. */
   onWaiting(reason: CallGroupWaitingFor | null): void;
-  /**
-   * Hands a group proven behind to the EXISTING non-destructive first rung (`markEpochGap`): the
-   * watchdog's ladder decides after its own window. Called once, at the wait's settlement.
-   */
-  handToGapLadder(groupId: string): void;
   log(line: string): void;
 }
 
@@ -189,6 +218,14 @@ export interface CallGroupWait {
 /** What woke the wait. */
 type WaitEvent = 'frame' | 'pull' | 'catch-up';
 
+/** One round's waiters, registered BEFORE its facts are read. */
+interface ArmedRound {
+  /** The first event of the round. */
+  readonly next: Promise<WaitEvent>;
+  /** Removes every waiter of the round. Idempotent. */
+  disarm(): void;
+}
+
 /** Whether `e` says the session (the MLS client, the signed-in account) ended. */
 function sessionEnded(e: unknown): boolean {
   return (
@@ -197,6 +234,9 @@ function sessionEnded(e: unknown): boolean {
     e instanceof SessionCatchUpAbandonedError
   );
 }
+
+/** A promise that never settles: a waiter the round does not need. */
+const NEVER = new Promise<never>(() => {});
 
 /**
  * Starts waiting for `groupId` to be current for the call `callId`. See the module comment for
@@ -241,18 +281,22 @@ export function waitForCallGroupCurrent(
 
   const mlsReady = deps.whenMlsReady(stopped.signal);
 
-  /** Waits for the next event on `mls`, every waiter registered for it removed once one fires. */
-  const nextEvent = async (mls: CallGroupMls): Promise<WaitEvent> => {
-    // One controller per round, aborted by the stop too - never `AbortSignal.any`, absent from the
-    // WKWebView of iOS before 17.4.
+  /**
+   * Registers this round's waiters on `mls` - BEFORE the round reads anything, so an event landing
+   * while it reads is the round's first event, never lost. One controller per round, aborted by the
+   * stop too - never `AbortSignal.any`, absent from the WKWebView of iOS before 17.4.
+   */
+  const arm = (mls: CallGroupMls): ArmedRound => {
     const round = new AbortController();
     const signal = round.signal;
     const onStop = () => round.abort(stopped.signal.reason);
     stopped.signal.addEventListener('abort', onStop, { once: true });
     // An incomplete listing is a pull event like a complete one: the facts are what decide. A
-    // drained group waits for no pull here - the loop asks one when the facts call for it.
-    const pull = mls.isGroupDrained(groupId)
-      ? new Promise<never>(() => {})
+    // group drained now waits for no pull - `whenGroupDrained` would resolve at once, for ever;
+    // whatever undrains it is a frame of it, and the frame waiter hears that. Read silently: this
+    // runs on every round.
+    const pull = mls.groupDrainedNow(groupId)
+      ? NEVER
       : mls.whenGroupDrained(groupId, signal).then(
           () => 'pull' as const,
           (e: unknown) => {
@@ -260,16 +304,20 @@ export function waitForCallGroupCurrent(
             return 'pull' as const;
           }
         );
-    try {
-      return await Promise.race([
-        mls.whenGroupFrameApplied(groupId, signal).then(() => 'frame' as const),
-        pull,
-        deps.whenNextCatchUp(signal).then(() => 'catch-up' as const),
-      ]);
-    } finally {
-      stopped.signal.removeEventListener('abort', onStop);
-      if (!signal.aborted) round.abort(new Error('the wait moved on'));
-    }
+    const next = Promise.race([
+      mls.whenGroupFrameApplied(groupId, signal).then(() => 'frame' as const),
+      pull,
+      deps.whenNextCatchUp(signal).then(() => 'catch-up' as const),
+    ]);
+    // A round disarmed before anyone awaited it rejects with the move-on: not an unhandled one.
+    next.catch(() => {});
+    return {
+      next,
+      disarm: () => {
+        stopped.signal.removeEventListener('abort', onStop);
+        if (!signal.aborted) round.abort(new Error('the wait moved on'));
+      },
+    };
   };
 
   const run = async (): Promise<CallGroupProof> => {
@@ -284,130 +332,230 @@ export function waitForCallGroupCurrent(
     let readTarget = true;
     let unreadableSaid = false;
     let lastSaid: string | null = null;
+    let offlineSaid = false;
     /** The state a pull was asked for (one ask per state), and the state a LISTED one was for. */
     let askedFor: string | null = null;
     let listedFor: string | null = null;
-    /** Asked pulls in a row that could not list the mailbox. */
+    /** Pulls asked in a row, the link up, that could not list the mailbox. */
     let incompleteAsks = 0;
+    /** An incomplete pull may be asked again - after the next event, never at once. */
+    let reaskAfterEvent = false;
+    /** The state an unresolved commit's settlement was asked for (one ask per state). */
+    let settleAskedFor: string | null = null;
+    /** The state the commit log was replayed for, and how many replays were held for it. */
+    let replayedFor: string | null = null;
+    let replaysHeld = 0;
     for (;;) {
       throwIfStopped();
-      if (readTarget) {
-        readTarget = false;
-        const status = await mls.getGroupServerStatus(groupId);
-        throwIfStopped();
-        if (status === 'absent' || status === 'error') {
-          target = 'unread';
-          unreadCause = status;
-          if (!unreadableSaid) {
-            unreadableSaid = true;
-            log(
-              `[Call] WARN group ${short}: the server's epoch could not be read (${status}) - a pull is asked, and it is read again at its end`
-            );
-          }
-        } else if (status.activeEpoch === undefined) {
-          target = 'none';
-          log(`[Call] group ${short}: the server sends no epoch - a drain on this link decides`);
-        } else {
-          target = status.activeEpoch;
-        }
-      }
-      const held = mls.getLocalGroups().includes(groupId);
-      const local = held ? mls.getEpoch(groupId) : null;
-      const drained = mls.isGroupDrained(groupId);
-      const state = `${local}/${target}`;
-      const server = typeof target === 'number' ? target : null;
-      if (server !== null) {
-        if (state !== lastSaid) {
-          lastSaid = state;
-          log(
-            `[Call] group ${short} ${held ? `at epoch ${local}` : 'not held here'}, the server's is ${server}`
-          );
-          if (local !== null && local > server) {
-            log(
-              `[Call] WARN group ${short} is AHEAD of the server (${local} > ${server}) - a commit of ours not accepted yet proves nothing; the server's epoch is read again at the next event`
-            );
+      // ARM, THEN CHECK: every fact below is read after this round's waiters exist.
+      const round = arm(mls);
+      let event: WaitEvent;
+      try {
+        if (readTarget) {
+          readTarget = false;
+          const status = await mls.getGroupServerStatus(groupId);
+          throwIfStopped();
+          if (status === 'absent' || status === 'error') {
+            target = 'unread';
+            unreadCause = status;
+            if (!unreadableSaid) {
+              unreadableSaid = true;
+              log(
+                `[Call] WARN group ${short}: the server's epoch could not be read (${status}) - read again at the next pull or catch-up`
+              );
+            }
+          } else if (status.activeEpoch === undefined) {
+            target = 'none';
+            log(`[Call] group ${short}: the server sends no epoch - a drain on this link decides`);
+          } else {
+            target = status.activeEpoch;
           }
         }
-        if (local === server) return 'epoch-reached';
-      } else if (target === 'none' && held && drained) {
-        return 'drained-no-server-epoch';
-      }
-      const ownPending = held && (await mls.ownCommitPending(groupId));
-      throwIfStopped();
-      if (!ownPending && listedFor === state && drained) {
-        // A STATE THAT HELD ACROSS A COMPLETE PULL WITH NOTHING OF OURS COMING: AN ANSWER.
-        if (target === 'unread') {
-          throw new CallGroupEpochUnknownError(
-            groupId,
-            local,
-            null,
-            `the server's epoch is still unreadable (${unreadCause}) after a complete pull`
-          );
-        }
-        if (!held) {
-          throw new CallGroupNotHeldError(groupId, null, server, 'not held after a complete pull');
-        }
-        if (server !== null && local !== null && local < server) {
-          throw new CallGroupStuckError(
-            groupId,
-            local,
-            server,
-            'drained below the server after a complete pull, no commit of ours coming'
-          );
-        }
-        if (server !== null && local !== null && local > server) {
-          throw new CallGroupAheadError(
-            groupId,
-            local,
-            server,
-            'ahead of the server after a complete pull, no commit of ours staged or unresolved'
-          );
-        }
-      }
-      const disagrees =
-        target === 'unread' || (drained && (!held || (server !== null && local !== server)));
-      if (!ownPending && askedFor !== state && disagrees) {
-        askedFor = state;
-        log(
-          `[Call] group ${short} at ${local ?? 'none'} while the server holds ${target}${target === 'unread' ? ` (${unreadCause})` : ''} - a pull is asked for it, and its end read`
-        );
-        let outcome: 'listed' | 'incomplete';
-        try {
-          outcome = await mls.pullForGroup(groupId);
-        } catch (e: unknown) {
-          if (sessionEnded(e)) throw e;
-          log(`[Call] WARN group ${short}: the pull asked for it failed: ${String(e)}`);
-          outcome = 'incomplete';
-        }
+        const heldBefore = mls.getLocalGroups().includes(groupId);
+        const own = heldBefore ? await mls.ownCommitState(groupId) : 'none';
         throwIfStopped();
-        if (outcome === 'listed') {
-          listedFor = state;
-          incompleteAsks = 0;
-        } else {
-          incompleteAsks += 1;
+        // THE FACTS, read after the round's last await.
+        const linkUp = mls.isWsOpen();
+        const held = mls.getLocalGroups().includes(groupId);
+        const local = held ? mls.getEpoch(groupId) : null;
+        const drained = mls.groupDrainedNow(groupId);
+        const state = `${local}/${target}`;
+        const server = typeof target === 'number' ? target : null;
+        if (server !== null) {
+          if (state !== lastSaid) {
+            lastSaid = state;
+            log(
+              `[Call] group ${short} ${held ? `at epoch ${local}` : 'not held here'}, the server's is ${server}`
+            );
+            if (local !== null && local > server) {
+              log(
+                `[Call] WARN group ${short} is AHEAD of the server (${local} > ${server}) - a commit of ours not accepted yet proves nothing; the server's epoch is read again at the next event`
+              );
+            }
+          }
+          if (local === server) return 'epoch-reached';
+        } else if (target === 'none' && held && drained) {
+          return 'drained-no-server-epoch';
+        }
+
+        if (!linkUp) {
+          // OFFLINE IS A WAIT: nothing is asked, the reconnect's catch-up is what comes next.
+          if (!offlineSaid) {
+            offlineSaid = true;
+            log(
+              `[Call] group ${short} at ${local ?? 'none'} while the server holds ${target}: the link is down - waiting for the reconnect`
+            );
+          }
+        } else if (own === 'unresolved' && settleAskedFor !== state) {
+          // A KEPT COMMIT NOBODY SETTLES until the next send or reconnect: the wait asks it.
+          settleAskedFor = state;
+          round.disarm();
           log(
-            `[Call] WARN group ${short}: the pull asked for it could not list the mailbox (${incompleteAsks} in a row)`
+            `[Call] group ${short}: a commit of ours is unresolved - its settlement is asked, and the group read again at its end`
           );
-          if (incompleteAsks >= 2) {
-            throw new CallGroupUnlistedError(
+          try {
+            await mls.settleUnresolvedCommits([groupId]);
+          } catch (e: unknown) {
+            if (sessionEnded(e)) throw e;
+            log(`[Call] WARN group ${short}: the settlement asked for it failed: ${String(e)}`);
+          }
+          throwIfStopped();
+          if ((await mls.ownCommitState(groupId)) === 'unresolved') {
+            throw new CallGroupCommitUnresolvedError(
               groupId,
               local,
               server,
-              'two pulls asked in a row could not list the mailbox'
+              'a commit of ours is still unresolved after the settlement the wait asked for'
             );
           }
-          // One more ask for the same state.
-          askedFor = null;
+          readTarget = true;
+          continue;
+        } else if (own === 'none' && listedFor === state && drained) {
+          // A STATE THAT HELD ACROSS A COMPLETE PULL WITH NOTHING OF OURS COMING: AN ANSWER.
+          if (target === 'unread') {
+            throw new CallGroupEpochUnknownError(
+              groupId,
+              local,
+              null,
+              `the server's epoch is still unreadable (${unreadCause}) after a complete pull`
+            );
+          }
+          if (!held) {
+            throw new CallGroupNotHeldError(
+              groupId,
+              null,
+              server,
+              'not held after a complete pull'
+            );
+          }
+          if (server !== null && local !== null && local < server) {
+            // BEHIND WITH THE MAILBOX LISTED: the commit log may hold what the mailbox lacks.
+            if (replayedFor !== state) {
+              replayedFor = state;
+              replaysHeld = 0;
+            }
+            round.disarm();
+            log(
+              `[Call] group ${short} drained at ${local} below the server's ${server} - caught up from the commit log (rung 1)`
+            );
+            const outcome = await mls.catchUpFromCommitLog(groupId);
+            throwIfStopped();
+            if (outcome === 'still-behind') {
+              throw new CallGroupStuckError(
+                groupId,
+                local,
+                server,
+                'drained below the server after a complete pull, and the commit log could not close the gap'
+              );
+            }
+            if (outcome === 'held') {
+              replaysHeld += 1;
+              if (replaysHeld >= 2) {
+                throw new CallGroupStuckError(
+                  groupId,
+                  local,
+                  server,
+                  'the commit log is held behind refused frames a complete pull did not bring'
+                );
+              }
+              // The frames that hold it are pulled: a pull of the wait's own lists them, then the
+              // state is judged again.
+              askedFor = null;
+              listedFor = null;
+            }
+            readTarget = true;
+            continue;
+          }
+          if (server !== null && local !== null && local > server) {
+            throw new CallGroupAheadError(
+              groupId,
+              local,
+              server,
+              'ahead of the server after a complete pull, no commit of ours in flight or unresolved'
+            );
+          }
         }
-        readTarget = true;
-        continue;
+
+        const disagrees =
+          target === 'unread' || (drained && (!held || (server !== null && local !== server)));
+        if (linkUp && own === 'none' && askedFor !== state && disagrees) {
+          askedFor = state;
+          round.disarm();
+          log(
+            `[Call] group ${short} at ${local ?? 'none'} while the server holds ${target}${target === 'unread' ? ` (${unreadCause})` : ''} - a pull is asked for it, and its end read`
+          );
+          let outcome: 'listed' | 'incomplete';
+          try {
+            outcome = await mls.pullForGroup(groupId);
+          } catch (e: unknown) {
+            if (sessionEnded(e)) throw e;
+            log(`[Call] WARN group ${short}: the pull asked for it failed: ${String(e)}`);
+            outcome = 'incomplete';
+          }
+          throwIfStopped();
+          if (outcome === 'listed') {
+            listedFor = state;
+            incompleteAsks = 0;
+          } else if (!mls.isWsOpen()) {
+            // The link went down under it: offline, a wait - nothing counted.
+            log(
+              `[Call] group ${short}: the pull asked for it could not list the mailbox - the link is down, waiting for the reconnect`
+            );
+          } else {
+            incompleteAsks += 1;
+            log(
+              `[Call] WARN group ${short}: the pull asked for it could not list the mailbox, the link up (${incompleteAsks} in a row)`
+            );
+            if (incompleteAsks >= 2) {
+              throw new CallGroupUnlistedError(
+                groupId,
+                local,
+                server,
+                'two pulls asked in a row, the link up, could not list the mailbox'
+              );
+            }
+            reaskAfterEvent = true;
+          }
+          readTarget = true;
+          continue;
+        }
+
+        if (linkUp) offlineSaid = false;
+        sayWaiting(linkUp ? 'conversation' : 'network');
+        event = await round.next;
+        // The server's epoch moves only with a commit: re-read on what can carry one.
+        if (own !== 'none') readTarget = true;
+        else if (server !== null && local !== null && local > server) readTarget = true;
+        else if (target === 'unread' && (event === 'pull' || event === 'catch-up')) {
+          readTarget = true;
+        } else if (server !== null && event !== 'frame') readTarget = true;
+      } finally {
+        round.disarm();
       }
-      sayWaiting(incompleteAsks > 0 ? 'network' : 'conversation');
-      const event = await nextEvent(mls);
-      // The server's epoch moves only with a commit: re-read on what can carry one.
-      if (server !== null && local !== null && local > server) readTarget = true;
-      else if (target === 'unread' && (event === 'pull' || event === 'catch-up')) readTarget = true;
-      else if (server !== null && event !== 'frame') readTarget = true;
+      if (reaskAfterEvent) {
+        reaskAfterEvent = false;
+        askedFor = null;
+      }
     }
   };
 
@@ -439,16 +587,8 @@ export function waitForCallGroupCurrent(
         throw new CallGroupSessionEndedError(groupId, e);
       }
       if (e instanceof CallGroupUnprovenError) {
-        const level = e.kind === 'epoch-unknown' || e.kind === 'unlisted' ? 'WARN' : 'ERROR';
+        const level = callGroupUnreachable(e.kind) ? 'WARN' : 'ERROR';
         log(`[Call] ${level} call=${callId}: ${e.message}, after ${since()} ms`);
-        // THE ONE DECISION ON A GROUP BEHIND, whether or not the user already hung up: handed to
-        // the epoch-gap ladder, never repaired here.
-        if (e instanceof CallGroupStuckError) {
-          log(
-            `[Call] group ${short} of call=${callId} handed to the epoch-gap ladder - its watchdog decides`
-          );
-          deps.handToGapLadder(groupId);
-        }
         throw e;
       }
       log(`[Call] ERROR the wait for group ${short} failed after ${since()} ms: ${String(e)}`);

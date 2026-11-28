@@ -810,46 +810,61 @@ either. So:
   - **Drained is not current.** "Applied everything listed on this link" says nothing of a commit
     the listing did not carry. The one exception is a server that answers WITHOUT an epoch (a build
     predating the field): a held group drained on this link is accepted as `drained-no-server-epoch`.
-  - **A commit of OURS staged, in flight or unresolved is "something coming"**
-    (`IMlsService.ownCommitPending`: the scheduler's `committingGroupId`, or the unresolved index).
-    Our own staged commit leaves the local epoch BELOW the server's once the server accepted it,
-    until `mergeAccepted`; a local epoch ABOVE the server's is a commit of ours not accepted yet, or
-    an external rejoin in flight. While one stands the wait asks no pull and gives no verdict: the
-    commit's settlement wakes it.
+  - **A commit of OURS is "something coming"** (`IMlsService.ownCommitState`). One `in-flight` (the
+    scheduler's `committingGroupId`: staged, sent, being merged) settles by itself and wakes the
+    wait. One `unresolved` (kept, its outcome unknown) is settled by nothing before the next send or
+    reconnect, so the wait ASKS its settlement (`settleUnresolvedCommits([group])`) once per state of
+    the facts; still unresolved after it, the wait ends (`CallGroupCommitUnresolvedError`). While one
+    stands, no pull and no verdict. Our own staged commit leaves the local epoch BELOW the server's
+    once the server accepted it, until `mergeAccepted`; a local epoch ABOVE the server's is a commit
+    of ours not accepted yet, or an external rejoin in flight.
   - **The epoch line is logged only when the pair `local/server` changes**, not at every frame.
-- **The events the facts are read again on**, each a removable waiter, none a clock: a frame of the
-  group applied, or a commit of it settled - merged or cleared, `runCommitUnderMlsLock` wakes the
-  same waiters, since our own accepted commit is merged outside the queue (`whenGroupFrameApplied`);
-  a pull's end (`whenGroupDrained`); a connection's catch-up (`whenNextCatchUp`); the end of a pull
-  the wait asked for.
+- **Arm, then check.** Each round REGISTERS its waiters first - a frame of the group applied, or a
+  commit of it settled (merged or cleared: `runCommitUnderMlsLock` wakes the same waiters, since our
+  own accepted commit is merged outside the queue, `whenGroupFrameApplied`); a pull's end
+  (`whenGroupDrained`, armed only on a group not drained now, read silently through
+  `groupDrainedNow`); a connection's catch-up (`whenNextCatchUp`) - THEN reads the facts, every one
+  after the round's last await. A frame applied while the commit state is read is the round's first
+  event, never lost, and no verdict stands on a fact read before an await. None is a clock.
+- **Offline is a wait, never a failure.** While the gateway socket is down (`isWsOpen`) the wait
+  asks nothing - no pull, no settlement - says `network` to the screen, and waits for the reconnect's
+  catch-up, which reads the server's epoch again.
 - **When the facts disagree and nothing is coming, the wait ASKS.** The server's epoch unreadable
   (`error`, `absent`), the group drained at an epoch other than the server's, or not held: the wait
   asks a pull for the group (`IMlsService.pullForGroup`, which says whether it LISTED the mailbox on
   this link or was `incomplete`) and reads everything again at its end. One ask per state of the
-  facts (`local/server`). An incomplete pull is said at WARN and allows ONE more ask; a second one in
-  a row ends the wait (`CallGroupUnlistedError`).
+  facts (`local/server`). A pull incomplete with the link still up is said at WARN and may be asked
+  again only AFTER THE NEXT EVENT; a second such one in a row ends the wait
+  (`CallGroupUnlistedError`). One that came back incomplete because the link went down counts for
+  nothing.
+- **A group drained BELOW the server after a complete pull is caught up from the commit log
+  first** (`IMlsService.catchUpFromCommitLog`): rung 1, under the MLS lock, the same first step a
+  refused commit takes (`replayAndRecord`, held behind a refused backlog), its own books marking the
+  epoch gap and un-marking it on a heal. The post-commit fan-out to this device is best effort, and
+  `GET /groups/:id` can read N+1 before the fan-out row exists: the log has the commit the mailbox
+  lacks. Healed, the facts are read again; held, the wait asks a pull of its own and replays once
+  more; only a replay that cannot heal is `behind`.
 - **A state that held across a complete pull, with nothing of ours coming, is an ANSWER**, typed
   (`CallGroupUnprovenError`, carrying both epochs), and the call fails visibly - the toast, the
   server's ring-end, the call ended with no MLS frame:
-  - **behind** (`CallGroupStuckError`: numeric epochs, local < server, held) - ERROR, toast
-    `call_group_not_current`. At the wait's settlement, whether or not the user already hung up, the
-    group is handed to the EXISTING non-destructive first rung, `markEpochGap`, logged with the call
-    (`group ... of call=... handed to the epoch-gap ladder`); the watchdog's ladder decides after
-    its own window. **The call path never repairs destructively**: nothing is forgotten, re-added or
-    rejoined from here, so no rekey can happen in the middle of a call because of it.
+  - **behind** (`CallGroupStuckError`: numeric epochs, local < server, held, and the commit log
+    could not close the gap) - ERROR, toast `call_group_not_current`. The gap stays where rung 1's
+    books put it, for the sync watchdog's ladder. **The call path never marks a gap by hand and never
+    repairs destructively**: nothing is forgotten, re-added or rejoined from here, so no rekey can
+    happen in the middle of a call because of it.
   - **ahead** (`CallGroupAheadError`) and **not held** (`CallGroupNotHeldError`, a numeric epoch or
-    none) - ERROR, toast `call_group_not_current`, nothing handed on.
-  - **the server's epoch unknown** (`CallGroupEpochUnknownError`) and **unlisted** - WARN with the
-    status, toast `call_group_unreachable`. An unreadable epoch is never "stuck" and never reaches
-    any repair.
+    none) - ERROR, toast `call_group_not_current`.
+  - **the server's epoch unknown** (`CallGroupEpochUnknownError`), **unlisted**, and **a commit of
+    ours still unresolved** (`CallGroupCommitUnresolvedError`) - WARN, toast `call_group_unreachable`.
+    An unreadable epoch is never "stuck" and never reaches any repair.
 - **The ways out, and only these:** the proof; an answer above; the user's hang-up; the caller's
   hangup frame ending the call (`handleCallSignal`); the session ending (sign-out, account switch,
   client destroyed, or not the one MLS came up on). No timer, and no room-token `410`: the token is
   asked once, at MLS ready, and its refusal ends the call through the setup's ordinary failure.
 - **What the screen says while it waits.** The connecting line names the wait
-  (`CallService.connectingWaitsFor`, `callStatusText`): `call_connecting_waiting_network` after a
-  pull that could not list the mailbox, `call_connecting_waiting_conversation` while the group
-  catches up - never a bare "connecting" over a silent wait.
+  (`CallService.connectingWaitsFor`, `callStatusText`), from the LINK's state:
+  `call_connecting_waiting_network` while the socket is down, `call_connecting_waiting_conversation`
+  while the group catches up - never a bare "connecting" over a silent wait.
 - **The invite carries no epoch**, nor does the ring's push. So the callee cannot know which epoch
   the caller derived its keys at; the server's `activeEpoch` is the only statement of "current" there
   is, and a commit landing between the caller's derivation and the callee's read is the race every
@@ -859,12 +874,20 @@ either. So:
   before any other bucket's. A frame a commit holds back stays held back. The round-robin index
   FOLLOWS ITS BUCKET: `pruneEmptyKeys` shifts it down for each emptied bucket below it. The lead ends
   with the wait, or earlier (below).
-- **The answer joins on the session's CURRENT client.** `CallService` reads its client at each use
-  from the session's holder (`new CallService(() => ensureMls())`), and the wait reads it only once
-  MLS is up, checked against the one `setMlsReady` recorded (`mlsReadyClient`). An answer given at
-  the PIN gate whose login is retried on a new client joins on the live one. No hand-back.
-- **The native ring is the leader's.** `answerFromSystemSurface` in a FOLLOWER tab takes nothing,
-  said at ERROR: the answer stays pending for the leader. The pending gate holds ONE answer: one of
+- **The answer joins on the session's CURRENT client, and only its own account's.** `CallService`
+  reads its client at each use from the session's holder (`new CallService(() => ensureMls(), () =>
+  userId || null)`), and the wait reads it only once MLS is up, checked against the one
+  `setMlsReady` recorded (`mlsReadyClient`). An answer given at the PIN gate whose login is retried
+  on a new client joins on the live one. The client is returned ONLY while the session holds the
+  account the service was built for, and until the service is retired: otherwise the read throws
+  `CallServiceRetiredError`, so a hangup or a key derivation of account A's call never leaves as
+  account B. `initServices` RETIRES the replaced service (`CallService.retire`): its call ends
+  locally - no notice, no record, no presence - and its held hangup notices are dropped.
+- **The native ring is the leader's.** Only the leader tab drains the native answer file
+  (`drainNativePendingCallAccept`; an undecided election is waited for): a follower leaves it for the
+  leader, which reads it on its next drain, on the native event, or when it takes the lead
+  (`onLeaderTabChanged`). A follower that holds an answer anyway drops it at ERROR, toasts
+  `call_answer_not_joinable_here` and ends the call's ring. The pending gate holds ONE answer: one of
   another call is refused while the first is fresh, and a sign-out drops it
   (`clearPendingCallAccept` in `forgetAccount`).
 - **Only the keys and the "answered" notice wait for the proof.** The room token, the ICE servers
@@ -898,17 +921,21 @@ joined; `[Call] timing: group ... current (<proof>) after N ms`; and the `E2E pr
 the same suffix. `connect_ms` now includes the wait.
 
 **Covered by** `callGroupCurrent.test.ts` (the proof; a caught-up session no proof; a pull asked when
-drained below, ahead, unread or not held; each answer typed - behind handed to the gap ladder once,
-ahead, not held with or without a server epoch, epoch unknown, two incomplete pulls; a commit of
-ours staged or unresolved asks nothing and its settling proves; an incomplete pull allows one more
-ask; what the screen is told; stops, unhandled rejections, the current client read once MLS is up),
-`mlsPerGroupScheduler.leadGroup.test.ts` (the lead; the frame and commit-settle events; removal; the
-round-robin index), `BaseMlsService.groupDrained.test.ts`, `mlsReadiness.test.ts`,
-`pendingCallAccept*.test.ts` (one pending answer, never overwritten by another call, dropped at
-sign-out) and `CallService.p2p.test.ts` (the setup before the proof and the keys after; held,
-dropped and kept hangup notices; no ghost ring; the stuck failure arming the gap ladder with no
-frame sent; the PIN-gate answer joining on the retried login's client; a follower takes no answer;
-a session end with no toast; the screen timed per shape). **Owed:** the reading in
+drained below, ahead, unread or not held; the commit log replayed before any `behind` - healed it
+proves, held it pulls and replays once more, unhealed it is the answer; each answer typed - ahead,
+not held with or without a server epoch, epoch unknown, two incomplete pulls with the link up; a
+commit of ours in flight waits, one unresolved is settled once and ends the wait if it stays; arm
+then check - a frame applied during the commit-state read; offline waits and says `network`, the
+socket back proves, a pull cut by the link counts for nothing; stops, unhandled rejections, the
+current client read once MLS is up), `mlsPerGroupScheduler.leadGroup.test.ts` (the lead; the frame
+and commit-settle events; removal; the round-robin index), `BaseMlsService.groupDrained.test.ts`,
+`mlsReadiness.test.ts`, `pendingCallAccept*.test.ts` (one pending answer, never overwritten by
+another call, dropped at sign-out; a follower leaves the native file, the tab taking the lead reads
+it) and `CallService.p2p.test.ts` (the setup before the proof and the keys after; held, dropped and
+kept hangup notices; no ghost ring; the stuck failure after the commit log, no frame sent; the
+PIN-gate answer joining on the retried login's client; a follower dropping its answer and ending the
+ring; a service retired mid-call, or under another account, sending nothing as it; a session end
+with no toast; the screen timed per shape). **Owed:** the reading in
 [backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
 
 ### A decline on the ring reaches the caller (2026-10-30)
@@ -1147,8 +1174,8 @@ written in; a change is reported, a repeat is not. The handover ends an unanswer
 `canari_ios_page_rings_call(callId)` says the page rings THAT call; the socket fact still decides
 whether the native ring stands back when a push arrives, before any invite exists. Each
 `CallService` instance states under its own holder, like each `TauriMlsService`, and one replaced at
-an account switch withdraws its call and stops reporting (`retireFromPageRing`, called by
-`useChatSession.initServices`).
+an account switch withdraws its call and stops reporting (`retireFromPageRing`, run by
+`CallService.retire`, which `useChatSession.initServices` calls).
 
 **A ring the active page takes over ends its CallKit twin.** The handover runs on an activation, and
 an app already active sees none: a call rung by CallKit while the page had no socket, then by the

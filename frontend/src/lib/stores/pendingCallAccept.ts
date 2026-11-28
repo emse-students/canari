@@ -26,6 +26,11 @@
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import {
+  getTabLeadership,
+  onLeaderTabChanged,
+  whenTabLeadershipDecided,
+} from '$lib/mls-client/tabLeader';
 
 export interface PendingCallAccept {
   groupId: string;
@@ -233,12 +238,23 @@ export function parsePendingCallAccept(raw: string): PendingCallAccept | null {
 
 /**
  * Drains the native accept file (written by the Android or iOS answer handler while the webview may
- * not even be running) into the in-memory intent. Called at startup and on resume; nothing to do
- * outside Tauri or when nothing is pending.
+ * not even be running) into the in-memory intent. Called at startup, on resume, on the native
+ * event and when this tab takes the lead; nothing to do outside Tauri or when nothing is pending.
+ *
+ * ONLY THE LEADER TAB DRAINS IT: the join reads the leader's socket and MLS state, and the drain
+ * EMPTIES the file - a follower that read it would hold an answer it can never serve. A follower
+ * leaves it where it is; the leader reads it on its next drain, or when it takes the lead. An
+ * election still undecided is waited for, never guessed (`whenTabLeadershipDecided` always ends).
  */
 export async function drainNativePendingCallAccept(): Promise<void> {
   // Not a Tauri runtime: no native ring, nothing to drain.
   if (!isTauriRuntime()) return;
+  const known = getTabLeadership();
+  const side = known === 'undecided' ? await whenTabLeadershipDecided() : known;
+  if (side === 'follower') {
+    console.debug('[CallAccept] a follower tab leaves the native answer file for the leader');
+    return;
+  }
   let raw: string | null;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -271,5 +287,13 @@ export function listenForNativeCallAccept(): () => void {
     void drainNativePendingCallAccept();
   };
   window.addEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
-  return () => window.removeEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+  // A tab that TAKES the lead reads what a follower left in the file.
+  const stopFollowingTheLead = onLeaderTabChanged(() => {
+    if (getTabLeadership() !== 'leader') return;
+    void drainNativePendingCallAccept();
+  });
+  return () => {
+    window.removeEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+    stopFollowingTheLead();
+  };
 }

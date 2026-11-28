@@ -11,6 +11,17 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
+/** The tab's side of the election, and the leader-change subscribers, driven by each test. */
+let leadership: 'undecided' | 'leader' | 'follower' = 'leader';
+const leaderChanged = new Set<(why: string) => void>();
+vi.mock('$lib/mls-client/tabLeader', () => ({
+  getTabLeadership: () => leadership,
+  whenTabLeadershipDecided: () => new Promise(() => {}),
+  onLeaderTabChanged: (fn: (why: string) => void) => {
+    leaderChanged.add(fn);
+    return () => leaderChanged.delete(fn);
+  },
+}));
 
 const {
   NATIVE_CALL_ACCEPT_EVENT,
@@ -39,6 +50,7 @@ afterEach(() => {
   setPendingCallAcceptHandler(null);
   takePendingCallAccept();
   invoke.mockReset();
+  leadership = 'leader';
 });
 
 describe('canari:call-accept', () => {
@@ -84,5 +96,25 @@ describe('canari:call-accept', () => {
     window.dispatchEvent(new CustomEvent(NATIVE_CALL_ACCEPT_EVENT));
     await settle();
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('a FOLLOWER tab leaves the file for the leader, and the tab taking the lead reads it', async () => {
+    const handler = vi.fn((_why: string) => takePendingCallAccept());
+    setPendingCallAcceptHandler(handler);
+    nativeFileHolding({ groupId: 'g', callId: 'c', acceptedAt: Date.now() });
+    leadership = 'follower';
+    const stop = listenForNativeCallAccept();
+
+    window.dispatchEvent(new CustomEvent(NATIVE_CALL_ACCEPT_EVENT));
+    await settle();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+
+    leadership = 'leader';
+    for (const fn of leaderChanged) fn('promoted');
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('read_and_clear_pending_call_accept');
+    expect(handler).toHaveBeenCalledTimes(1);
+    stop();
   });
 });

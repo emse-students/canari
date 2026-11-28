@@ -34,7 +34,9 @@ export function createMlsServiceStub(
     whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     leadGroup: vi.fn(() => () => {}),
     pullForGroup: vi.fn(async () => 'listed' as const),
-    ownCommitPending: vi.fn(async () => false),
+    ownCommitState: vi.fn(async () => 'none' as const),
+    catchUpFromCommitLog: vi.fn(async () => 'healed' as const),
+    groupDrainedNow: vi.fn().mockReturnValue(true),
     // Never resolves by default: nothing of the group arrives in a test that does not say so.
     whenGroupFrameApplied: vi.fn(() => new Promise<void>(() => {})),
     addMembersBulk: vi.fn().mockResolvedValue({

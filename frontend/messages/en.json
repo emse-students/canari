@@ -564,6 +564,7 @@
   "call_e2e_setup_failed": "Call ended: end-to-end encryption could not be set up, so nothing was sent unencrypted.",
   "call_group_not_current": "Could not join the call: this conversation is not up to date on this device.",
   "call_group_unreachable": "Could not join the call: the server could not be reached.",
+  "call_answer_not_joinable_here": "This call cannot be joined from this tab.",
   "call_connecting_waiting_network": "Waiting for the network…",
   "call_connecting_waiting_conversation": "Updating the conversation…",
   "call_over": "This call is over.",

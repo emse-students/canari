@@ -451,6 +451,12 @@ export class LocalStateNotReadyError extends Error {
   }
 }
 
+/** Where a commit of this device stands for a group ({@link IMlsService.ownCommitState}). */
+export type OwnCommitState = 'none' | 'in-flight' | 'unresolved';
+
+/** What a commit-log catch-up did ({@link IMlsService.catchUpFromCommitLog}). */
+export type CommitLogCatchUp = 'healed' | 'held' | 'still-behind';
+
 /**
  * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
  * (sign-out): the group will never be drained by THIS client, and a waiter left pending would hold
@@ -1769,6 +1775,11 @@ export interface IMlsService {
    */
   isGroupDrained(groupId: string): boolean;
   /**
+   * {@link isGroupDrained} read SILENTLY - the same evidence without its debug line, for a waiter
+   * that re-reads it on every event (a call's group wait).
+   */
+  groupDrainedNow(groupId: string): boolean;
+  /**
    * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
    *
    * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
@@ -1797,11 +1808,25 @@ export interface IMlsService {
    */
   pullForGroup(groupId: string): Promise<'listed' | 'incomplete'>;
   /**
-   * Whether a commit of THIS device for `groupId` is staged, in flight or unresolved - the commit
-   * holding the MLS mutex, or one whose outcome the state still keeps. Its settlement moves the
-   * group's epoch and wakes {@link whenGroupFrameApplied}: "something is coming".
+   * Where a commit of THIS device for `groupId` stands: `in-flight` while it holds the MLS mutex
+   * (staged, sent, being merged - it settles by itself and wakes {@link whenGroupFrameApplied}),
+   * `unresolved` when the state keeps one whose outcome is unknown (settled by
+   * {@link settleUnresolvedCommits}, which nothing runs before the next send or reconnect), `none`
+   * otherwise.
    */
-  ownCommitPending(groupId: string): Promise<boolean>;
+  ownCommitState(groupId: string): Promise<OwnCommitState>;
+  /**
+   * Rung 1 for a group KNOWN behind the server with its mailbox listed: the commits it lacks are
+   * read from the server's commit log and applied (`replayAndRecord`, held behind a refused
+   * backlog), under the MLS lock - the same first, non-destructive step a refused commit takes.
+   * Its own books mark the epoch gap and un-mark it on a heal; the caller marks nothing. Never
+   * forgets or rejoins anything.
+   *
+   * `healed`: the group is no longer behind what the log holds; `held`: frames refused for lack of
+   * a row are still queued and bring the epochs - their pull is asked, nothing replayed;
+   * `still-behind`: the log could not close the gap, which is left to the sync watchdog (rung 2).
+   */
+  catchUpFromCommitLog(groupId: string): Promise<CommitLogCatchUp>;
   /**
    * Resolves once the NEXT frame of `groupId` has been applied, or the next commit of it settled
    * (merged or cleared: our own accepted commit is merged outside the queue) - the event at which a

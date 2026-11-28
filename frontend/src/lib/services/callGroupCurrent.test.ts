@@ -3,6 +3,7 @@ import { CallSetupAbandonedError } from '$lib/utils/callFailure';
 import {
   CallGroupAheadError,
   CallGroupClientReplacedError,
+  CallGroupCommitUnresolvedError,
   CallGroupEpochUnknownError,
   CallGroupNotHeldError,
   CallGroupSessionEndedError,
@@ -15,9 +16,10 @@ import {
 
 /**
  * THE KEYS OF A CALL ANSWERED ON THE RING WAIT FOR ITS OWN GROUP AT THE SERVER'S EPOCH (calls.md,
- * "The answer joins on its own group"): one proof, re-read on events, a pull asked when the facts
- * disagree and nothing is coming, a state held across a complete pull an answer, every waiter
- * removed when the wait moves on or stops.
+ * "The answer joins on its own group"): one proof, re-read on events armed BEFORE the facts are
+ * read, a pull asked when the facts disagree and nothing is coming, offline a wait, a group behind
+ * caught up from the commit log, a state held across a complete pull an answer, every waiter removed
+ * when the wait moves on or stops.
  */
 
 /** Lets every settled promise's callbacks run. */
@@ -27,6 +29,8 @@ const flush = async () => {
 
 type Status = 'error' | 'absent' | { groupId: string; activeEpoch?: number };
 type PullOutcome = 'listed' | 'incomplete';
+type OwnCommit = 'none' | 'in-flight' | 'unresolved';
+type Replay = 'healed' | 'held' | 'still-behind';
 
 /** One kind of waiter the test can fire, counting how many are still registered. */
 function eventSource() {
@@ -73,25 +77,37 @@ function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
     drained: false,
     ready: false,
     current: true,
-    ownCommit: false,
+    linkUp: true,
+    ownCommit: 'none' as OwnCommit,
+    /** Held by a test while the commit-state read is in flight (an IPC). */
+    ownCommitGate: null as Promise<void> | null,
+    /** What the commit log's catch-up does to the world, and says. */
+    onReplay: (): Replay => 'still-behind',
+    /** What the settlement of an unresolved commit does to the world. */
+    onSettle: (): void => {},
   };
   const release = vi.fn();
   /** The pulls the wait issued, each ended by `endPull`. */
   const pulls: Array<(outcome: PullOutcome) => void> = [];
   const waiting: Array<string | null> = [];
-  const handed: string[] = [];
   const mls = {
     getEpoch: vi.fn(() => state.local),
     getLocalGroups: vi.fn(() => (state.held ? ['group-1'] : [])),
     getGroupServerStatus: vi.fn(async () => state.status),
     whenGroupFrameApplied: vi.fn((_g: string, signal?: AbortSignal) => frame.wait(signal)),
     whenGroupDrained: vi.fn((_g: string, signal?: AbortSignal) => pull.wait(signal)),
-    isGroupDrained: vi.fn(() => state.drained),
+    groupDrainedNow: vi.fn(() => state.drained),
+    isWsOpen: vi.fn(() => state.linkUp),
     leadGroup: vi.fn(() => release),
     pullForGroup: vi.fn(
       (_groupId: string) => new Promise<PullOutcome>((resolve) => pulls.push(resolve))
     ),
-    ownCommitPending: vi.fn(async () => state.ownCommit),
+    ownCommitState: vi.fn(async () => {
+      if (state.ownCommitGate) await state.ownCommitGate;
+      return state.ownCommit;
+    }),
+    settleUnresolvedCommits: vi.fn(async (_groups?: string[]) => state.onSettle()),
+    catchUpFromCommitLog: vi.fn(async (_groupId: string) => state.onReplay()),
   };
   const client = mls as unknown as CallGroupMls;
   const deps: CallGroupCurrentDeps = {
@@ -100,7 +116,6 @@ function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
     isReadyClient: (c) => state.current && c === client,
     whenNextCatchUp: (signal) => catchUp.wait(signal),
     onWaiting: (reason) => waiting.push(reason),
-    handToGapLadder: (groupId) => handed.push(groupId),
     log: (l) => lines.push(l),
   };
   return {
@@ -114,7 +129,6 @@ function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
     pull,
     catchUp,
     waiting,
-    handed,
     ready() {
       state.ready = true;
       mlsReady.fire();
@@ -257,7 +271,27 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('STUCK: behind across a complete pull, nothing of ours coming, handed to the gap ladder once', async () => {
+  it('behind across a complete pull: the COMMIT LOG holds what the mailbox lacks, and its replay proves - nothing handed on', async () => {
+    // The post-commit fan-out to this device failed (best effort): the pull lists nothing, the
+    // server's row reads 4, and the commit log has the commits.
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.onReplay = () => {
+      w.state.local = 4;
+      return 'healed';
+    };
+    const { outcome } = start(w);
+    await flush();
+    w.endPull();
+    await flush();
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledTimes(1);
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledWith('group-1');
+    expect(outcome.proof).toBe('epoch-reached');
+    expect(outcome.error).toBeNull();
+  });
+
+  it('STUCK only when the commit log cannot close the gap: typed, ERROR, with both epochs', async () => {
     const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
     w.state.ready = true;
     w.state.drained = true;
@@ -266,36 +300,95 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     w.endPull();
     await flush();
 
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledTimes(1);
     expect(outcome.error).toBeInstanceOf(CallGroupStuckError);
     const stuck = outcome.error as CallGroupStuckError;
     expect([stuck.localEpoch, stuck.serverEpoch]).toEqual([2, 4]);
     expect(w.pullsAsked).toBe(1);
     expect(w.release).toHaveBeenCalledTimes(1);
-    expect(w.handed).toEqual(['group-1']);
     expect(
       w.lines.some((l) => l.includes('ERROR call=call-1') && l.includes('local=2 server=4'))
     ).toBe(true);
-    expect(w.lines.some((l) => l.includes('of call=call-1 handed to the epoch-gap ladder'))).toBe(
-      true
-    );
   });
 
-  it('a commit of ours staged or unresolved is something coming: no pull, no verdict, its settling wakes the wait', async () => {
+  it('a replay held behind refused frames asks a pull of its own; held again after it, STUCK', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.onReplay = () => 'held';
+    const { outcome } = start(w);
+    await flush();
+    w.endPull();
+    await flush();
+    expect(outcome.error).toBeNull();
+    expect(w.pullsAsked).toBe(2);
+    w.endPull();
+    await flush();
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledTimes(2);
+    expect(outcome.error).toBeInstanceOf(CallGroupStuckError);
+  });
+
+  it('a commit of ours IN FLIGHT is something coming: no pull, no verdict, its settling wakes the wait', async () => {
     const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 3 } });
     w.state.ready = true;
     w.state.drained = true;
-    w.state.ownCommit = true;
+    w.state.ownCommit = 'in-flight';
     const { outcome } = start(w);
     await flush();
     expect(w.pullsAsked).toBe(0);
+    expect(w.mls.settleUnresolvedCommits).not.toHaveBeenCalled();
     expect(outcome.error).toBeNull();
 
     // mergeAccepted: the commit settles and the epoch reaches the server's.
-    w.state.ownCommit = false;
+    w.state.ownCommit = 'none';
     w.applyFrame(3);
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
-    expect(w.handed).toEqual([]);
+    expect(w.mls.catchUpFromCommitLog).not.toHaveBeenCalled();
+  });
+
+  it('a commit of ours UNRESOLVED is settled by the wait once; its settlement proves', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 3 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.ownCommit = 'unresolved';
+    w.state.onSettle = () => {
+      w.state.ownCommit = 'none';
+      w.state.local = 3;
+    };
+    const { outcome } = start(w);
+    await flush();
+    expect(w.mls.settleUnresolvedCommits).toHaveBeenCalledWith(['group-1']);
+    expect(w.pullsAsked).toBe(0);
+    expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('UNRESOLVED with nobody settling it ENDS: typed, WARN, never a hang', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 3 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.ownCommit = 'unresolved';
+    const { outcome } = start(w);
+    await flush();
+    expect(w.mls.settleUnresolvedCommits).toHaveBeenCalledTimes(1);
+    expect(outcome.error).toBeInstanceOf(CallGroupCommitUnresolvedError);
+    expect(w.lines.some((l) => l.includes('WARN call=call-1'))).toBe(true);
+  });
+
+  it('ARM, THEN CHECK: a frame applied while the commit state is read is never missed', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 3 } });
+    w.state.ready = true;
+    let openGate: () => void = () => {};
+    w.state.ownCommitGate = new Promise<void>((r) => (openGate = r));
+    const { outcome } = start(w);
+    await flush();
+    expect(w.mls.ownCommitState).toHaveBeenCalledTimes(1);
+    // The group's last frame lands DURING the read - its event fires before any verdict.
+    w.applyFrame(3);
+    w.state.ownCommitGate = null;
+    openGate();
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
   it('a pull that moved the facts is no answer: the new state asks its own pull', async () => {
@@ -334,7 +427,7 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     w.endPull();
     await flush();
     expect(outcome.error).toBeInstanceOf(CallGroupAheadError);
-    expect(w.handed).toEqual([]);
+    expect(w.mls.catchUpFromCommitLog).not.toHaveBeenCalled();
     expect(w.lines.some((l) => l.includes('ERROR call=call-1'))).toBe(true);
   });
 
@@ -342,11 +435,11 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     const w = world({ local: 6, status: { groupId: 'group-1', activeEpoch: 5 } });
     w.state.ready = true;
     w.state.drained = true;
-    w.state.ownCommit = true;
+    w.state.ownCommit = 'in-flight';
     const { outcome } = start(w);
     await flush();
     expect(w.pullsAsked).toBe(0);
-    w.state.ownCommit = false;
+    w.state.ownCommit = 'none';
     w.state.status = { groupId: 'group-1', activeEpoch: 6 };
     w.frame.fire();
     await flush();
@@ -366,7 +459,7 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     w.endPull();
     await flush();
     expect(outcome.error).toBeInstanceOf(CallGroupNotHeldError);
-    expect(w.handed).toEqual([]);
+    expect(w.mls.catchUpFromCommitLog).not.toHaveBeenCalled();
   });
 
   it('no server epoch and the group not held: an answer after a complete pull, never a silent wait', async () => {
@@ -405,11 +498,11 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     expect(outcome.error).toBeInstanceOf(CallGroupEpochUnknownError);
     expect((outcome.error as CallGroupEpochUnknownError).serverEpoch).toBeNull();
     expect((outcome.error as CallGroupEpochUnknownError).why).toContain('still unreadable (error)');
-    expect(w.handed).toEqual([]);
+    expect(w.mls.catchUpFromCommitLog).not.toHaveBeenCalled();
     expect(w.lines.some((l) => l.includes('WARN call=call-1'))).toBe(true);
   });
 
-  it('an incomplete pull is said at WARN and allows ONE more ask; readable then, it proves', async () => {
+  it('an incomplete pull, the link up, is said at WARN and asked again only AFTER AN EVENT', async () => {
     const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
     const { outcome } = start(w);
@@ -417,44 +510,85 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     w.endPull(() => {}, 'incomplete');
     await flush();
     expect(outcome.error).toBeNull();
+    expect(w.pullsAsked).toBe(1);
+    expect(w.warned('could not list the mailbox, the link up (1 in a row)')).toBe(true);
+    w.pull.fire();
+    await flush();
     expect(w.pullsAsked).toBe(2);
-    expect(w.warned('could not list the mailbox (1 in a row)')).toBe(true);
     w.endPull(() => (w.state.status = { groupId: 'group-1', activeEpoch: 3 }));
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('two incomplete pulls in a row end the wait, typed and visible', async () => {
+  it('two incomplete pulls in a row, the link up, end the wait, typed and visible', async () => {
     const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
     const { outcome } = start(w);
     await flush();
     w.endPull(() => {}, 'incomplete');
     await flush();
+    w.catchUp.fire();
+    await flush();
     w.endPull(() => {}, 'incomplete');
     await flush();
     expect(outcome.error).toBeInstanceOf(CallGroupUnlistedError);
-    expect(w.handed).toEqual([]);
   });
 });
 
-describe('waitForCallGroupCurrent - what the screen is told', () => {
-  it('the network after an incomplete pull, nothing once proven', async () => {
-    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
+describe('waitForCallGroupCurrent - offline is a wait, never a failure', () => {
+  it('offline: nothing is asked, the screen says network, and no pull counts', async () => {
+    const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
-    w.state.drained = true;
+    w.state.linkUp = false;
     const { outcome } = start(w);
     await flush();
-    // The link dropped: the pull could not list, and the group is no longer drained on it.
-    w.endPull(() => (w.state.drained = false), 'incomplete');
-    await flush();
+    expect(w.pullsAsked).toBe(0);
     expect(w.waiting).toEqual(['network']);
-    w.applyFrame(2);
+    // Pulls that end while the link is down wake the wait and change nothing.
+    w.pull.fire();
+    await flush();
+    w.pull.fire();
+    await flush();
+    expect(w.pullsAsked).toBe(0);
+    expect(outcome.error).toBeNull();
+  });
+
+  it('the socket back up and caught up: the server read again, and it proves', async () => {
+    const w = world({ status: 'error', local: 3 });
+    w.state.ready = true;
+    w.state.linkUp = false;
+    const { outcome } = start(w);
+    await flush();
+    w.state.linkUp = true;
+    w.state.status = { groupId: 'group-1', activeEpoch: 3 };
+    w.catchUp.fire();
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
     expect(w.waiting).toEqual(['network', null]);
   });
 
+  it('a pull that came back incomplete because the link went down counts for nothing', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    const { outcome } = start(w);
+    await flush();
+    w.endPull(() => {
+      w.state.linkUp = false;
+      w.state.drained = false;
+    }, 'incomplete');
+    await flush();
+    expect(w.warned('could not list the mailbox, the link up')).toBe(false);
+    expect(w.waiting).toEqual(['network']);
+    w.state.linkUp = true;
+    w.applyFrame(2);
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
+    expect(outcome.error).toBeNull();
+  });
+});
+
+describe('waitForCallGroupCurrent - what the screen is told', () => {
   it('the conversation while the group catches up on its own frames', async () => {
     const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
     w.state.ready = true;

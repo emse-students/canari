@@ -31,11 +31,11 @@ import {
   mlsReadyClient,
   whenMlsReady,
 } from '$lib/composables/session/mlsReadiness';
-import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
   CallGroupSessionEndedError,
   CallGroupUnprovenError,
+  callGroupUnreachable,
   waitForCallGroupCurrent,
   type CallGroupWait,
   type CallGroupWaitingFor,
@@ -375,6 +375,18 @@ export function wireDescription(
  * through `call-service`'s two-person relay (`/api/call`, `mode: "p2p"`), MLS-derived keys for the
  * mandatory E2E frame transform, and Cloudflare TURN as the last-resort relay.
  */
+/**
+ * A call service read its client after it was RETIRED, or while the session holds another account
+ * than the one it was built for: nothing it would send may leave as that other account. Typed at
+ * the throw (`CallService.mlsService`), never told by its message.
+ */
+export class CallServiceRetiredError extends Error {
+  constructor(why: string) {
+    super(`the call service is retired: ${why}`);
+    this.name = 'CallServiceRetiredError';
+  }
+}
+
 export class CallService {
   /**
    * THE CALL'S LEGS (WP-GC2): one peer connection, and its whole negotiation, per other participant
@@ -754,18 +766,42 @@ export class CallService {
 
   /** The session's client, read at each use: a login may replace it after this service was built. */
   private readonly mlsSource: () => IMlsService;
+  /** The session's signed-in account, read at each use; `null` when the service is not bound. */
+  private readonly sessionAccount: (() => string | null) | null;
+  /** The account this service serves: the session's at construction, or its first one after. */
+  private boundAccount: string | null;
+  /** Set by {@link retire}: nothing is read or sent through this service any more. */
+  private retired = false;
 
-  /** The session's CURRENT client ({@link mlsSource}). */
+  /**
+   * The session's CURRENT client ({@link mlsSource}) - ONLY while the session holds the account
+   * this service was built for, and until it is retired.
+   *
+   * @throws {CallServiceRetiredError} once retired, or while another account holds the session: a
+   *   hangup or a key derivation of account A's call must never leave as account B.
+   */
   private get mlsService(): IMlsService {
+    if (this.retired) throw new CallServiceRetiredError('a newer service holds the session');
+    if (this.sessionAccount) {
+      const now = this.sessionAccount();
+      if (this.boundAccount === null) this.boundAccount = now;
+      else if (now !== this.boundAccount) {
+        throw new CallServiceRetiredError('the session holds another account');
+      }
+    }
     return this.mlsSource();
   }
 
   /**
    * @param mls the session's client, or a getter of it - the session passes its holder's, so an
    *   answer given before a login replaced the client joins on the live one.
+   * @param account the session's signed-in account: the client is read only while it is the one
+   *   this service was built for. Left out, the service is bound to no account (a test's client).
    */
-  constructor(mls: IMlsService | (() => IMlsService)) {
+  constructor(mls: IMlsService | (() => IMlsService), account?: () => string | null) {
     this.mlsSource = typeof mls === 'function' ? mls : () => mls;
+    this.sessionAccount = account ?? null;
+    this.boundAccount = account?.() ?? null;
     // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
     // the media keys from the group's CURRENT epoch (`setupEncryption`), the caller before the
     // ring and the callee after the answer: a refresh in between - a read receipt sent while it
@@ -821,6 +857,32 @@ export class CallService {
       this.pageRingingCall = null;
       reportPageRingingCall(this.pageRingHolder, null);
     }
+  }
+
+  /**
+   * RETIRES this instance: the session replaced it (an account switch, a new client). Its call,
+   * if any, ends LOCALLY - the screen closes, nothing is sent, no record is written - because every
+   * send would leave through the session's client, which may now be another account's
+   * ({@link mlsService} throws from here on). Hangup notices held behind a group wait are dropped
+   * with their waits. Then it leaves the native ring's facts ({@link retireFromPageRing}).
+   * Idempotent.
+   */
+  public retire(why: string): void {
+    if (this.retired) return;
+    this.retired = true;
+    const state = get(this.callState);
+    if (state !== 'idle') {
+      appendLog(
+        `[Call] WARN call=${this.currentCallId} ended locally (state=${state}) - its service is retired: ${why}`
+      );
+    }
+    for (const [callId, held] of this.heldHangups) {
+      appendLog(`[Call] WARN hangup notice of ${callId} dropped - its service is retired`);
+      held.wait.stop();
+    }
+    this.heldHangups.clear();
+    if (state !== 'idle') this.cleanup();
+    this.retireFromPageRing();
   }
 
   /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
@@ -1056,17 +1118,20 @@ export class CallService {
    */
   public answerFromSystemSurface(why: string): void {
     if (!CALLS_ENABLED) return;
-    // THE NATIVE RING IS THE LEADER'S: the leader holds the socket and the MLS state the join reads.
-    // A follower tab never takes an answer; it stays pending for the leader, said at ERROR since no
-    // follower should ever be handed one.
-    if (getTabLeadership() === 'follower') {
-      appendLog(
-        `[Call] ERROR system-surface answer (${why}) reached a FOLLOWER tab - left pending for the leader`
-      );
-      return;
-    }
     const intent = takePendingCallAccept();
     if (!intent) return;
+    // THE NATIVE RING IS THE LEADER'S: the leader holds the socket and the MLS state the join reads,
+    // and a follower never drains the native answer (`drainNativePendingCallAccept`). A follower
+    // that holds one anyway cannot join it and cannot hand it on: it is dropped, said at ERROR, and
+    // the call's ring is ended so the native call does not hang on an answer nobody serves.
+    if (getTabLeadership() === 'follower') {
+      appendLog(
+        `[Call] ERROR system-surface answer of call=${intent.callId} (${why}) reached a FOLLOWER tab - dropped, its ring ended`
+      );
+      showToast(m.call_answer_not_joinable_here(), 'error');
+      void this.endServerRing(intent.groupId, intent.callId, 'ended');
+      return;
+    }
     const state = get(this.callState);
     if (state !== 'idle' && state !== 'incoming' && this.currentCallId === intent.callId) {
       // This answer's call is already being joined, held, or just ended here: a second answer of
@@ -1597,15 +1662,21 @@ export class CallService {
           {
             // THE SESSION'S CURRENT CLIENT, read when MLS is up: an answer given at the PIN gate,
             // whose login was retried on a new client, joins on the live one.
-            mls: () => this.mlsService,
+            mls: () => {
+              try {
+                return this.mlsService;
+              } catch (e: unknown) {
+                if (e instanceof CallServiceRetiredError) {
+                  throw new CallGroupSessionEndedError(groupId, e);
+                }
+                throw e;
+              }
+            },
             whenMlsReady,
             isReadyClient: (client) => mlsReadyClient() === client,
             whenNextCatchUp,
             onWaiting: (reason) => {
               if (this.setupLive(seq)) this.connectingWaitsFor.set(reason);
-            },
-            handToGapLadder: (gid) => {
-              markEpochGap(gid);
             },
             log: appendLog,
           },
@@ -1680,9 +1751,11 @@ export class CallService {
       // nothing is sent in a group at an epoch nobody else holds (the server's ring-end still stops
       // the rings). What happens to the group was decided once, at the wait's settlement.
       if (e instanceof CallGroupUnprovenError) {
-        appendLog(`[Call] ERROR call=${callId} not joined (${e.kind}) - ${e.message}`);
+        const unreachable = callGroupUnreachable(e.kind);
+        appendLog(
+          `[Call] ${unreachable ? 'WARN' : 'ERROR'} call=${callId} not joined (${e.kind}) - ${e.message}`
+        );
         if (!this.setupLive(seq)) return;
-        const unreachable = e.kind === 'epoch-unknown' || e.kind === 'unlisted';
         showToast(unreachable ? m.call_group_unreachable() : m.call_group_not_current(), 'error');
         void this.endServerRing(groupId, callId, 'ended');
         this.endCall(false, undefined, false, true);
@@ -1809,10 +1882,18 @@ export class CallService {
     // can hold it for minutes, and a kill meanwhile would leave the row unfinalised); the server's
     // acceptance is patched in once the send answers (`onCallEndAnswered`).
     let hangup: Promise<EventTime | null> = Promise.resolve(null);
+    /** This device's id for the hangup - none when the service may no longer send. */
+    let ownDeviceId: string | null = null;
     if (notify && groupId && callId) {
-      const frame = this.callSignalFrame(
-        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
-      );
+      try {
+        ownDeviceId = this.mlsService.getDeviceId();
+      } catch (e: unknown) {
+        if (!(e instanceof CallServiceRetiredError)) throw e;
+        appendLog(`[Call] WARN hangup of ${callId} not sent - ${e.message}`);
+      }
+    }
+    if (ownDeviceId !== null && groupId && callId) {
+      const frame = this.callSignalFrame(mkCallHangup(callId, ownDeviceId, outcome));
       const send = () => this.sendMlsNotification(groupId, frame, endedAt);
       if (holdNotice && pendingWait) {
         appendLog(
@@ -1958,7 +2039,15 @@ export class CallService {
 
   /** Publishes Redis-backed call presence so sibling devices can detect an active call. */
   private syncCallPresence(active: boolean): void {
-    const deviceId = this.mlsService.getDeviceId();
+    let deviceId: string;
+    try {
+      deviceId = this.mlsService.getDeviceId();
+    } catch (e: unknown) {
+      // A retired service's presence is not published: the session may hold another account now.
+      if (!(e instanceof CallServiceRetiredError)) throw e;
+      appendLog(`[Call] WARN call presence (active=${active}) not published - ${e.message}`);
+      return;
+    }
     if (!deviceId?.trim()) return;
 
     void publishCallPresence({

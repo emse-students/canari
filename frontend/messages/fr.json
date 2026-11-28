@@ -605,6 +605,7 @@
   "call_e2e_setup_failed": "Appel interrompu : le chiffrement de bout en bout n'a pas pu être mis en place, rien n'a été transmis en clair.",
   "call_group_not_current": "Impossible de rejoindre l'appel : la conversation n'est pas à jour sur cet appareil.",
   "call_group_unreachable": "Impossible de rejoindre l'appel : le serveur n'a pas pu être joint.",
+  "call_answer_not_joinable_here": "Cet appel ne peut pas être rejoint depuis cet onglet.",
   "call_connecting_waiting_network": "En attente du réseau…",
   "call_connecting_waiting_conversation": "Mise à jour de la conversation…",
   "call_over": "Cet appel est terminé.",

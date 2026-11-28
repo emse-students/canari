@@ -610,9 +610,13 @@ const fakeMls = {
   leadGroup: vi.fn(() => () => {}),
   whenGroupFrameApplied: vi.fn(() => callGroup.frame.promise),
   whenGroupDrained: vi.fn(() => new Promise<void>(() => {})),
-  isGroupDrained: vi.fn(() => false),
+  groupDrainedNow: vi.fn(() => false),
+  isWsOpen: vi.fn(() => true),
   pullForGroup: vi.fn(async (_groupId: string) => 'listed' as const),
-  ownCommitPending: vi.fn(async (_groupId: string) => false),
+  ownCommitState: vi.fn(async (_groupId: string) => 'none' as const),
+  settleUnresolvedCommits: vi.fn(async (_groups?: string[]) => {}),
+  // The commit log holds nothing the mailbox lacks unless a test says so.
+  catchUpFromCommitLog: vi.fn(async (_groupId: string) => 'still-behind' as const),
   // The conversation's MLS tree: this device is alice's; bob and carol are the other members.
   getGroupMemberIdentities: vi.fn(async () => ['alice:device-1', 'bob:device-b', 'carol:device-c']),
   // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
@@ -5463,7 +5467,7 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     gate.setPendingCallAcceptHandler(null);
     const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
     setMlsReady(false);
-    vi.mocked(fakeMls.isGroupDrained).mockReturnValue(false);
+    vi.mocked(fakeMls.groupDrainedNow).mockReturnValue(false);
     const { resetEpochGapRegistry } = await import('$lib/utils/chat/epochGapRegistry');
     resetEpochGapRegistry();
   });
@@ -5638,11 +5642,11 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     ).toBe(true);
   });
 
-  it('a group proven STUCK fails the call visibly: a toast, the gap ladder armed, nothing sent in it', async () => {
+  it('a group proven STUCK fails the call visibly: a toast, the commit log tried first, nothing sent in it', async () => {
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
     // Drained at 0 while the server holds 1, and the pull the wait asks for changes nothing.
-    vi.mocked(fakeMls.isGroupDrained).mockReturnValue(true);
+    vi.mocked(fakeMls.groupDrainedNow).mockReturnValue(true);
     const service = new CallService(fakeMls);
     vi.mocked(fakeMls.sendMessage).mockClear();
     order.length = 0;
@@ -5651,9 +5655,9 @@ describe('an answer on the native ring, no invite ever delivered', () => {
 
     expect(fakeMls.pullForGroup).toHaveBeenCalledWith('group-1');
     expect(showToast).toHaveBeenCalledWith(m.call_group_not_current(), 'error');
-    // Handed to the EXISTING non-destructive first rung, never repaired by the call.
-    const { isInEpochGap } = await import('$lib/utils/chat/epochGapRegistry');
-    expect(isInEpochGap('group-1')).toBe(true);
+    // Rung 1 first - the same non-destructive step a refused commit takes - and only its failure
+    // is the answer; the call path itself marks nothing and repairs nothing.
+    expect(fakeMls.catchUpFromCommitLog).toHaveBeenCalledWith('group-1');
     expect(sentCallFrames()).toHaveLength(0);
     expect(order).toContain('api:/api/calls/ring-end');
     expect(get(service.callState)).not.toBe('incall');
@@ -5693,15 +5697,20 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(FakeSocket.instances).toHaveLength(1);
   });
 
-  it("the native ring is the leader tab's: a follower takes no answer, it stays pending", async () => {
+  it("the native ring is the leader tab's: a follower that holds an answer drops it and ends its ring", async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
     const tabLeader = await import('$lib/mls-client/tabLeader');
     const leadership = vi.spyOn(tabLeader, 'getTabLeadership').mockReturnValue('follower');
     try {
       const service = new CallService(fakeMls);
+      order.length = 0;
       const gate = await answeredOnTheRing(service);
       await settle();
       expect(get(service.callState)).toBe('idle');
-      expect(gate.hasPendingCallAccept('room-1')).toBe(true);
+      expect(gate.hasPendingCallAccept('room-1')).toBe(false);
+      expect(order).toContain('api:/api/calls/ring-end');
+      expect(showToast).toHaveBeenCalledWith(m.call_answer_not_joinable_here(), 'error');
       expect(
         (await logLines()).some(
           (l) => l.includes('ERROR system-surface answer') && l.includes('FOLLOWER')
@@ -5710,6 +5719,65 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     } finally {
       leadership.mockRestore();
     }
+  });
+
+  it('a service RETIRED mid-call ends it locally and sends nothing as the next account', async () => {
+    let account = 'alice';
+    let current: typeof fakeMls = fakeMls;
+    const service = new CallService(
+      () => current,
+      () => account
+    );
+    await answeredOnTheRing(service);
+    await settle();
+    expect(get(service.callState)).toBe('incall');
+
+    // The account switch: the holder now serves bob's client, and the session retires the service.
+    const bobs = {
+      ...fakeMls,
+      sendMessage: vi.fn(async () => ({})),
+      getDeviceId: () => 'device-b',
+    };
+    account = 'bob';
+    current = bobs as unknown as typeof fakeMls;
+    order.length = 0;
+    service.retire('account switch');
+    service.endCall();
+    await settle();
+
+    expect(get(service.callState)).toBe('idle');
+    expect(bobs.sendMessage).not.toHaveBeenCalled();
+    expect(order).not.toContain('api:/api/calls/ring-end');
+    expect((await logLines()).some((l) => l.includes('its service is retired'))).toBe(true);
+  });
+
+  it('the account changed under a service not yet retired: its hangup does not leave as the new account', async () => {
+    let account = 'alice';
+    let current: typeof fakeMls = fakeMls;
+    const service = new CallService(
+      () => current,
+      () => account
+    );
+    await answeredOnTheRing(service);
+    await settle();
+    expect(get(service.callState)).toBe('incall');
+
+    const bobs = {
+      ...fakeMls,
+      sendMessage: vi.fn(async () => ({})),
+      getDeviceId: () => 'device-b',
+    };
+    account = 'bob';
+    current = bobs as unknown as typeof fakeMls;
+    service.endCall();
+    await settle();
+
+    expect(bobs.sendMessage).not.toHaveBeenCalled();
+    expect(
+      (await logLines()).some((l) =>
+        l.includes('WARN hangup of room-1 not sent - the call service is retired')
+      )
+    ).toBe(true);
   });
 
   it('the session ending under the wait is no failure: no toast, nothing sent', async () => {

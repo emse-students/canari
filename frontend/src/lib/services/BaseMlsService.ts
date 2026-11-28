@@ -114,6 +114,8 @@ import type {
   DeliveredWelcome,
   IncomingDeliveryMeta,
   OneDeviceAddResult,
+  OwnCommitState,
+  CommitLogCatchUp,
 } from '$lib/mls-client/IMlsService';
 import type { ExternalJoinStanding } from '$lib/mls-client/externalJoinStanding';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
@@ -2769,8 +2771,8 @@ export abstract class BaseMlsService implements IMlsService {
     return drained;
   }
 
-  /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
-  private groupDrainedNow(groupId: string): boolean {
+  /** @inheritdoc */
+  groupDrainedNow(groupId: string): boolean {
     return this.mailboxListedOnThisLink() && this.messageScheduler.isGroupIdle(groupId);
   }
 
@@ -2876,9 +2878,51 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** @inheritdoc */
-  async ownCommitPending(groupId: string): Promise<boolean> {
-    if (this.messageScheduler.committingGroupId === groupId) return true;
-    return (await this.knownUnresolvedGroups()).has(groupId);
+  async ownCommitState(groupId: string): Promise<OwnCommitState> {
+    if (this.messageScheduler.committingGroupId === groupId) return 'in-flight';
+    return (await this.knownUnresolvedGroups()).has(groupId) ? 'unresolved' : 'none';
+  }
+
+  /** @inheritdoc */
+  catchUpFromCommitLog(groupId: string): Promise<CommitLogCatchUp> {
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    return this.runUnderMlsLock(async () => {
+      // THE SAME FIRST STEP AS A REFUSED COMMIT (`catchUpOnRefusedCommit`): the gap is marked, then
+      // rung 1 runs with its books - persisted on any applied commit, un-marked on a heal, held
+      // behind a refused backlog.
+      const markedBefore = isInEpochGap(groupId);
+      log(`[GAP] ${short} behind the server with its mailbox listed - rung 1 (commit-log replay)`);
+      markEpochGap(groupId);
+      try {
+        const replay = await replayAndRecord(this, groupId, this.userId, log, {
+          persist: scheduleOutboundMlsPersist,
+          refusedBacklog: 'hold',
+        });
+        if (replay.healed) return 'healed';
+        if (replay.heldBehindRefusedBacklog) {
+          log(
+            `[GAP] ${short} not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked`
+          );
+          return 'held';
+        }
+        // Read under the lock: a frame applied before it took the lock left nothing to replay.
+        // The mark this call set answered a gap that is not there - taken back, never left to
+        // freeze the outbox; one another path set stays its own.
+        if (replay.activeEpoch !== undefined && this.getEpoch(groupId) >= replay.activeEpoch) {
+          if (!markedBefore) clearEpochGap(groupId);
+          return 'healed';
+        }
+        log(
+          `[GAP] ${short} still behind after rung 1${replay.belowFloor ? ' - the commits are pruned below the log floor' : replay.gapAt !== undefined ? ` - the commit log is HOLED at epoch ${replay.gapAt}` : ''} - left to the sync watchdog for rung 2`
+        );
+        return 'still-behind';
+      } catch (e) {
+        // Never silent: this is the branch that leaves the group to rung 2.
+        console.warn(`[GAP] replay error for ${short}, left to the sync watchdog:`, e);
+        return 'still-behind';
+      }
+    });
   }
 
   /** @inheritdoc */
