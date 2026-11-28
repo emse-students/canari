@@ -69,6 +69,7 @@ import {
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
 import { upsertDeviceKeyPackage } from '../utils/device-key-package';
+import { sendMailForget } from '../utils/mail-forget';
 import { RouteParams } from '../common/route-params';
 
 /**
@@ -1037,6 +1038,14 @@ export class DevicesController {
     //    next unlock rebinds the session.
     if (reason === 'owner') await this.refuseOwnDevice(safeUserId, safeDeviceId, callerSessionId);
 
+    // 0b. The device's push registration, read BEFORE the purge deletes it: an owner's revocation
+    //     tells it to forget the school mailbox (mail lot 5, D6, step 3b) and that row is the only
+    //     way to reach it. A retirement tells nothing - the id is the caller's own install's.
+    const forgetRows =
+      reason === 'owner'
+        ? await this.pushTokenRepo.find({ where: { userId: safeUserId, deviceId: safeDeviceId } })
+        : [];
+
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
     //    key groups the device held: its rows were the binding the revoked-leaves question reads.
     const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId, {
@@ -1072,6 +1081,9 @@ export class DevicesController {
     //    used. The denylist row above is the durable half; this is what makes it immediate. It is
     //    sent BEFORE the sessions are ended, so a failure of that step below never skips it.
     const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
+    // 3b. ...and by push, whether or not it is connected: it forgets the school mailbox (best effort,
+    //     never throws; its own sign-out at the next refused refresh is the durable half).
+    if (recordedReason === 'owner') await sendMailForget(forgetRows, 'device-revoked', this.logger);
 
     // 4. AN OWNER'S REVOCATION ENDS THE DEVICE'S SESSIONS HERE, server-side, so it never depends on
     //    the panel's second request. Every session bound to the device except the caller's own is

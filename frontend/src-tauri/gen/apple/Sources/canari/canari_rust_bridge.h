@@ -16,6 +16,10 @@ void canari_free_string(char *ptr);
 /// Free with canari_free_string. Reached through `CanariAppGroupPath` only.
 char *canari_app_group_store_dir(void);
 
+/// Mail lot 5 (D6): erases this install's copy of `user_id`'s mailbox password for the notification
+/// extension (when it is that account's) and the shared mail cursor. 0 = done, -1 = not all erased.
+int32_t canari_mail_forget(const char *user_id);
+
 /// An extension banner reaches an ACTIVE app: 1 present it (the page stood down for it), 0 its
 /// claim was given back, 2 the page's banner announces it, 3 its key left the ledger (present it,
 /// recorded again), -1 ledger failure (the claim stands). The ledger is sealed under

@@ -20,6 +20,8 @@
     <string name="notif_channel_mail_desc">Un nouveau mail dans la boîte de l\'école</string>
     <string name="notif_channel_mail_watch_name">Réception des mails</string>
     <string name="notif_channel_mail_watch_desc">La notification affichée tant que Canari attend les nouveaux mails</string>
+    <!-- Mail lot 5: the empty mail push while the native watcher is absent (MailPushHandoff). -->
+    <string name="notif_mail_generic">Nouveau mail</string>
     <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
     <!-- The ongoing-call notification's microphone action; its label is the state it goes TO. -->
     <string name="notif_action_call_mute">Couper le micro</string>

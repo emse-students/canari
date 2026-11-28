@@ -98,11 +98,25 @@ pub(crate) fn forget(dir: &Path, user_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the per-account cursor files live. On iOS, the App Group store (mail lot 5): the
+/// notification extension reads the cursor above which a mail is new, and writes it after it showed
+/// one, so the two processes share ONE durable answer to "already notified". Elsewhere the app's data
+/// directory, which lot 4b's native Android watcher reads.
 fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| {
-        log::warn!("[MailWatch] app_data_dir() failed: {e}");
-        e.to_string()
-    })
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        crate::app_group::app_group_dir().inspect_err(|e| {
+            log::warn!("[MailWatch] the App Group store is unavailable: {e}");
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        app.path().app_data_dir().map_err(|e| {
+            log::warn!("[MailWatch] app_data_dir() failed: {e}");
+            e.to_string()
+        })
+    }
 }
 
 /// The page reads its cursor (the apps keep it here, not in `localStorage`, mail lot 4).
@@ -130,9 +144,13 @@ pub(crate) fn mail_watch_cursor_write(
     Ok(())
 }
 
-/// D8, the switch turned off, the account's local wipe: the native mail watch state goes.
+/// D8, the switch turned off, the account's local wipe: the native mail watch state goes - the
+/// cursor, and the notification extension's copy of the mailbox password (mail lot 5), which is
+/// wanted only while the switch is on.
 #[tauri::command]
 pub(crate) fn mail_watch_forget(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
+    super::mail_push_secret::erase()
+        .inspect_err(|e| log::warn!("[MailWatch] the extension's password copy not erased: {e}"))?;
     forget(&data_dir(&app)?, &user_id)
         .inspect_err(|e| log::warn!("[MailWatch] not forgotten: {e}"))?;
     log::info!("[MailWatch] native mail watch state erased");

@@ -406,3 +406,17 @@ export function parseWaitSetAnswer(body: Json): WaitSetAnswer {
     canceled: response.canceled === true || response.canceled === '1',
   };
 }
+
+/**
+ * The values of `GetPrefsResponse` for `names` (lot 5): `''` for a preference the answer leaves
+ * out, which is how Zimbra says it was never set - and the value that, written back, unsets it again.
+ */
+export function parsePrefs(body: Json, names: readonly string[]): Record<string, string> {
+  const answer = responseOf(body, 'GetPrefsResponse');
+  const found = new Map<string, string>();
+  for (const pref of list(answer.pref)) {
+    const name = str(pref.name);
+    if (name !== null) found.set(name, str(pref._content) ?? '');
+  }
+  return Object.fromEntries(names.map((name) => [name, found.get(name) ?? '']));
+}

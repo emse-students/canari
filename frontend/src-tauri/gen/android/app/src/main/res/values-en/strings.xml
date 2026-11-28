@@ -14,6 +14,8 @@
     <string name="notif_channel_mail_desc">A new mail in the school mailbox</string>
     <string name="notif_channel_mail_watch_name">Receiving mail</string>
     <string name="notif_channel_mail_watch_desc">The notification shown while Canari waits for new mail</string>
+    <!-- Mail lot 5: the empty mail push while the native watcher is absent (MailPushHandoff). -->
+    <string name="notif_mail_generic">New mail</string>
     <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>
     <string name="notif_action_call_mute">Mute</string>
     <string name="notif_action_call_unmute">Unmute</string>

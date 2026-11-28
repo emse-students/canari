@@ -120,9 +120,11 @@ TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES COMMUNITY_OWNED_MAX"
 # that opened sessions on it would spend production's quota and mix its sessions with real calls.
 # MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET because it is the credential a push to PRODUCTION carries:
 # a local stack has no use for it, and holding it is one more copy to leak.
+# MAIL_ALERT_HOOK_SECRET for the same reason: it is what production's Cloudflare Email Worker carries.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
 LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY MICONNECT_READER_TOKEN
-CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET"
+CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET
+MAIL_ALERT_HOOK_SECRET"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

@@ -10,7 +10,10 @@ vi.mock('$lib/mobile/androidMailWatch', () => ({
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   serverMailMode: () => 'on',
   serverMailModeKnown: () => true,
+  serverMailPush: () => 'none',
 }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ globalSession: { deviceKeyB64: '' } }));
+vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: vi.fn() }));
 const screen = vi.hoisted(() => ({ on: true }));
 vi.mock('$lib/utils/appForeground', () => ({
   onAppScreenChange: () => () => {},
@@ -24,7 +27,10 @@ vi.mock('./connect', () => ({ mailStreamOpener: vi.fn(), platformTransport: vi.f
 vi.mock('./mailClient.svelte', () => ({ currentMailClient: () => null }));
 vi.mock('./mailNotify', () => ({ postMailNotices: vi.fn() }));
 vi.mock('./soapClient', () => ({ ZimbraSoapClient: vi.fn() }));
-vi.mock('$lib/utils/apiUrl', () => ({ gatewayUrl: () => 'https://example.invalid' }));
+vi.mock('$lib/utils/apiUrl', () => ({
+  gatewayUrl: () => 'https://example.invalid',
+  deliveryUrl: () => 'https://example.invalid',
+}));
 
 import type { MailClient } from './mailClient.svelte';
 import type { MailSessionState } from './mailSession';
@@ -32,6 +38,7 @@ import {
   backgroundRefresh,
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
+  mailAlertWanted,
   mailTabOnScreen,
   pauseUntilRetry,
   watcherShouldRun,
@@ -39,7 +46,9 @@ import {
 import {
   forgetMailNotificationsSwitch,
   mailNotificationsWanted,
+  mailPersistentWanted,
   setMailNotificationsWanted,
+  setMailPersistentWanted,
 } from './mailWatchSwitch.svelte';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -56,6 +65,11 @@ const facts = (over: Partial<Parameters<typeof watcherShouldRun>[0]> = {}) => ({
   wanted: true,
   state: 'ready' as MailSessionState['kind'],
   eligible: true,
+  pushMode: 'none' as 'none' | 'cloudflare',
+  pushKnown: true,
+  phone: false,
+  needsPersistent: false,
+  persistent: false,
   ...over,
 });
 
@@ -81,6 +95,29 @@ describe('watcherShouldRun', () => {
     expect(watcherShouldRun(facts({ eligible: false }))).toBe(false);
     for (const state of ['signed_out', 'closed', 'needs_password', 'unavailable'] as const)
       expect(watcherShouldRun(facts({ state }))).toBe(false);
+  });
+
+  it('on Android with mail_push = cloudflare, runs only if the account keeps the persistent connection (lot 5)', () => {
+    expect(watcherShouldRun(facts({ needsPersistent: true, persistent: false }))).toBe(false);
+    expect(watcherShouldRun(facts({ needsPersistent: true, persistent: true }))).toBe(true);
+    expect(watcherShouldRun(facts({ needsPersistent: false, persistent: false }))).toBe(true);
+  });
+});
+
+describe('mailAlertWanted (lot 5)', () => {
+  const on = { phone: true, pushMode: 'cloudflare' as const, pushKnown: true };
+  it('wants the empty push only on a phone, with cloudflare READ, the tab on, eligible and notifications on', () => {
+    expect(mailAlertWanted(facts(on))).toBe(true);
+    expect(mailAlertWanted(facts({ ...on, phone: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, pushMode: 'none' }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, pushKnown: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, wanted: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, eligible: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, mailOn: false }))).toBe(false);
+    expect(mailAlertWanted(facts({ ...on, client: null }))).toBe(false);
+  });
+  it('does not depend on the session state: the sync waits for an open mailbox itself', () => {
+    expect(mailAlertWanted(facts({ ...on, state: 'needs_password' }))).toBe(true);
   });
 });
 
@@ -207,5 +244,14 @@ describe('the switch "Notifications de nouveaux mails"', () => {
     store.removeItem(ACCOUNT_KEY.mailNotifications('u1'));
     forgetMailNotificationsSwitch('u1');
     expect(mailNotificationsWanted('u1', store as unknown as Storage)).toBe(false);
+  });
+
+  it('the persistent connection (lot 5) is off by default, kept per account, and forgotten with D8', () => {
+    expect(mailPersistentWanted('u1', store as unknown as Storage)).toBe(false);
+    setMailPersistentWanted('u1', true, store as unknown as Storage);
+    expect(store.getItem(ACCOUNT_KEY.mailPersistentConnection('u1'))).toBe('1');
+    store.removeItem(ACCOUNT_KEY.mailPersistentConnection('u1'));
+    forgetMailNotificationsSwitch('u1');
+    expect(mailPersistentWanted('u1', store as unknown as Storage)).toBe(false);
   });
 });

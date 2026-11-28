@@ -216,6 +216,18 @@ export const ACCOUNT_KEY = {
    */
   mailNotifications: (userId: string) => `canari_mail_notifications:v1:${userId}`,
   /**
+   * `mail/mailAlert.ts` (lot 5): whether THIS device subscribed to the empty mail push, and the
+   * account's new-mail alert preferences as they were BEFORE Canari pointed them at its address
+   * (restored exactly when the last device leaves). Erased with the mail data (D8).
+   */
+  mailAlert: (userId: string) => `canari_mail_alert:v1:${userId}`,
+  /**
+   * `mail/mailWatchSwitch.svelte.ts` (lot 5): on Android while `mail_push = cloudflare`, whether the
+   * account ALSO keeps lot 4's persistent connection ("sans aucun serveur, consomme plus de
+   * batterie"). Erased with the mail data (D8).
+   */
+  mailPersistentConnection: (userId: string) => `canari_mail_persistent:v1:${userId}`,
+  /**
    * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
    * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
    * truth; this is the optimistic copy that keeps a help from replaying offline.
@@ -339,6 +351,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.mailSealedPassword(userId),
     ACCOUNT_KEY.mailWatchCursor(userId),
     ACCOUNT_KEY.mailNotifications(userId),
+    ACCOUNT_KEY.mailAlert(userId),
+    ACCOUNT_KEY.mailPersistentConnection(userId),
   ];
 }
 

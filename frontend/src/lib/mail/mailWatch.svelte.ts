@@ -6,19 +6,35 @@ import {
   stopAndroidMailService,
 } from '$lib/mobile/androidMailWatch';
 import { m } from '$lib/paraglide/messages';
-import { serverMailMode, serverMailModeKnown } from '$lib/stores/appVersionCheck.svelte';
+import {
+  serverMailMode,
+  serverMailModeKnown,
+  serverMailPush,
+} from '$lib/stores/appVersionCheck.svelte';
+import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { apiFetch } from '$lib/utils/apiFetch';
+import { deliveryUrl } from '$lib/utils/apiUrl';
 import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import { appPathFromPathname } from '$lib/utils/internalPath';
 import { Log } from '$lib/utils/Log';
 import { gatewayUrl } from '$lib/utils/apiUrl';
+import { httpMailAlertServer, syncMailAlert, type MailAlertOutcome } from './mailAlert';
+import { createMailAlertSync } from './mailAlertSync';
+import { eraseMailPushSecret, storeMailPushSecret } from './mailPushSecret';
 import { mailStreamOpener, platformTransport } from './connect';
 import { currentMailClient, type MailClient } from './mailClient.svelte';
 import { postMailNotices } from './mailNotify';
 import type { MailSessionState } from './mailSession';
 import { MailWatcher, type CheckOutcome, type NewMail } from './mailWatcher';
 import { platformCursorStore, type MailCursorStore } from './mailWatchCursor';
-import { forgetMailNotificationsSwitch, mailNotificationsWanted } from './mailWatchSwitch.svelte';
+import {
+  forgetMailNotificationsSwitch,
+  mailNotificationsWanted,
+  mailPersistentWanted,
+} from './mailWatchSwitch.svelte';
+import { readRememberedMailPassword } from './sealedMailPassword';
 import { ZimbraSoapClient } from './soapClient';
 
 /**
@@ -45,6 +61,12 @@ import { ZimbraSoapClient } from './soapClient';
  *
  * The switch turned off ERASES the cursor once the watcher has stopped: turned on again, the watcher
  * takes a new baseline and announces nothing of the time it was off.
+ *
+ * **Mail lot 5** (`mail_push`, the admin's switch): with `cloudflare`, a PHONE that wants
+ * notifications also points the account's own Zimbra alert at Canari (`mailAlert.ts`), so an empty
+ * push wakes it in seconds; on Android the persistent connection then runs only if the account ALSO
+ * keeps it ("Connexion permanente"). With `none`, nothing changes from lot 4, and any alert of
+ * Canari's shape is taken back. Web and desktop never subscribe (no push reaches them for mail).
  */
 
 /** The DOM hook the iOS background refresh calls (`canari_ios.mm`). */
@@ -66,6 +88,19 @@ export interface WatchFacts {
   wanted: boolean;
   state: MailSessionState['kind'];
   eligible: boolean;
+  /** The server's `mail_push` (lot 5), `none` until read. */
+  pushMode: 'none' | 'cloudflare';
+  /** Whether {@link pushMode} is a READ answer of the server rather than its default. */
+  pushKnown: boolean;
+  /** This runtime is a phone (Android or iOS), the only one a mail push reaches. */
+  phone: boolean;
+  /**
+   * Android with `mail_push = cloudflare`: the persistent connection runs only if {@link persistent}
+   * says the account keeps it beside the fast path.
+   */
+  needsPersistent: boolean;
+  /** The account's "Connexion permanente" on this device (read only while {@link needsPersistent}). */
+  persistent: boolean;
 }
 
 /** Whether the watcher runs under `facts`. Pure, for the test of the lifecycle. */
@@ -75,7 +110,24 @@ export function watcherShouldRun(facts: WatchFacts): boolean {
     facts.mailOn &&
     facts.wanted &&
     facts.eligible &&
-    facts.state === 'ready'
+    facts.state === 'ready' &&
+    (!facts.needsPersistent || facts.persistent)
+  );
+}
+
+/**
+ * Whether this device wants the EMPTY mail push of lot 5: a phone, the server's `mail_push` READ as
+ * `cloudflare`, the Mail tab's switch on, an eligible account, and its notifications on. Pure.
+ */
+export function mailAlertWanted(facts: WatchFacts): boolean {
+  return (
+    facts.client !== null &&
+    facts.phone &&
+    facts.mailOn &&
+    facts.pushKnown &&
+    facts.pushMode === 'cloudflare' &&
+    facts.wanted &&
+    facts.eligible
   );
 }
 
@@ -235,7 +287,8 @@ export function watchMailNotifications(): void {
   let lastFacts: WatchFacts | null = null;
 
   const factsKey = (facts: WatchFacts) =>
-    `${facts.mailOn}|${facts.wanted}|${facts.eligible}|${facts.state}`;
+    `${facts.mailOn}|${facts.wanted}|${facts.eligible}|${facts.state}|${facts.needsPersistent}|${facts.persistent}`;
+  const alertSync = createMailAlertSync(runAlertSync);
 
   const holdService = (run: boolean) => {
     if (!isAndroidTauriRuntime()) return;
@@ -296,6 +349,14 @@ export function watchMailNotifications(): void {
       }
       announceIosRefreshReady(facts);
     }
+    if (facts.client) {
+      alertSync.update({
+        userId: facts.client.userId,
+        ready: facts.state === 'ready',
+        pushKnown: facts.mailKnown && facts.pushKnown,
+        want: mailAlertWanted(facts),
+      });
+    }
   };
 
   runEndedListener = (client, reason) => {
@@ -318,6 +379,11 @@ export function watchMailNotifications(): void {
         wanted: client ? mailNotificationsWanted(client.userId) : false,
         state: client ? client.store.sessionState.kind : 'signed_out',
         eligible: client ? client.store.eligibility === 'eligible' : false,
+        pushMode: serverMailPush(),
+        pushKnown: serverMailModeKnown(),
+        phone: isAndroidTauriRuntime() || isIosTauriRuntime(),
+        needsPersistent: isAndroidTauriRuntime() && serverMailPush() === 'cloudflare',
+        persistent: client ? mailPersistentWanted(client.userId) : false,
       };
       untrack(() => apply(facts));
     });
@@ -358,6 +424,70 @@ export function watchMailNotifications(): void {
     (window as unknown as Record<string, unknown>)[IOS_REFRESH_HOOK] = () =>
       backgroundRefresh(lastFacts);
   }
+}
+
+/**
+ * ONE sync of the account's alert for the current client (`mailAlertSync.ts` schedules it), and the
+ * iOS extension's copy of the password: written while the push is wanted AND the password is
+ * remembered, erased otherwise - one erase, `eraseMailPushSecret`.
+ */
+async function runAlertSync(userId: string, want: boolean): Promise<MailAlertOutcome> {
+  const client = currentMailClient();
+  if (!client || client.userId !== userId) {
+    Log.d('MAIL-ALERT', 'the client changed before the sync ran - nothing done');
+    return 'unchanged';
+  }
+  const outcome = await syncMailAlert(
+    {
+      userId,
+      deviceId: readDeviceId(userId),
+      mailbox: client.session,
+      server: httpMailAlertServer((path, body) =>
+        apiFetch(`${deliveryUrl()}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ),
+      store: localStorage,
+    },
+    want
+  );
+  const subscribed = outcome === 'configured' || outcome === 'joined' || outcome === 'unchanged';
+  if (want && subscribed) await writeExtensionSecret(userId);
+  else if (!want) await eraseMailPushSecret('the mail push is not wanted');
+  return outcome;
+}
+
+/** This install's Canari device id for `userId`, or `null` before it exists. */
+function readDeviceId(userId: string): string | null {
+  try {
+    return localStorage.getItem(ACCOUNT_KEY.deviceId(userId));
+  } catch (err) {
+    Log.w('MAIL-ALERT', `ERROR: the device id could not be read (${String(err)})`);
+    return null;
+  }
+}
+
+/**
+ * Writes the iOS extension's copy of the password when the account remembers it (D6), erases it
+ * otherwise: without a remembered password the extension shows the generic notice.
+ */
+async function writeExtensionSecret(userId: string): Promise<void> {
+  if (!isIosTauriRuntime()) return;
+  const deviceKey = globalSession.deviceKeyB64 || null;
+  if (!deviceKey) {
+    Log.i('MAIL-ALERT', 'no device key - the extension will show the generic notice');
+    await eraseMailPushSecret('no device key');
+    return;
+  }
+  const read = await readRememberedMailPassword(userId, deviceKey);
+  if (read.kind !== 'opened') {
+    Log.i('MAIL-ALERT', `the password is not remembered (${read.kind}) - the generic notice it is`);
+    await eraseMailPushSecret('the password is not remembered');
+    return;
+  }
+  await storeMailPushSecret(userId, read.remembered.account, read.remembered.password);
 }
 
 /**

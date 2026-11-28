@@ -7,15 +7,22 @@
    *
    * Turning it on asks the notification permission first - from this gesture, never from the
    * watcher - and a device that refuses keeps it off and says so.
+   *
+   * Lot 5: with the server's `mail_push = cloudflare` a phone gets its mail by an empty push, and the
+   * hint says so; on Android a second switch keeps the persistent connection as well ("Connexion
+   * permanente", off by default - no server at all, more battery).
    */
-  import { Mail } from '@lucide/svelte';
+  import { Mail, Plug } from '@lucide/svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { currentMailClient, mailTabVisible } from '$lib/mail/mailClient.svelte';
   import { askMailNotificationPermission } from '$lib/mail/mailNotify';
   import {
     mailNotificationsWanted,
+    mailPersistentWanted,
     setMailNotificationsWanted,
+    setMailPersistentWanted,
   } from '$lib/mail/mailWatchSwitch.svelte';
+  import { serverMailPush } from '$lib/stores/appVersionCheck.svelte';
   import { m } from '$lib/paraglide/messages';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import { Log } from '$lib/utils/Log';
@@ -26,12 +33,20 @@
   let busy = $state(false);
   let blocked = $state(false);
 
+  const pushed = $derived(
+    serverMailPush() === 'cloudflare' && (isAndroidTauriRuntime() || isIosTauriRuntime())
+  );
+  const persistentShown = $derived(on && pushed && isAndroidTauriRuntime());
+  const persistentOn = $derived(client ? mailPersistentWanted(client.userId) : false);
+
   const hint = $derived(
-    isAndroidTauriRuntime()
-      ? m.mail_notif_setting_hint_android()
-      : isIosTauriRuntime()
-        ? m.mail_notif_setting_hint_ios()
-        : m.mail_notif_setting_hint_open()
+    pushed
+      ? m.mail_notif_setting_hint_push()
+      : isAndroidTauriRuntime()
+        ? m.mail_notif_setting_hint_android()
+        : isIosTauriRuntime()
+          ? m.mail_notif_setting_hint_ios()
+          : m.mail_notif_setting_hint_open()
   );
 
   async function change(next: boolean) {
@@ -67,6 +82,19 @@
       {hint}
       onchange={(next) => void change(next)}
     />
+    {#if persistentShown && client}
+      <Toggle
+        layout="row"
+        icon={Plug}
+        checked={persistentOn}
+        label={m.mail_persistent_setting_label()}
+        hint={m.mail_persistent_setting_hint()}
+        onchange={(next) => {
+          Log.i('SETTINGS', `mail persistent connection -> ${next}`);
+          setMailPersistentWanted(client.userId, next);
+        }}
+      />
+    {/if}
     {#if blocked}
       <p class="text-text-muted text-xs font-medium" role="status">
         {m.mail_notif_setting_blocked()}

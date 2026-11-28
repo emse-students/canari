@@ -167,6 +167,10 @@ class NotificationService: UNNotificationServiceExtension {
       applyReactionContent(userInfo: userInfo, content: content)
       trace?.outcome = "server-content"
       finish()
+    case "mail":
+      // Mail lot 5: an EMPTY push - the account's Zimbra alert reached Canari. This process reads the
+      // new mail itself (`handleMailPush`).
+      handleMailPush(content: content)
     case "call_ring":
       // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
       // ring until CALLS_NATIVE_RING_COMPILED). It is NOT an MLS message: falling to the default
@@ -3882,5 +3886,304 @@ class NotificationService: UNNotificationServiceExtension {
       out.append(allowed.contains(ch) ? ch : "_")
     }
     return out
+  }
+}
+
+// MARK: - Mail lot 5: the new mail behind an empty push --------------------------------------------
+
+/// What the extension needs to read the school mailbox, from the Keychain item the app writes
+/// (`mail_push_secret.rs`) while "remember", the account's notifications and `mail_push = cloudflare`
+/// all hold. Never logged.
+struct MailPushSecret {
+  let userId: String
+  let account: String
+  let password: String
+}
+
+/// One mail as the notification shows it.
+struct MailPushItem {
+  let id: Int
+  let unread: Bool
+  let sender: String
+  let subject: String
+}
+
+/// The pure rules of the mail push, apart from the I/O so `canari_NSETests` can assert them.
+enum MailPushRules {
+  /// The Keychain item's service and account - the same two as `mail_push_secret.rs`
+  /// (`mailPushSecret.test.ts` holds the copies together).
+  static let keychainService = "fr.emse.canari"
+  static let keychainAccount = "canari_mail_push_secret"
+  /// The mailbox's SOAP endpoint (`soapClient.ts` `MAIL_HOST` + `SOAP_PATH`).
+  static let soapUrl = "https://partage.emse.fr/service/soap"
+  /// The inbox's folder id (`mailWatcher.ts` `INBOX_FOLDER_ID`).
+  static let inboxFolderId = "2"
+  /// One page of the inbox, newest id first - as many mails as a notification counts.
+  static let pageSize = 20
+
+  static func parseSecret(_ data: Data) -> MailPushSecret? {
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let userId = json["userId"] as? String, !userId.isEmpty,
+      let account = json["account"] as? String, !account.isEmpty,
+      let password = json["password"] as? String, !password.isEmpty
+    else { return nil }
+    return MailPushSecret(userId: userId, account: account.lowercased(), password: password)
+  }
+
+  /// The cursor's `highest` when it is a version-1 cursor of `account` (`mailWatchCursor.ts`), else nil.
+  static func parseCursor(_ data: Data, account: String) -> Int? {
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      (json["v"] as? Int) == 1,
+      let owner = json["account"] as? String, owner == account.lowercased(),
+      let highest = json["highest"] as? Int, highest >= 0
+    else { return nil }
+    return highest
+  }
+
+  /// The cursor's text, as `writeMailWatchCursor` writes it.
+  static func cursorJson(account: String, highest: Int) -> Data {
+    let json: [String: Any] = ["v": 1, "account": account.lowercased(), "highest": highest]
+    return (try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])) ?? Data()
+  }
+
+  /// The items of a `SearchResponse` body; an id that is not a plain number (a shared item) is skipped.
+  static func parseItems(_ body: [String: Any]) -> [MailPushItem] {
+    guard let response = body["SearchResponse"] as? [String: Any] else { return [] }
+    let raw: [[String: Any]]
+    if let many = response["m"] as? [[String: Any]] {
+      raw = many
+    } else if let one = response["m"] as? [String: Any] {
+      raw = [one]
+    } else {
+      raw = []
+    }
+    return raw.compactMap { m in
+      guard let idText = m["id"] as? String, let id = Int(idText), id >= 0 else { return nil }
+      let flags = m["f"] as? String ?? ""
+      let addresses =
+        (m["e"] as? [[String: Any]]) ?? ((m["e"] as? [String: Any]).map { [$0] } ?? [])
+      let from = addresses.first { ($0["t"] as? String) == "f" }
+      let name = (from?["p"] as? String) ?? (from?["d"] as? String) ?? (from?["a"] as? String) ?? ""
+      return MailPushItem(
+        id: id, unread: flags.contains("u"), sender: name, subject: m["su"] as? String ?? "")
+    }
+  }
+
+  /// What a read decides: the cursor to write and the mails to show. No cursor takes a baseline at
+  /// the newest id and shows the newest UNREAD mail (the push said one arrived); a cursor shows the
+  /// unread mails above it, newest first.
+  static func decide(items: [MailPushItem], cursor: Int?) -> (highest: Int, fresh: [MailPushItem]) {
+    let top = items.map(\.id).max() ?? (cursor ?? 0)
+    guard let cursor = cursor else {
+      return (top, Array(items.filter(\.unread).prefix(1)))
+    }
+    let fresh = items.filter { $0.id > cursor && $0.unread }
+    return (max(top, cursor), fresh)
+  }
+}
+
+extension NotificationService {
+  /// THE NEW MAIL BEHIND AN EMPTY PUSH (mail lot 5, docs/wiki/mail-client-transport.md#as-built---lot-5).
+  ///
+  /// The server sent `{type: 'mail'}` and nothing else, as an alert titled `Canari` with a generic
+  /// "Nouveau mail" body (the server's, in the device's language) - what stays when this process
+  /// cannot do better. It reads the mailbox itself, as Mail does: the Keychain item gives the address
+  /// and the password, `AuthRequest` a token, one inbox page the mails above the SHARED cursor (the
+  /// App Group's `mail_watch/cursor_<userId>.json`, which the app's watcher reads too). The cursor is
+  /// WRITTEN BEFORE the notification is handed over, so the app never announces the same mail again.
+  ///
+  /// - the app in the foreground: its own watcher tells - a blank passive row, removed by the app;
+  /// - no item, another account signed in, a failed read: the generic body, said in the log (a stated
+  ///   degraded display, never a silent one);
+  /// - nothing new and unread (already read, or already announced): a blank passive row.
+  func handleMailPush(content: UNMutableNotificationContent) {
+    let locale = loadPushContext()?.locale
+    content.threadIdentifier = "canari_mail"
+    content.userInfo["deepLink"] = "/mail"
+    guard let dir = Self.mailAppGroupDir() else {
+      return finishMailGeneric(cause: "no-app-group")
+    }
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(Self.appInForegroundFile).path) {
+      NseLog.log.notice("[CanariNSE] [MAIL] the app is in the foreground - its watcher tells")
+      return finishMailBlank(content: content, outcome: "mail-foreground")
+    }
+    guard let secret = Self.readMailPushSecret() else {
+      return finishMailGeneric(cause: "no-secret")
+    }
+    guard Self.signedInUserId() == secret.userId else {
+      return finishMailGeneric(cause: "other-account")
+    }
+    let cursorUrl = dir.appendingPathComponent("mail_watch", isDirectory: true)
+      .appendingPathComponent("cursor_\(secret.userId).json")
+    let cursor = (try? Data(contentsOf: cursorUrl)).flatMap {
+      MailPushRules.parseCursor($0, account: secret.account)
+    }
+    guard let token = mailAuth(secret) else {
+      return finishMailGeneric(cause: "auth")
+    }
+    defer { mailEndSession(token) }
+    guard let body = mailCall(Self.mailSearchBody(), token: token) else {
+      return finishMailGeneric(cause: "search")
+    }
+    let items = MailPushRules.parseItems(body)
+    let (highest, fresh) = MailPushRules.decide(items: items, cursor: cursor)
+    if highest != cursor {
+      do {
+        try FileManager.default.createDirectory(
+          at: cursorUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try MailPushRules.cursorJson(account: secret.account, highest: highest)
+          .write(to: cursorUrl, options: .atomic)
+      } catch {
+        // Not written: showing the mail now would announce it twice (the app reads the old cursor).
+        return finishMailGeneric(cause: "cursor-not-written")
+      }
+    }
+    NseLog.log.notice(
+      "[CanariNSE] [MAIL] read: \(items.count, privacy: .public) item(s), \(fresh.count, privacy: .public) new unread, baseline=\(cursor == nil, privacy: .public)"
+    )
+    guard let newest = fresh.first else {
+      return finishMailBlank(content: content, outcome: "mail-nothing-new")
+    }
+    if fresh.count == 1 {
+      content.title =
+        newest.sender.isEmpty ? Self.localized("notif.mail.new", locale: locale) : newest.sender
+      content.body =
+        newest.subject.isEmpty ? Self.localized("notif.mail.nosubject", locale: locale) : newest.subject
+    } else {
+      content.title = Self.localizedFormat("notif.mail.many", String(fresh.count), locale: locale)
+      content.body = [newest.sender, newest.subject].filter { !$0.isEmpty }.joined(separator: " - ")
+    }
+    trace?.outcome = "mail"
+    finish()
+  }
+
+  /// The server's generic alert stays as it came ("Nouveau mail", in the device's language), and
+  /// the log says why: a stated degraded display.
+  private func finishMailGeneric(cause: String) {
+    NseLog.log.error(
+      "[CanariNSE] [MAIL] ERROR the new mail could not be read (\(cause, privacy: .public)) - the generic notice is shown"
+    )
+    noteCause("mail-\(cause)")
+    trace?.outcome = "mail-generic"
+    finish()
+  }
+
+  /// A blank passive row (an extension cannot drop an alert push), stamped so the app removes it
+  /// (`CanariRemoveWithheldTrendNotifications`).
+  private func finishMailBlank(content: UNMutableNotificationContent, outcome: String) {
+    content.title = ""
+    content.subtitle = ""
+    content.body = ""
+    content.sound = nil
+    content.userInfo["canariWithheld"] = "mail"
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .passive
+    }
+    trace?.outcome = outcome
+    finish()
+  }
+
+  private static func mailAppGroupDir() -> URL? {
+    guard let raw = canari_app_group_store_dir() else { return nil }
+    defer { canari_free_string(raw) }
+    return URL(fileURLWithPath: String(cString: raw), isDirectory: true)
+  }
+
+  private static func readMailPushSecret() -> MailPushSecret? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: MailPushRules.keychainService,
+      kSecAttrAccount as String: MailPushRules.keychainAccount,
+      kSecAttrAccessGroup as String: appGroupId,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let data = item as? Data else {
+      NseLog.log.notice(
+        "[CanariNSE] [MAIL] no mailbox password for the extension (status=\(status, privacy: .public))")
+      return nil
+    }
+    return MailPushRules.parseSecret(data)
+  }
+
+  private static func mailSearchBody() -> [String: Any] {
+    [
+      "SearchRequest": [
+        "_jsns": "urn:zimbraMail",
+        "query": "inid:\"\(MailPushRules.inboxFolderId)\"",
+        "types": "message",
+        "sortBy": "idDesc",
+        "offset": 0,
+        "limit": MailPushRules.pageSize,
+      ] as [String: Any]
+    ]
+  }
+
+  /// One Zimbra JSON SOAP call; the answer's `Body`, or nil (a fault, a transport failure - logged).
+  private func mailCall(_ body: [String: Any], token: String?) -> [String: Any]? {
+    var envelope: [String: Any] = ["Body": body]
+    if let token = token {
+      envelope["Header"] = ["context": ["_jsns": "urn:zimbra", "authToken": ["_content": token]]]
+    }
+    guard let url = URL(string: MailPushRules.soapUrl),
+      let payload = try? JSONSerialization.data(withJSONObject: envelope)
+    else { return nil }
+    var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+    req.httpMethod = "POST"
+    req.httpBody = payload
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.timeoutInterval = 8.0
+    let sem = DispatchSemaphore(value: 0)
+    var answer: (Data, Int)?
+    URLSession.shared.dataTask(with: req) { data, response, _ in
+      if let data = data, let http = response as? HTTPURLResponse { answer = (data, http.statusCode) }
+      sem.signal()
+    }.resume()
+    _ = sem.wait(timeout: .now() + 9.0)
+    guard let (data, status) = answer else {
+      NseLog.log.error("[CanariNSE] [MAIL] ERROR the mailbox did not answer")
+      return nil
+    }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let bodyOut = json["Body"] as? [String: Any]
+    else {
+      NseLog.log.error("[CanariNSE] [MAIL] ERROR an unreadable answer status=\(status, privacy: .public)")
+      return nil
+    }
+    if let fault = bodyOut["Fault"] as? [String: Any] {
+      let detail = (fault["Detail"] as? [String: Any])?["Error"] as? [String: Any]
+      let code = detail?["Code"] as? String ?? "?"
+      NseLog.log.error("[CanariNSE] [MAIL] ERROR fault \(code, privacy: .public)")
+      return nil
+    }
+    return bodyOut
+  }
+
+  private func mailAuth(_ secret: MailPushSecret) -> String? {
+    let body: [String: Any] = [
+      "AuthRequest": [
+        "_jsns": "urn:zimbraAccount",
+        "account": ["by": "name", "_content": secret.account],
+        "password": ["_content": secret.password],
+      ] as [String: Any]
+    ]
+    guard let answer = mailCall(body, token: nil),
+      let auth = answer["AuthResponse"] as? [String: Any]
+    else { return nil }
+    if let many = auth["authToken"] as? [[String: Any]], let t = many.first?["_content"] as? String {
+      return t
+    }
+    if let one = auth["authToken"] as? [String: Any], let t = one["_content"] as? String { return t }
+    return nil
+  }
+
+  /// Ends the session this process opened (its token stops working). Best effort, said when it fails.
+  private func mailEndSession(_ token: String) {
+    let body: [String: Any] = ["EndSessionRequest": ["_jsns": "urn:zimbraAccount", "logoff": "1"]]
+    if mailCall(body, token: token) == nil {
+      NseLog.log.notice("[CanariNSE] [MAIL] the session was not ended - it expires on its own")
+    }
   }
 }

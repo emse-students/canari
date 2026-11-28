@@ -96,6 +96,21 @@ describe('UpdatePlatformConfigDto.mailMode', () => {
   });
 });
 
+/** The mail push switch takes exactly the two values migration 034's CHECK allows. */
+describe('UpdatePlatformConfigDto.mailPush', () => {
+  const errorsFor = (mailPush: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { mailPush }));
+
+  it.each(['none', 'cloudflare'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['CLOUDFLARE', 'on', 'off', '', true, 3])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['mailPush']);
+  });
+});
+
 /** The group calls switch takes exactly the two values migration 022's CHECK allows. */
 describe('UpdatePlatformConfigDto.groupCallsMode', () => {
   const errorsFor = (groupCallsMode: unknown) =>

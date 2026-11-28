@@ -46,4 +46,43 @@ export function setMailNotificationsWanted(
  */
 export function forgetMailNotificationsSwitch(userId: string): void {
   values.delete(userId);
+  persistent.delete(userId);
+}
+
+/**
+ * "CONNEXION PERMANENTE" - ANDROID ONLY, AND ONLY WHILE `mail_push = cloudflare` (mail lot 5, owner
+ * 2026-11-28): the account may ALSO keep lot 4's persistent connection - no server at all, at a
+ * battery cost - beside the fast path. Off by default; with `mail_push = none` the persistent
+ * connection is what the main switch already turns on, so this one is not read. Per account and per
+ * device (`ACCOUNT_KEY.mailPersistentConnection`), one of the D8 keys.
+ */
+const persistent = new SvelteMap<string, boolean>();
+
+/** Whether `userId` keeps the persistent connection on this device beside the fast path. */
+export function mailPersistentWanted(userId: string, store: Storage = localStorage): boolean {
+  const known = persistent.get(userId);
+  if (known !== undefined) return known;
+  let on = false;
+  try {
+    on = store.getItem(ACCOUNT_KEY.mailPersistentConnection(userId)) === '1';
+  } catch (err) {
+    Log.w(
+      'MAIL-WATCH',
+      `ERROR: the persistent switch could not be read - treated as off (${String(err)})`
+    );
+  }
+  persistent.set(userId, on);
+  return on;
+}
+
+/** Turns `userId`'s persistent connection on or off on this device. */
+export function setMailPersistentWanted(
+  userId: string,
+  on: boolean,
+  store: Storage = localStorage
+): void {
+  Log.i('MAIL-WATCH', `persistent connection switched ${on ? 'on' : 'off'}`);
+  if (on) store.setItem(ACCOUNT_KEY.mailPersistentConnection(userId), '1');
+  else store.removeItem(ACCOUNT_KEY.mailPersistentConnection(userId));
+  persistent.set(userId, on);
 }

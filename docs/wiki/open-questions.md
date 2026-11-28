@@ -815,3 +815,17 @@ mechanism that the owner's standing directive distrusts, to be stated as such:
 attachments, reply, compose). A sandbox for HTML mail with remote images blocked by default
 (principle 3) is the main security cost. The lighter alternative: an unread counter that links to the
 webmail.
+
+## What Cloudflare carries of a mail alert (parked 2026-11-28)
+
+With `mail_push = cloudflare` (mail lot 5, [mail-client-transport](mail-client-transport.md#as-built---lot-5)),
+the account's own Zimbra alert is sent to `n-<token>@alerte.canari-emse.fr`. Its text comes from
+`zimbraNewMailNotificationSubject` / `Body` / `From`, domain-admin ATTRIBUTES that `ModifyPrefsRequest`
+refuses, so it is Partage's default: by Zimbra's defaults the sender's address and the subject of the
+new mail, and the recipient account. The Worker reads only the envelope recipient and drops the
+message, but Cloudflare's mail servers carry the whole of it (charter principle 1 and 4).
+
+What would lift it, without the school IT: none found - only a domain admin can set the templates.
+Decided meanwhile (reversible): the switch is the admin's, off by default, and the privacy policy
+names Cloudflare before it is turned on. The live probe (the lead's) reports whether Partage refuses
+the template attributes, as measured; the text actually received is not read by anything of ours.

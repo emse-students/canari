@@ -296,3 +296,26 @@ export function waitSetRequest(waitSet: string, seq: string, timeoutSeconds: num
 export function destroyWaitSetRequest(waitSet: string): Body {
   return { DestroyWaitSetRequest: { _jsns: MAIL, waitSet } };
 }
+
+/**
+ * `GetPrefsRequest` (lot 5): the account's own preferences named in `names` only. Zimbra answers a
+ * preference that was never set by leaving it OUT of the answer (measured on Partage, 2026-11-28).
+ */
+export function getPrefsRequest(names: readonly string[]): Body {
+  return { GetPrefsRequest: { _jsns: ACCOUNT, pref: names.map((name) => ({ name })) } };
+}
+
+/**
+ * `ModifyPrefsRequest` (lot 5): sets the account's own preferences. An EMPTY value UNSETS the
+ * preference - how an absent one is restored exactly (measured on Partage, 2026-11-27: a round trip
+ * through the empty value left the account's preferences identical). Zimbra accepts only
+ * `zimbraPref*` names here.
+ */
+export function modifyPrefsRequest(prefs: Readonly<Record<string, string>>): Body {
+  return {
+    ModifyPrefsRequest: {
+      _jsns: ACCOUNT,
+      pref: Object.entries(prefs).map(([name, value]) => ({ name, _content: value })),
+    },
+  };
+}

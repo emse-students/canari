@@ -101,6 +101,20 @@ export class PlatformConfig {
   mailMode!: MailMode;
 
   /**
+   * How a new school mail reaches a phone that is not watching (migration 034, mail lot 5): `none`
+   * (no server takes part) or `cloudflare` (the account's Zimbra alert, through Cloudflare Email
+   * Routing, becomes an EMPTY push). Published by `GET /api/version` as `mail.push`; READ by
+   * chat-delivery-service at the alert hook.
+   */
+  @Column({
+    name: 'mail_push',
+    type: 'varchar',
+    length: 16,
+    default: 'none',
+  })
+  mailPush!: MailPush;
+
+  /**
    * Whether a group conversation may hold a call (migration 022). Read by chat-delivery-service at
    * `initiate`; published by `GET /api/version` as `calls.groupMode`. `calls_mode = off` still wins.
    */
@@ -231,6 +245,18 @@ export type MailMode = 'off' | 'on';
 
 /** Every {@link MailMode}, for the DTO's validation. */
 export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
+
+/**
+ * How a new school mail reaches a phone that is not watching (D11 of the mail client, lot 5; owner,
+ * 2026-11-28). `none`: no server takes part (Android's persistent connection, iOS's background
+ * refresh). `cloudflare`: the account's Zimbra new-mail alert goes to Cloudflare Email Routing, and
+ * its Worker's post becomes an empty push. Held together with the column's CHECK, chat-delivery and
+ * the frontend by `mailPushModesAgree.test.ts`.
+ */
+export type MailPush = 'none' | 'cloudflare';
+
+/** Every {@link MailPush}, for the DTO's validation. */
+export const MAIL_PUSH_MODES: readonly MailPush[] = ['none', 'cloudflare'];
 
 /**
  * Whether a group conversation may hold a call (owner decision D-A). `off` refuses every group

@@ -32,6 +32,13 @@ import {
   endDeviceSessions,
   sessionBoundDevice,
 } from '../internal/device-sessions';
+import { sendMailForget } from '../utils/mail-forget';
+
+jest.mock('../utils/mail-forget', () => ({
+  sendMailForget: jest.fn().mockResolvedValue({ sent: 1, failed: 0 }),
+}));
+const PUSH_ROW = { id: 'p1', userId: 'u1', deviceId: 'd2', token: 't', platform: 'ios' };
+const pushFind = jest.fn();
 
 const endSessions = endDeviceSessions as jest.MockedFunction<typeof endDeviceSessions>;
 const boundDevice = sessionBoundDevice as jest.MockedFunction<typeof sessionBoundDevice>;
@@ -75,6 +82,9 @@ describe('DevicesController - the cause of a ban', () => {
     revoked = null;
     recorded = 'owner';
     for (const m of [purge, recordKeys, notify, query, endSessions]) m.mockClear();
+    pushFind.mockReset();
+    pushFind.mockResolvedValue([PUSH_ROW]);
+    (sendMailForget as jest.Mock).mockClear();
     query.mockImplementation(async () => [{ reason: recorded }]);
     endSessions.mockReset();
     endSessions.mockResolvedValue(1);
@@ -95,7 +105,7 @@ describe('DevicesController - the cause of a ban', () => {
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         {
           provide: getRepositoryToken(PushToken),
-          useValue: { existsBy: jest.fn(async () => true) },
+          useValue: { existsBy: jest.fn(async () => true), find: pushFind },
         },
         { provide: getRepositoryToken(RevokedDevice), useValue: revokedDeviceRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
@@ -201,6 +211,19 @@ describe('DevicesController - the cause of a ban', () => {
       recorded = 'retired';
       await del('retired');
       expect(endSessions).not.toHaveBeenCalled();
+    });
+
+    it('tells a device its owner revoked to forget the school mailbox, read before the purge', async () => {
+      await del(undefined);
+      expect(pushFind).toHaveBeenCalledWith({ where: { userId: 'u1', deviceId: 'd2' } });
+      expect(sendMailForget).toHaveBeenCalledWith([PUSH_ROW], 'device-revoked', expect.anything());
+    });
+
+    it('a retirement tells nothing to forget - the install is still signed in', async () => {
+      recorded = 'retired';
+      await del('retired');
+      expect(pushFind).not.toHaveBeenCalled();
+      expect(sendMailForget).not.toHaveBeenCalled();
     });
 
     it("ends the sessions when a retirement met an owner's ban (the cause recorded is the owner's)", async () => {

@@ -38,6 +38,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
       'theirs, bounded by its own retention, and replaying it needs the sender',
   },
   'NotificationPreference.userId': { action: 'delete' },
+  // Mail lot 5 (migration 059): the account's alert token hash goes by its own delete; its device
+  // subscriptions go with the account's `push_token` rows (foreign key, ON DELETE CASCADE).
+  'MailAlertToken.userId': { action: 'delete' },
+  'MailAlertDevice.userId': { action: 'delete' },
   'OneTimeKeyPackage.userId': { action: 'delete' },
   'PinVerifier.userId': { action: 'delete' },
   'PushToken.userId': { action: 'delete' },

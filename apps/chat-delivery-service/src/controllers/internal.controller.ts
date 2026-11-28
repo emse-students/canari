@@ -15,7 +15,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import { EntityManager, FindOptionsWhere, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -45,6 +45,7 @@ import { parseSessionId } from '../utils/session-id';
 import { publisherAdmissionBase } from '../utils/mls-frame-epoch';
 import { tombstoneGroups, tombstoneGroupsIf, totalGroupOwnedRows } from '../utils/group-purge';
 import { deleteAccountPushTokens } from '../utils/push-envelope';
+import { sendMailForget, type MailForgetCause } from '../utils/mail-forget';
 import {
   eraseUserRedisTraces,
   findRoutesOfUser,
@@ -289,6 +290,9 @@ export class InternalController {
    *
    * Idempotent: an answer of `removed: 0` is the ordinary second call, and a success. 2xx only when
    * the deletes ran, so the caller's retry stops on the truth; a 400 is an address no retry can fix.
+   *
+   * Every row removed is first told to forget the school mailbox (mail lot 5, D6,
+   * `utils/mail-forget.ts`) - only the rows THIS call removed, so a re-sign-in is never reached.
    */
   @Delete('push/users/:userId/sessions/:sessionId')
   async endSessionPushRegistration(
@@ -311,23 +315,44 @@ export class InternalController {
         ? null
         : parseSessionId(ifBoundToRaw, 'ifBoundTo');
 
-    const bySession = await this.pushTokenRepo.delete({ userId, sessionId });
-    let stale = 0;
+    const bySession = await this.deletePushRows({ userId, sessionId });
+    let stale: PushToken[] = [];
     if (deviceId !== null) {
-      const res = await this.pushTokenRepo.delete({
+      stale = await this.deletePushRows({
         userId,
         deviceId,
         sessionId: ifBoundTo === null ? IsNull() : ifBoundTo,
       });
-      stale = res.affected ?? 0;
     }
-    const removed = (bySession.affected ?? 0) + stale;
+    const removed = bySession.length + stale.length;
     this.logger.log(
       `[PUSH_SESSION_END] user=${userId.slice(0, 8)} session=${sessionId.slice(0, 8)} ` +
         `device=${deviceId ?? 'unnamed'} ifBoundTo=${ifBoundToRaw ?? 'n/a'} ` +
-        `removedBySession=${bySession.affected ?? 0} removedStale=${stale}`
+        `removedBySession=${bySession.length} removedStale=${stale.length}`
     );
+    await this.forgetMail([...bySession, ...stale], 'session-ended');
     return { removed };
+  }
+
+  /**
+   * Deletes the push rows matching `where` ONE BY ONE under that same filter, and returns exactly the
+   * rows that were deleted: a row rewritten between the read and its delete (a re-sign-in naming a
+   * new session) no longer matches, stays, and is not returned - so what the caller does with the
+   * removed rows (the mail forget) never reaches a live registration.
+   */
+  private async deletePushRows(where: FindOptionsWhere<PushToken>): Promise<PushToken[]> {
+    const rows = await this.pushTokenRepo.find({ where });
+    const removed: PushToken[] = [];
+    for (const row of rows) {
+      const res = await this.pushTokenRepo.delete({ ...where, id: row.id });
+      if ((res.affected ?? 0) > 0) removed.push(row);
+    }
+    return removed;
+  }
+
+  /** The mail forget for removed rows (best effort, never throws - `sendMailForget`). */
+  private async forgetMail(rows: PushToken[], cause: MailForgetCause): Promise<void> {
+    await sendMailForget(rows, cause, this.logger);
   }
 
   /**
@@ -1145,6 +1170,9 @@ export class InternalController {
           `left for the final pass to cut with their routes - a device re-admitted or demoted meanwhile`
       );
     }
+    // Mail lot 5 (D6): every device of the account forgets the school mailbox - told BEFORE its push
+    // registration goes below, since that registration is the only way to reach it.
+    await this.forgetMail(await this.pushTokenRepo.find({ where: { userId } }), 'account-erased');
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
@@ -1160,6 +1188,8 @@ export class InternalController {
       this.revokedDeviceRepo.delete({ userId }),
       manager.delete(DeviceSignatureKey, { userId }),
       manager.delete(NotificationPreference, { userId }),
+      // Mail lot 5: the alert token hash (its device rows cascade with the push registrations).
+      manager.query(`DELETE FROM mail_alert_token WHERE "userId" = $1`, [userId]),
       manager.delete(UserDismissedGroup, { userId }),
       // The account's eviction records: what refuses a claim it took before this erasure is the
       // group's generation the cut above moved, never these rows (`utils/seat-eviction.ts`).

@@ -124,6 +124,10 @@ objc2 = "0.6"
 # (`app_group::BackgroundTime`): an app suspended holding a lock on an App Group file is killed
 # (`0xdead10cc`). Already in the tree through objc2's users, so this names a version the lock carries.
 block2 = "0.6"
+# The Keychain item the notification extension reads the school mailbox's password from (mail lot 5,
+# `commands/mail_push_secret.rs`). Already in the tree through the TLS stack, so this names a version
+# the lock carries.
+security-framework = "=3.7.0"
 
 # A BENCH build for the phone on the bench (`ios.yml` with `local_url`), and NOTHING else: the
 # `bench_native_store` command the cross-client rig asks the iPhone's native stores through

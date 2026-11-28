@@ -98,6 +98,20 @@ export type MailMode = 'off' | 'on';
 export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
 
 /**
+ * How a new school mail reaches a phone that is not watching (`platform_config.mail_push`, published
+ * as `mail.push`, mail lot 5): `none` - no server takes part (Android's persistent connection, iOS's
+ * background refresh); `cloudflare` - the account's own Zimbra alert goes to an opaque address on
+ * Cloudflare Email Routing and comes back as an empty push.
+ */
+export type MailPush = 'none' | 'cloudflare';
+
+/**
+ * Every value of {@link MailPush}. The SQL CHECK, core's entity, chat-delivery's reader and this list
+ * are held together by `mailPushModesAgree.test.ts`.
+ */
+export const MAIL_PUSH_MODES: readonly MailPush[] = ['none', 'cloudflare'];
+
+/**
  * The server's switch for group calls (`platform_config.group_calls_mode`, published by
  * `/api/version` as `calls.groupMode`): `off` - a group conversation shows no call control and the
  * server refuses a group `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` - group calls go peer to
@@ -138,6 +152,7 @@ export type ServerVersionInfo = {
   livesMode: LivesMode;
   liveReplaysMode: LiveReplaysMode;
   mailMode: MailMode;
+  mailPush: MailPush;
   checkpointSkipMode: CheckpointSkipMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
@@ -181,6 +196,8 @@ export type AppVersionCheckResult = {
   liveReplaysMode: LiveReplaysMode;
   /** Whether the Mail tab is shown to eligible accounts; `off` until a server has said otherwise. */
   mailMode: MailMode;
+  /** How a new mail reaches a phone; `none` until a server has said otherwise. */
+  mailPush: MailPush;
   /** Whether a receive-only drain may defer its MLS checkpoint; `off` until a server has said otherwise. */
   checkpointSkipMode: CheckpointSkipMode;
   /**
@@ -332,6 +349,15 @@ function normalizeMailMode(raw: unknown): MailMode {
 }
 
 /**
+ * The mail push mode a `/api/version` body carries (`mail.push`). ABSENT OR UNKNOWN READS AS `none`:
+ * a server that does not publish it has no hook to receive an alert, so no alert is configured.
+ */
+function normalizeMailPush(raw: unknown): MailPush {
+  const push = raw && typeof raw === 'object' ? (raw as { push?: unknown }).push : undefined;
+  return MAIL_PUSH_MODES.find((known) => known === push) ?? 'none';
+}
+
+/**
  * The checkpoint-skip mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: `off` is
  * the behaviour every client has always had, so a server that does not publish the switch - or a
  * value this client does not know - can only ever mean today's durability.
@@ -377,6 +403,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     livesMode: normalizeLivesMode(obj.lives),
     liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     mailMode: normalizeMailMode(obj.mail),
+    mailPush: normalizeMailPush(obj.mail),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
@@ -404,7 +431,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   calls: { mode: CallsMode; groupMode: GroupCallsMode; relay: CallRelay };
   lives: { mode: LivesMode };
   liveReplays: { mode: LiveReplaysMode };
-  mail: { mode: MailMode };
+  mail: { mode: MailMode; push: MailPush };
   checkpointSkip: { mode: CheckpointSkipMode };
   oidcPkce: boolean;
   presencePost: boolean;
@@ -424,7 +451,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     calls: { mode: info.callsMode, groupMode: info.groupCallsMode, relay: info.callRelay },
     lives: { mode: info.livesMode },
     liveReplays: { mode: info.liveReplaysMode },
-    mail: { mode: info.mailMode },
+    mail: { mode: info.mailMode, push: info.mailPush },
     checkpointSkip: { mode: info.checkpointSkipMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
@@ -546,6 +573,7 @@ export function buildAppVersionCheckResult(
     livesMode: serverInfo?.livesMode ?? 'off',
     liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     mailMode: serverInfo?.mailMode ?? 'off',
+    mailPush: serverInfo?.mailPush ?? 'none',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,

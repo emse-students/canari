@@ -262,6 +262,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "mail_mode IN ('off', 'on')",
     holds: oneOf('mail_mode', ['off', 'on']),
   },
+  CHK_platform_config_mail_push: {
+    sql: "mail_push IN ('none', 'cloudflare')",
+    holds: oneOf('mail_push', ['none', 'cloudflare']),
+  },
   CHK_platform_config_live_replays_mode: {
     sql: "live_replays_mode IN ('off', 'on')",
     holds: oneOf('live_replays_mode', ['off', 'on']),

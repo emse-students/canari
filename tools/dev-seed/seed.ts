@@ -590,6 +590,9 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev starts with the Mail tab hidden like every estate (core migration 033); it is moved to
         // `on` by hand at `/admin/platform` for the mail readings, and a reset puts it back.
         mail_mode: 'off',
+        // Dev starts with no mail push like every estate (core migration 034); `cloudflare` is set by
+        // hand at `/admin/platform` once the Worker serves dev, and a reset puts it back.
+        mail_push: 'none',
         // Dev seeds group calls on `mesh` (core migration 022) so the peer-to-peer group call is read
         // on the bench phones without a click; production's row defaults to `off`.
         group_calls_mode: 'mesh',

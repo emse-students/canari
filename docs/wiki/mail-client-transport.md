@@ -455,6 +455,10 @@ client and a `MailContext` - the Canari account id, a getter for the session's d
   `pinChange.ts`, at both call sites of `moveDeviceRecoveryCode`), idempotently, and NEVER fatally:
   a password that could not move costs one password prompt, not a half-moved key change;
 - the account deletion sweeps it (`exactKeys` in `accountLocalKeys.ts`).
+- **a device the SERVER signs out forgets it at once** (lot 5, 2026-11-28): a revocation by the
+  owner, an ended session (logout, "sign out everywhere else", a replay, a restore elsewhere) and the
+  account's erasure each send that device a `mail-forget` push, which erases what it keeps of the
+  mailbox outside the page - see [the remote forget](#d6-the-remote-forget-added-2026-11-28).
 
 Unticked, nothing is written and any earlier entry is removed: the token lives in memory only and
 the password is asked again when it lapses.
@@ -1079,3 +1083,157 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
   no link, so it opens the app on the Mail tab's last screen. The desktop's tap payload is unmeasured
   (the same caveat as chat's, `useNotifications.svelte.ts`).
 - **The battery numbers** above.
+
+## As built - lot 5
+
+Lot 5 makes new-mail notifications as fast as a native mail app's, **without asking the school IT
+for anything** (owner, 2026-11-28). Both paths are wired and the ADMIN chooses, per estate, with
+`platform_config.mail_push` (core-service migration 034, published in `/api/version` as
+`mail.push`, set at `/admin/platform`):
+
+| `mail_push` | Android | iOS | Web, desktop |
+| --- | --- | --- | --- |
+| `none` (the default) | lot 4's persistent connection | lot 4's background refresh | while open (lot 4) |
+| `cloudflare` | the empty push below; the persistent connection only if the account ALSO keeps "Connexion permanente" ("sans aucun serveur, consomme plus de batterie", off by default) | the empty push below | while open (no mail push reaches them) |
+
+### D11, as revised by lot 5 (owner, 2026-11-28)
+
+D11 kept the server-side path (Zimbra's alert sent to a service mailbox) parked. It is now BUILT,
+behind the admin's switch, off by default, in the form below; lot 4's device-only path stays the
+default and the fallback of a switch at `none`.
+
+### The path, end to end
+
+```
+ Partage (the account's OWN alert pref)
+   | mail to n-<128-bit token>@alerte.canari-emse.fr     (alerte-dev.canari-emse.fr on dev)
+   v
+ Cloudflare Email Routing -> Email Worker (infrastructure/cloudflare/mail-alert-worker/)
+   | reads the envelope RECIPIENT only; drops the message; rate-limits per token
+   | POST /api/hooks/mail-alert {token}   header x-canari-mail-alert-secret
+   v
+ chat-delivery-service (MailAlertController.hook, secret compared in constant time)
+   | sha256(token) -> mail_alert_token -> the account's subscribed devices (mail_alert_device)
+   | an EMPTY push {type:'mail'} to each
+   v
+ iOS: the notification extension reads the mail itself      Android: lot 4b's native watcher (owed)
+```
+
+**The client half (`mailAlert.ts`, `mailAlertSync.ts`, `mailWatch.svelte.ts`).** A PHONE whose
+account wants notifications, with `mail_push` READ as `cloudflare`, sets the account's two alert
+preferences through `ModifyPrefsRequest`: `zimbraPrefNewMailNotificationEnabled = TRUE` and
+`zimbraPrefNewMailNotificationAddress = n-<token>@<domain>` (128 random bits, hex). Before the first
+write it SAVES the two values as they were (`ACCOUNT_KEY.mailAlert`, a D8 key); the last device to
+leave writes them back EXACTLY (an absent preference is written as the empty value, which unsets
+it - measured round trip, 2026-11-27). The device registers the token with the server
+(`POST /api/mls/mail-alert/subscribe`, one live token per account, one row per device, the device
+rows cascading with `push_token`); another device of the account reads the token from the
+preferences and JOINS it. Only an address of Canari's shape (`n-<32 hex>@`) is ever overwritten or
+taken back - an allowlist: an alert the user pointed elsewhere since is left alone. An alert of
+Canari's shape that nobody listens to (the server says so: `state`) is turned off by any device of
+the account - a repair gated on the server's answer, never on a guess. Every step is decided from
+durable facts (Zimbra's preferences, the server's state, the device's record), single-flight, and
+retried at the next change of a fact, never on a timer.
+
+**The templates are NOT ours (open question, owner).** `zimbraNewMailNotificationSubject` / `Body` /
+`From` are domain-admin attributes, not preferences: `ModifyPrefsRequest` refuses them. So the alert
+Cloudflare receives carries Partage's DEFAULT text - by Zimbra's defaults the sender's address and
+the subject. The Worker never reads them, but Cloudflare's mail servers carry them
+([open-questions](open-questions.md#what-cloudflare-carries-of-a-mail-alert-parked-2026-11-28)).
+This is why the switch is the admin's and off by default, and why the privacy policy must name
+Cloudflare before it is turned on (owner's procedure below).
+
+**The Worker (`infrastructure/cloudflare/mail-alert-worker/`).** `relayAlert` (pure, `bun test`ed
+from `make test-ci-scripts`) takes the token from the envelope recipient on ITS domain only, asks the
+`MAIL_ALERT_LIMITER` binding (20 per minute per token), posts `{token}` with the shared secret, and
+returns. The message is never forwarded, stored or rejected (a bounce would land in the user's
+mailbox). `wrangler.toml` holds no secret and no account id; the test asserts it.
+
+**The server (`chat-delivery-service`).** `POST /api/hooks/mail-alert` (nginx: its own location,
+1 KiB body, `limit_req` 20 r/s; Nest: a per-token throttle of 30/min) refuses a wrong or unset
+secret with 401 (an unset one at error), a malformed token with 400, and answers `off`, `unknown`,
+`no_device` (the token row is then deleted) or `pushed {sent, failed}`. The push is EMPTY: on iOS an
+alert titled `Canari` with a generic "Nouveau mail" body and `mutable-content: 1`, so the extension
+runs; on Android a high-priority data message `{type:'mail'}`. The token is stored HASHED
+(`mail_alert_token.tokenHash`, sha256); the account erasure deletes it.
+
+### Per device
+
+- **iOS** (`NotificationService.swift`, `handleMailPush`): the extension reads the Keychain item
+  `canari_mail_push_secret` (`{userId, account, password}`, App Group access group,
+  `AfterFirstUnlockThisDeviceOnly`, never synchronised), written by the app (`mail_push_secret.rs`)
+  ONLY while "remember", the account's notifications and `mail_push = cloudflare` all hold, and
+  erased by ONE erase (`eraseMailPushSecret`) that every forget path reaches (`forgetMailPassword`,
+  the switch off, `mail_watch_forget`, the remote forget). It signs in (`AuthRequest`), reads one
+  inbox page by id, compares it with the SHARED cursor (lot 4's cursor moved to the App Group:
+  `mail_watch/cursor_<userId>.json`), WRITES the cursor, then shows the sender and the subject (one
+  mail), or "N nouveaux mails" (several), and ends its session. The app in the foreground, or
+  nothing new and unread: a blank passive row the app removes. No item, another account, a failed
+  read: the server's generic "Nouveau mail" stays, logged at error - a stated degraded display.
+- **Android** (`CanariFirebaseMessagingService.kt` -> `MailPushHandoff.kt`, routing in
+  `mail/MailPush.kt`): the push is handed to lot 4b's native watcher. **Lot 4b is not on this
+  branch**: the handoff answers a TYPED `NativeWatcherAnswer.Unavailable`, logged at warn, and posts
+  ONE generic "Nouveau mail" notice. Wiring it is two lines once lot 4b is merged (the two
+  `TODO(lot 4b)` in `MailPushHandoff.kt`).
+- **Web, desktop**: no mail push; lot 4 while open.
+
+### D6, the remote forget (added 2026-11-28)
+
+A device that leaves the account THROUGH THE SERVER is told to forget the school mailbox at once,
+whatever `mail_push` says - the push rides on the registration every device has:
+
+| Where the server ends it | The hook |
+| --- | --- |
+| the owner revokes a device (`DELETE /api/mls/devices/:userId/:deviceId`, reason `owner`) | `devices.controller.ts`, step 3b; a RETIREMENT tells nothing (the install is still signed in) |
+| a session ends - logout, "sign out everywhere else", a refresh-token replay, a restore elsewhere | `DELETE /api/internal/push/users/:userId/sessions/:sessionId`, core-service's push-ending outbox |
+| the account is erased | `DELETE /api/internal/users/:userId` |
+
+The push is `{type:'mail-forget', userId}` (`utils/mail-forget.ts`): data-only, high priority on
+Android, a BACKGROUND push on iOS, both kept 28 days for a phone that is off. It is sent only for the
+push rows THAT delete removed - read, then deleted one by one under the same filter - so a device
+that signed in again meanwhile (its row rewritten with its new session) is never told to forget.
+On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls `canari_mail_forget`: the
+Keychain item goes when it names that account, and the shared cursor goes. On Android it goes to
+`NativeMailWatcher.forget` - typed unavailable until lot 4b is merged. It is the IMMEDIATE half; the
+durable half is the device's own sign-out at its next refused refresh, which erases the same things.
+iOS delivers a background push at its own discretion (never to an app the user force-quit), which is
+why the durable half stays the guarantee.
+
+### The owner's one-off procedure (before `mail_push = cloudflare`)
+
+1. In the Cloudflare dashboard, zone `canari-emse.fr`: **Email > Email Routing**, enable it for the
+   subdomains `alerte` and `alerte-dev` (Cloudflare adds their MX and SPF records).
+2. From `infrastructure/cloudflare/mail-alert-worker/`, signed in with `bunx wrangler login`:
+   `bunx wrangler deploy --env production` and `bunx wrangler deploy --env dev`.
+3. Generate one secret per estate (`openssl rand -hex 32`); set it TWICE each:
+   `bunx wrangler secret put HOOK_SECRET --env production` and the GitHub environment secret
+   `MAIL_ALERT_HOOK_SECRET`; `--env dev` and `DEV_MAIL_ALERT_HOOK_SECRET`.
+4. Email Routing > Routing rules: a **catch-all** on each subdomain, action "Send to a Worker",
+   `canari-mail-alert` (production) and `canari-mail-alert-dev` (dev).
+5. Have the privacy policy name Cloudflare as the carrier of the alert (register C34).
+6. Deploy (the secret reaches the container), then flip `/admin/platform` > "Notifications rapides
+   des mails" to Cloudflare - dev first, read on both phones, then production.
+
+### Tests
+
+`mailAlert.test.ts` (save and EXACT restore, idempotence, join, leave/restore, the allowlist, orphan
+repair, the typed server refusals), `mailAlertSync.test.ts`, `mailPushSecret.test.ts` (the Keychain
+names, the SOAP URL, the inbox id, the cursor path and the forget type held together across Rust,
+Swift, Kotlin and the server), `mailPushModesAgree.test.ts` (the five copies of `mail_push`),
+`mailWatch.svelte.test.ts`; chat-delivery `mail-alert.service.spec.ts`,
+`mail-alert.controller.spec.ts`, `mail-forget.spec.ts`, the session-end and revocation specs;
+core-service platform and version specs; the Worker's `alert.test.ts`; Rust `mail_push_secret`
+tests; Kotlin `MailPushTest`; Swift `MailPushRulesTests` (written, not compiled, like the other NSE
+tests).
+
+### Still open after lot 5
+
+- **Lot 4b's handoff** on Android (`MailPushHandoff.kt`, two lines) - until then a generic notice.
+- **The live alert test** on Partage, once routing exists: the lead's probe sets the alert to a given
+  address, sends one mail to self, restores the preferences exactly.
+- **The full path on the Mi 9T and the iPhone**, including the remote forget; the NSE and the iOS
+  Rust FFI are not compiled here.
+- **Cursors of lot 4 builds on iOS** stay in the app data dir, orphaned: the first read after the
+  update takes a new baseline (no mail announced twice, none of the gap announced).
+- **The original alert of a device that left first**: when the device that saved it leaves while
+  others remain, the last device restores to UNSET (the record is per device).

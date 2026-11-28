@@ -22,6 +22,7 @@ describe('VersionService', () => {
       checkpointSkipMode: 'on',
       liveReplaysMode: 'on',
       mailMode: 'on',
+      mailPush: 'cloudflare',
       groupCallsMode: 'mesh',
       callRelay: 'none',
       retentionReelDays: 365,
@@ -61,10 +62,10 @@ describe('VersionService', () => {
     expect(out.liveReplays).toEqual({ mode: 'on' });
   });
 
-  it('publishes the mail switch, which only shows or hides the Mail tab', async () => {
+  it('publishes the mail switch and how a new mail reaches a phone (mail lot 5)', async () => {
     const out = await service.getVersion();
 
-    expect(out.mail).toEqual({ mode: 'on' });
+    expect(out.mail).toEqual({ mode: 'on', push: 'cloudflare' });
   });
 
   it('publishes the retention durations in force, which the privacy policy renders', async () => {

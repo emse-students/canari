@@ -5073,12 +5073,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        // MAIL LOT 5. The remote forget comes BEFORE the signed-out guard below: a device the server
+        // just signed out is exactly the one it is for. The empty mail push comes after it: a
+        // signed-out device shows no mail.
+        val mailRoute = fr.emse.canari.mail.mailPushRouteOf(data)
+        if (mailRoute != null && mailRoute != fr.emse.canari.mail.MailPushRoute.Check) {
+            MailPushHandoff.handle(this, mailRoute)
+            return
+        }
+
         // A SIGNED-OUT DEVICE SHOWS NOTHING. No account owns this install's pushes until the next
         // registration is answered (`push_registration.rs`); a push still reaching it was sent
         // before the server ended the session's registration and FCM forgot the deleted token,
         // and showing it would show the account that left.
         if (PushRegistrationEnd.isSignedOut(this)) {
             Log.w(TAG, "onMessageReceived: dropped type=$msgType - this device is signed out, no account owns its pushes")
+            return
+        }
+
+        if (mailRoute == fr.emse.canari.mail.MailPushRoute.Check) {
+            MailPushHandoff.handle(this, mailRoute)
             return
         }
 

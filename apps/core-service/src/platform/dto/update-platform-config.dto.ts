@@ -19,6 +19,7 @@ import {
   LIVES_MODES,
   LIVE_REPLAYS_MODES,
   MAIL_MODES,
+  MAIL_PUSH_MODES,
   PUSH_MODES,
   type CallRelay,
   type CallsMode,
@@ -27,6 +28,7 @@ import {
   type LivesMode,
   type LiveReplaysMode,
   type MailMode,
+  type MailPush,
   type PushMode,
 } from '../entities/platform-config.entity';
 
@@ -88,6 +90,11 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(MAIL_MODES)
   mailMode?: MailMode;
+
+  /** How a new school mail reaches a phone: `none` (no server takes part) or `cloudflare` (the alert becomes an empty push). */
+  @IsOptional()
+  @IsIn(MAIL_PUSH_MODES)
+  mailPush?: MailPush;
 
   /** The group calls switch: `off` refuses every group call, `mesh` allows peer-to-peer ones up to the cap. */
   @IsOptional()
