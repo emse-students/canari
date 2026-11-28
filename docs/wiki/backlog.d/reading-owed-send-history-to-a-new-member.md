@@ -14,3 +14,5 @@ target: 1.8.3
 4. **A date.** A second grant from "7 derniers jours" (or a date after some of the five) delivers only what lies after it - nothing older appears.
 5. **A Remove still holds.** W1 removes `peer`, sends two messages, re-adds `peer`, grants "everything": the two messages sent while `peer` was out never reach W2.
 6. **The phone.** The same grant with the phone as the newcomer's second device: it receives the history too, its own ask answered.
+
+**2026-11-28, `1.8.3-alpha.2`, web (dev floor `1.8.3-alpha.1`):** steps 1 to 3 PASS (the default holds, the button shows for the adder only, the grant arrives with its notice). Owed: step 4 (a date), step 5 (a Remove still holds) and step 6 (the phone as the newcomer).
