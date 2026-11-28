@@ -185,11 +185,12 @@ export function adminQueuesChanged(why: 'frame' | 'socket-open'): void {
  * (re)open (a frame sent while it was down is never replayed) - both through
  * {@link adminQueuesChanged}, relayed to the other tabs - and on the link coming back. The return to
  * the foreground asks on the WEB (the visibility edge); on a native shell it is the socket reopen
- * that asks, once, so the visibility edge asks nothing there. No timer. The CALLER decides when - the root layout runs it inside an
+ * that asks, once, so the visibility edge asks nothing there - unless `socketHeld` says the socket
+ * survived the background (the pause never released it), when no reopen is coming and the edge asks. No timer. The CALLER decides when - the root layout runs it inside an
  * effect over the tier stores, so a tier published late starts it and an account that loses every
  * tier stops it. Returns the cleanup.
  */
-export function followAdminQueueCounts(): () => void {
+export function followAdminQueueCounts(socketHeld: () => boolean = () => false): () => void {
   following++;
   if (!tabChannel && typeof BroadcastChannel !== 'undefined') {
     tabChannel = new BroadcastChannel(TAB_CHANNEL);
@@ -199,10 +200,12 @@ export function followAdminQueueCounts(): () => void {
   const onVisibility = () => {
     if (document.visibilityState !== 'visible') return;
     // ON A NATIVE SHELL THE RESUME ASKS ONCE, THROUGH THE SOCKET: the pause released the socket, so
-    // the foreground always reopens it and `adminQueuesChanged('socket-open')` asks - and this edge,
+    // the foreground reopens it and `adminQueuesChanged('socket-open')` asks - and this edge,
     // firing a second or two earlier, was a second request for the same moment (owner's log,
     // 2026-11-26: two asks 2.5 s apart on one resume). A reopen that fails is the link-back ask's.
-    if (isTauriRuntime()) {
+    // THE SAME FACT AS THE HISTORY PASS'S RERUN (`initializeConnection`): a socket that SURVIVED the
+    // background is never reopened, so nothing else would ask - when it is still held, this edge asks.
+    if (isTauriRuntime() && !socketHeld()) {
       Log.d('adminQueueCounts', 'back in the foreground: the socket reopen asks');
       return;
     }

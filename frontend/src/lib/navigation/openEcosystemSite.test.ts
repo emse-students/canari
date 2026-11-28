@@ -267,6 +267,15 @@ describe('openEcosystemSite', () => {
       expect(tab.location.href).toBe(MINTED);
     });
 
+    it('shows no toast: the new tab is already the feedback', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      const tab = { opener: null, closed: false, location: { href: 'about:blank' } };
+      vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
     it('points the tab at the plain address when the mint fails', async () => {
       apiFetch.mockResolvedValue(json(503, {}));
       const tab = { opener: null, closed: false, location: { href: 'about:blank' } };

@@ -8628,9 +8628,18 @@ A reply sent from a build before this fix stays a plain photo on both sides: the
   A SWEEP cut short does not write the connection record, so the next connection sweeps again - and
   RESTARTS WHERE IT STOPPED: the groups it asked are kept per store (`history_open_sweep`, a sweep
   generation closed by a completed sweep), so the tail of a long list cannot starve behind a head
-  asked first and cut again. A pass stopped in the background is re-run ONCE on the return to the
-  foreground (`armForegroundRerun`), for the socket that survived the background and so has no new
-  connection to restart it.
+  asked first and cut again. The record is STAMPED with the generation it was owed for (the
+  last-connected value it set out to cover) and ignored once another connection was recorded, or
+  once it is older than the server's frame retention. A group that is unreachable on its own, pass
+  after pass (3, counted only from a pass nobody cut), stops holding the sweep open: it is named at
+  warn and stays owed by the audit. A pass stopped in the background is re-run ONCE on the return to
+  the foreground (`armForegroundRerun`, armed whatever the foreground state is when the pass ends -
+  already back means at once), for the socket that survived the background and so has no new
+  connection to restart it; the session teardown disarms it (`disarmForegroundRerun`). **ONE
+  connection pass at a time** (`passInFlight`): a second caller awaits the first and runs again only
+  if it was cut short, because two passes side by side find each other's groups inside the
+  coalescing window and would hide a transport failure. A coalesced group is never counted covered
+  (`complete` is false).
 - **No line per group for "nobody online".** 714 identical lines in one session (one per group per
   pass, 16 passes). The pass line now carries the count (`N with no member online`); the group is
   still deferred for the peer-online edge, and a single-group trigger keeps its own line.

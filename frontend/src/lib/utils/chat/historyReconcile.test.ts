@@ -29,6 +29,9 @@ import {
   resetHistoryReconciliation,
   setHistoryProbeSender,
   connectionSweepDecision,
+  closeOpenSweep,
+  groupsAskedInOpenSweep,
+  noteOpenSweepProgress,
   noteConnection,
   resetConnectionRecord,
   groupsOwingAudit,
@@ -703,9 +706,32 @@ describe('reconcileAllGroups', () => {
     );
   });
 
+  it('names the groups whose election never left the device', async () => {
+    const result = await reconcileAllGroups(service(new Error('Failed to fetch')), [GROUP], log);
+    expect(result.unreachable).toEqual([GROUP]);
+  });
+
+  it('is NOT complete when a group was left to another trigger inside the coalescing window', async () => {
+    // Its ask belongs to that trigger: had it failed in transport, this pass would never know, so
+    // counting the group covered would hide the failure.
+    const mls = service();
+    await reconcileGroup(mls, GROUP, log, Date.now());
+    const result = await reconcileAllGroups(mls, [GROUP, OTHER], log);
+    expect(result.coalesced).toBe(1);
+    expect(result.asked).toEqual([OTHER]);
+    expect(result.complete).toBe(false);
+  });
+
   it('is complete when nothing told it to stop', async () => {
     const result = await reconcileAllGroups(service(), [GROUP, OTHER], log, () => null);
-    expect(result).toEqual({ asked: [GROUP, OTHER], complete: true });
+    expect(result).toEqual({
+      asked: [GROUP, OTHER],
+      complete: true,
+      stopped: null,
+      unreachable: [],
+      threw: 0,
+      coalesced: 0,
+    });
   });
 
   it('runs the elections concurrently rather than one round trip after another', async () => {
@@ -858,6 +884,61 @@ describe('forgetting', () => {
  * These cases pin the one question it is allowed to ask - "could the server have dropped something
  * for me" - and, just as importantly, the answers that must NOT provoke one.
  */
+describe('the open sweep record', () => {
+  const USER = 'user-os';
+  const DEVICE = 'device-os';
+  const NOW = 1_700_000_000_000;
+  const RETENTION = 90 * 86_400_000;
+
+  beforeEach(() => {
+    resetConnectionRecord(USER, DEVICE);
+    closeOpenSweep(USER, DEVICE);
+  });
+
+  it('holds the groups asked, for the generation it was owed for', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    noteOpenSweepProgress(USER, DEVICE, 's', ['g1', 'g2'], [], NOW);
+    expect([...groupsAskedInOpenSweep(USER, DEVICE, 's', NOW + 1)].sort()).toEqual(['g1', 'g2']);
+  });
+
+  it('is ignored once another connection was recorded: that is another generation', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    noteOpenSweepProgress(USER, DEVICE, 's', ['g1'], [], NOW);
+    noteConnection(USER, DEVICE, NOW + 5, 's');
+    expect(groupsAskedInOpenSweep(USER, DEVICE, 's', NOW + 10).size).toBe(0);
+  });
+
+  it('is ignored when it is older than what the server keeps', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    noteOpenSweepProgress(USER, DEVICE, 's', ['g1'], [], NOW);
+    expect(groupsAskedInOpenSweep(USER, DEVICE, 's', NOW + RETENTION).size).toBe(0);
+    expect(groupsAskedInOpenSweep(USER, DEVICE, 's', NOW + RETENTION - 1).size).toBe(1);
+  });
+
+  it('is ignored for another store', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    noteOpenSweepProgress(USER, DEVICE, 's', ['g1'], [], NOW);
+    expect(groupsAskedInOpenSweep(USER, DEVICE, 'other', NOW + 1).size).toBe(0);
+  });
+
+  it('names a group whose attempts are exhausted, and only when it kept failing', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    const attempt = (i: number) =>
+      noteOpenSweepProgress(USER, DEVICE, 's', ['g1'], ['stuck'], NOW + i);
+    expect(attempt(1)).toEqual([]);
+    expect(attempt(2)).toEqual([]);
+    expect(attempt(3)).toEqual(['stuck']);
+  });
+
+  it('forgets the attempts of a group that was asked in the end', () => {
+    noteConnection(USER, DEVICE, NOW - 1000, 's');
+    noteOpenSweepProgress(USER, DEVICE, 's', [], ['flaky'], NOW);
+    noteOpenSweepProgress(USER, DEVICE, 's', [], ['flaky'], NOW + 1);
+    noteOpenSweepProgress(USER, DEVICE, 's', ['flaky'], [], NOW + 2);
+    expect(noteOpenSweepProgress(USER, DEVICE, 's', [], ['flaky'], NOW + 3)).toEqual([]);
+  });
+});
+
 describe('connectionSweepDecision', () => {
   const USER = 'user-a';
   const DEVICE = 'device-1';

@@ -162,6 +162,29 @@ describe('adminQueueCounts', () => {
     }
   });
 
+  it('on a native shell the edge asks when the socket SURVIVED the background: no reopen is coming', async () => {
+    shell.native = true;
+    try {
+      apiFetch.mockResolvedValue(answer(200, { counts: { agenda: 3 } }));
+      let held = true;
+      const stop = followAdminQueueCounts(() => held);
+      await vi.waitFor(() => expect(adminQueueCounts.total).toBe(3));
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+
+      // The pause released the socket: the reopen asks, the edge does not.
+      held = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      shell.native = false;
+    }
+  });
+
   it('no clock ever asks: an hour passes with nothing sent', async () => {
     vi.useFakeTimers();
     try {

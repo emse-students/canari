@@ -49,13 +49,21 @@ class HandoffUrlMismatchError extends Error {
  * minted its own token and opened its own browser, and the app, backgrounded under three launches,
  * was killed. The guard is state cleared the moment the open settles, never a clock: a second tap
  * while the first is pending is the SAME open, and is dropped.
+ *
+ * A HUNG MINT CANNOT LOCK THE LINK, and that is proven by what bounds it, not by a clock here: the
+ * mint goes through `apiFetch`, whose every call carries a response-head deadline (a typed
+ * `RequestDeadlineError`, `requestDeadline.ts`, 30 s for a write). Its expiry rejects the mint,
+ * the rejection opens the site plainly, and the `finally` below releases the guard. What follows
+ * the head is a transfer of a few hundred bytes the server has already answered, which that file
+ * deliberately leaves unbounded; the opener is a one-shot native or window call.
  */
 const opening = new Set<string>();
 
 /**
  * THE TAP WAS TAKEN: a mint takes seconds and nothing else on screen moves, which is what made the
- * same link get tapped again. One toast per open that starts (a dropped second tap shows none), so
- * the pending state is the `opening` set made visible.
+ * same link get tapped again. One toast per NATIVE open that starts (a dropped second tap shows
+ * none), so the pending state is the `opening` set made visible. The web path has none: the new tab
+ * is already the feedback.
  */
 function showOpeningFeedback(): void {
   showToast(m.ecosystem_site_opening(), 'info', 3000);
@@ -235,7 +243,6 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   // The opener link is cut before the tab is steered: the site must not reach back into Canari.
   tab.opener = null;
   opening.add(key);
-  showOpeningFeedback();
   void mintSiteHandoff(site, dest)
     .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
     .then((url) => {

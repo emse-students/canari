@@ -414,24 +414,60 @@ export function noteConnection(
 }
 
 /**
- * THE GROUPS ASKED WITHIN A SWEEP THAT HAS NOT FINISHED (a sweep generation, keyed by the message
- * store it was owed for). A sweep cut short - the app left the screen, the link dropped - is not
- * recorded as done, so the next connection sweeps again; restarting from the head every time let
- * the tail of a long list starve behind a head that is asked first and cut again. The next sweep
- * asks only the groups this record does not hold, and a sweep that completes closes it.
+ * How many passes may find ONE group unreachable (its election never left the device while the pass
+ * itself was not cut) before the sweep stops waiting for it. A counted fact about that group, not a
+ * clock: a group that is always unreachable would otherwise hold the sweep open for ever and make
+ * every later connection sweep again.
  */
-type OpenSweep = { store: string | null; groupIds: string[] };
+export const OPEN_SWEEP_UNREACHABLE_ATTEMPTS = 3;
 
-function readOpenSweep(userId: string, deviceId: string, store: string | null): Set<string> {
+/**
+ * THE GROUPS ASKED WITHIN A SWEEP THAT HAS NOT FINISHED, keyed by the message store AND by the
+ * generation it was owed for. A sweep cut short - the app left the screen, the link dropped - is not
+ * recorded as done, so the next connection sweeps again; restarting from the head every time let the
+ * tail of a long list starve behind a head that is asked first and cut again. The next sweep asks
+ * only the groups this record does not hold, and a sweep that completes closes it.
+ *
+ * `owedFor` is the last-connected value the sweep set out to cover (`null`: there was none): a
+ * connection that has since been recorded is another generation, and nothing in this record is
+ * evidence about it. `openedAt` bounds it by what the server keeps, so a record nobody closed cannot
+ * outlive the frames it was about.
+ */
+type OpenSweep = {
+  store: string | null;
+  owedFor: number | null;
+  openedAt: number;
+  groupIds: string[];
+  /** Passes that found the group unreachable, never cut by a stop. */
+  attempts: Record<string, number>;
+};
+
+function readOpenSweepRecord(
+  userId: string,
+  deviceId: string,
+  store: string | null,
+  now: number
+): OpenSweep | null {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY.openSweep(userId, deviceId));
-    if (!raw) return new Set();
-    const held = JSON.parse(raw) as OpenSweep;
+    if (!raw) return null;
+    const held = JSON.parse(raw) as Partial<OpenSweep>;
     // A sweep owed for another store is another sweep: nothing in it is evidence about this one.
-    if (held.store !== store || !Array.isArray(held.groupIds)) return new Set();
-    return new Set(held.groupIds);
+    if (held.store !== store || !Array.isArray(held.groupIds)) return null;
+    // ANOTHER GENERATION: a connection was recorded since, so the sweep this record belonged to is
+    // over (or was never the one now owed).
+    if ((held.owedFor ?? null) !== (readLastConnected(userId, deviceId)?.at ?? null)) return null;
+    if (typeof held.openedAt !== 'number' || now - held.openedAt >= SERVER_RETENTION_MS)
+      return null;
+    return {
+      store,
+      owedFor: held.owedFor ?? null,
+      openedAt: held.openedAt,
+      groupIds: held.groupIds,
+      attempts: held.attempts && typeof held.attempts === 'object' ? held.attempts : {},
+    };
   } catch {
-    return new Set();
+    return null;
   }
 }
 
@@ -439,26 +475,51 @@ function readOpenSweep(userId: string, deviceId: string, store: string | null): 
 export function groupsAskedInOpenSweep(
   userId: string,
   deviceId: string,
-  store: string | null
+  store: string | null,
+  now: number = Date.now()
 ): Set<string> {
-  return readOpenSweep(userId, deviceId, store);
+  return new Set(readOpenSweepRecord(userId, deviceId, store, now)?.groupIds ?? []);
 }
 
-/** Adds `groupIds` to the open sweep (opening it), so the next one skips them. */
+/**
+ * Adds `groupIds` to the open sweep (opening it, stamped with the generation it is owed for), so the
+ * next one skips them, and counts one more attempt against each of `unreachable`. Returns the groups
+ * whose attempts are now exhausted ({@link OPEN_SWEEP_UNREACHABLE_ATTEMPTS}): the caller closes the
+ * sweep and reports them, so the defect surfaces instead of holding the sweep open.
+ */
 export function noteOpenSweepProgress(
   userId: string,
   deviceId: string,
   store: string | null,
-  groupIds: Iterable<string>
-): void {
+  groupIds: Iterable<string>,
+  unreachable: Iterable<string> = [],
+  now: number = Date.now()
+): string[] {
+  const exhausted: string[] = [];
   try {
-    const done = readOpenSweep(userId, deviceId, store);
-    for (const id of groupIds) done.add(id);
-    const record: OpenSweep = { store, groupIds: [...done] };
+    const held = readOpenSweepRecord(userId, deviceId, store, now);
+    const done = new Set(held?.groupIds ?? []);
+    const attempts = { ...held?.attempts };
+    for (const id of groupIds) {
+      done.add(id);
+      delete attempts[id];
+    }
+    for (const id of unreachable) {
+      attempts[id] = (attempts[id] ?? 0) + 1;
+      if (attempts[id] >= OPEN_SWEEP_UNREACHABLE_ATTEMPTS) exhausted.push(id);
+    }
+    const record: OpenSweep = {
+      store,
+      owedFor: held ? held.owedFor : (readLastConnected(userId, deviceId)?.at ?? null),
+      openedAt: held ? held.openedAt : now,
+      groupIds: [...done],
+      attempts,
+    };
     localStorage.setItem(ACCOUNT_KEY.openSweep(userId, deviceId), JSON.stringify(record));
   } catch {
     // Unwritable: the next sweep restarts from the head - the old behaviour, wasteful, never wrong.
   }
+  return exhausted;
 }
 
 /** Closes the open sweep: a sweep that covered every group needs no memory. */
@@ -1343,7 +1404,7 @@ export async function reconcileAllGroups(
   let stoppedBecause: string | null = null;
   let leftUnasked = 0;
   // Elections that never left the device: the pass did not compare those groups, so it is not whole.
-  let unreachable = 0;
+  const unreachableGroups: string[] = [];
 
   const started = Date.now();
   // At most `NETWORK_READ_CONCURRENCY` elections in flight: the pass is bounded by the slowest
@@ -1375,7 +1436,7 @@ export async function reconcileAllGroups(
       );
       if (outcome === 'asked') askedGroups.push(groupId);
       else if (outcome === 'no-peer') noPeer++;
-      else if (outcome === 'unreachable') unreachable++;
+      else if (outcome === 'unreachable') unreachableGroups.push(groupId);
     },
     (groupId) => groupId.slice(0, 8)
   );
@@ -1394,6 +1455,7 @@ export async function reconcileAllGroups(
       ? `, ${coalesced} already asked within ${PROBE_COALESCE_MS / 1000}s and not asked again`
       : '';
   const waiting = noPeer > 0 ? `, ${noPeer} with no member online (asked when one returns)` : '';
+  const unreachable = unreachableGroups.length;
   const unreached =
     unreachable > 0 ? `, ${unreachable} whose election never left the device (owed again)` : '';
   // ONE PASS LINE, and it says which end the pass had: a pass that stopped is never also "complete".
@@ -1410,7 +1472,14 @@ export async function reconcileAllGroups(
   }
   return {
     asked: askedGroups,
-    complete: stoppedBecause === null && unreachable === 0 && failures.length === 0,
+    // A COALESCED GROUP IS NOT COVERED BY THIS PASS: its ask belongs to another trigger, and if that
+    // one failed in transport nothing here would know. It is owed again, never counted as done.
+    complete:
+      stoppedBecause === null && unreachable === 0 && failures.length === 0 && coalesced === 0,
+    stopped: stoppedBecause,
+    unreachable: unreachableGroups,
+    threw: failures.length,
+    coalesced,
   };
 }
 
@@ -1422,6 +1491,14 @@ export async function reconcileAllGroups(
 export interface ReconcilePassResult {
   asked: string[];
   complete: boolean;
+  /** Why the pass was told to stop, or `null` when it ran to its end. */
+  stopped: string | null;
+  /** The groups whose election never left the device. */
+  unreachable: string[];
+  /** The elections that threw. */
+  threw: number;
+  /** The groups left to another trigger's ask inside the coalescing window. */
+  coalesced: number;
 }
 
 /**

@@ -1248,6 +1248,22 @@ impl BackgroundJoinError {
         }
     }
 
+    /// The level a platform logs this failure at, CHOSEN FROM THE PROSPECT: a failure a later attempt
+    /// can cure (NOT_YET) is expected and said at warn, one no retry from this device can cure
+    /// (NEVER) is the visible end of something upstream and accuses at error.
+    pub fn log_level(&self) -> log::Level {
+        match self.prospect() {
+            SendProspect::NotYet => log::Level::Warn,
+            SendProspect::Never => log::Level::Error,
+        }
+    }
+
+    /// Logs the failure at {@link Self::log_level}, for every platform entry point that has no typed
+    /// answer channel of its own to carry the cause.
+    pub fn log(&self, site: &str) {
+        log::log!(self.log_level(), "[BG_JOIN] {site} failed: {self}");
+    }
+
     /// What crosses the JNI as the join's answer: `failed:<cause>:<prospect>` (the success is the
     /// literal `joined`, [`JOINED_TOKEN`]).
     pub fn token(&self) -> String {
@@ -2252,6 +2268,21 @@ mod tests {
             SendProspect::Never
         );
         assert_eq!(J::KeyUnreadable("x".into()).prospect(), SendProspect::Never);
+    }
+
+    /// THE LOG LEVEL FOLLOWS THE PROSPECT, on every platform entry point: a failure a retry can cure
+    /// is warn, one no retry from this device can cure is error.
+    #[test]
+    fn the_join_failure_is_logged_at_the_level_its_prospect_names() {
+        use mls_core::MlsError as E;
+        use BackgroundJoinError as J;
+        assert_eq!(J::Jni("x".into()).log_level(), log::Level::Warn);
+        assert_eq!(
+            J::Welcome(E::OpenMls("x".into())).log_level(),
+            log::Level::Warn
+        );
+        assert_eq!(J::Welcome(E::InvalidData).log_level(), log::Level::Error);
+        assert_eq!(J::KeyUnreadable("x".into()).log_level(), log::Level::Error);
     }
 
     /// A NOTE ALREADY THERE is not this call's to take back.

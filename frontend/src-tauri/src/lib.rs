@@ -1138,7 +1138,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     let token = match result {
         Ok(()) => mobile::background::JOINED_TOKEN.to_string(),
         Err(e) => {
-            log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {e}");
+            e.log("nativeProcessWelcomeBackground");
             e.token()
         }
     };

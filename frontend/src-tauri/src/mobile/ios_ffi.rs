@@ -650,7 +650,9 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
     ) {
         Ok(()) => 1,
         Err(e) => {
-            log::error!("[BG_JOIN] canari_native_process_welcome_background: {e}");
+            // No typed answer channel here (the Swift caller reads 1 or 0): the level at least
+            // follows the prospect, so a refused write is not reported like an unreadable state.
+            e.log("canari_native_process_welcome_background");
             0
         }
     }
