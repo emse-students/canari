@@ -545,6 +545,19 @@ describe('ReelCapture', () => {
       expect(recorder.stop).toHaveBeenCalledTimes(1);
       expect(target.querySelector('[data-reel-review]')).not.toBeNull();
     });
+
+    it('Back on a locked take re-arms Back: a second Back on the review asks, it never leaves', async () => {
+      const { target } = await locked();
+      const pushes = vi.mocked(pushHistoryOverlay).mock.calls.length;
+      backHandler()('back');
+      await settle();
+      expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+      expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushes + 1);
+      showConfirm.mockClear();
+      backHandler()('back');
+      await settle();
+      expect(showConfirm).toHaveBeenCalledOnce();
+    });
   });
 
   it('Back on a review asks first, and keeping the take re-arms Back', async () => {

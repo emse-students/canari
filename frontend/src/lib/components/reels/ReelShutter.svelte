@@ -21,7 +21,7 @@
    * pointer and the padlock's rectangle (`overPadlock`); no timer is involved. ONLY THE FINGER THAT
    * STARTED THE TAKE CAN LOCK IT: a press that lands while a take already runs (a volume-key take) is
    * recorded at `down` (`lockable`), is offered no padlock and never locks. While that finger travels
-   * left toward the padlock (past `AIM_FREEZE_PX`) its vertical slide stops zooming, so aiming does not
+   * over the padlock (`overLock`) its vertical slide stops zooming, so aiming does not
    * change the zoom; once locked the zoom stays where it was (no finger, no slide). The padlock shows
    * only while recording, when the gallery slot to its left is empty, so the two never overlap.
    * The lock is announced to a screen reader through a polite live line.
@@ -78,10 +78,6 @@
   let padlockEl: HTMLElement | undefined = $state();
   /** Margin around the padlock, in CSS px, so a thumb need not land on its exact pixels. */
   const PADLOCK_SLOP_PX = 12;
-  /** Leftward travel after which the held finger is aiming at the padlock and stops zooming. */
-  const AIM_FREEZE_PX = 24;
-  /** Where the followed pointer came down, horizontally. */
-  let pressX = 0;
   /** The followed press began with no take running: only such a finger may lock one. */
   let lockable = $state(false);
 
@@ -117,9 +113,12 @@
   const CIRCUMFERENCE = 2 * Math.PI * 45;
 
   function down(event: PointerEvent) {
-    if (disabled || pointerId !== null || event.button > 0) return;
+    if (event.button > 0) {
+      console.debug('[reel-shutter] press refused: not the primary button', event.button);
+      return;
+    }
+    if (disabled || pointerId !== null) return;
     pointerId = event.pointerId;
-    pressX = event.clientX;
     pressY = event.clientY;
     stopTap = locked;
     holding = !locked;
@@ -127,15 +126,18 @@
     lockable = !recording && !locked;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     event.preventDefault();
-    if (stopTap) return;
+    if (stopTap) {
+      console.debug('[reel-shutter] press on stop of a locked take: decided at the lift');
+      return;
+    }
     onpress(event.timeStamp);
   }
 
   function move(event: PointerEvent) {
     if (event.pointerId !== pointerId || stopTap) return;
     if (recording && lockable) overLock = padlockHit(event);
-    // Aiming at the padlock (left of the button) is not a zoom.
-    if (pressX - event.clientX > AIM_FREEZE_PX && lockable) return;
+    // A finger over the padlock is aiming at it, not zooming.
+    if (overLock) return;
     onmove?.(pressY - event.clientY);
   }
 
@@ -194,6 +196,7 @@
     event.preventDefault();
     if (event.repeat) return;
     if (locked) {
+      console.debug('[reel-shutter] keyboard stop on a locked take');
       onstop?.();
       return;
     }

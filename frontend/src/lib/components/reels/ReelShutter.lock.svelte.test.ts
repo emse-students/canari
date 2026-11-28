@@ -184,15 +184,20 @@ describe('ReelShutter slide to lock', () => {
     expect(calls.onpress).toHaveBeenCalledTimes(1);
   });
 
-  it('aiming left toward the padlock stops the zoom reports', () => {
+  it('zoom stops only while the finger is over the padlock, and resumes off it', () => {
     stubPadlockRect();
     const onmove = vi.fn();
     const { fire, begin, props } = render({ recording: false });
     Object.assign(props, { onmove });
     begin(200, 200);
-    fire('pointermove', 190, 150);
+    // A leftward drift that is not over the padlock still zooms.
+    fire('pointermove', 100, 150);
     expect(onmove).toHaveBeenCalledTimes(1);
-    fire('pointermove', 100, 120);
+    // Over the padlock: aiming, no report.
+    fire('pointermove', 20, 20);
     expect(onmove).toHaveBeenCalledTimes(1);
+    // Back off it: zoom follows again.
+    fire('pointermove', 150, 100);
+    expect(onmove).toHaveBeenCalledTimes(2);
   });
 });
