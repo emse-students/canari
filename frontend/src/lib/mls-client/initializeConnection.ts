@@ -6,6 +6,7 @@ import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isAppInForeground } from '$lib/utils/appForeground';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
 import { adminQueuesChanged } from '$lib/admin/adminQueueCounts.svelte';
@@ -531,20 +532,38 @@ export async function syncConnectionAfterWsOpen(
   );
   const targets = sweep ? groupsNow : owing;
 
+  // A SWEEP CUT SHORT IS NOT RECORDED AS DONE: the connection record is what stops the next
+  // connection sweeping, so a sweep that stopped before every group was asked leaves it unwritten
+  // and the next connection sweeps again.
+  let sweepCutShort = false;
   if (targets.length > 0) {
     log(
       sweep
         ? `[HISTORY_RECONCILE] sweeping every group - ${reason}`
         : `[HISTORY_RECONCILE] no sweep - ${reason}; auditing ${owing.length} group(s) that never have been`
     );
-    const askedGroups = await reconcileAllGroups(mlsService, targets, log);
+    const { asked: askedGroups, complete } = await reconcileAllGroups(
+      mlsService,
+      targets,
+      log,
+      // A PASS THAT OUTLIVES ITS CONNECTION is stopped on the fact, never on a clock: the app left
+      // the screen (the OS suspends what is in flight and every election then fails in transport),
+      // or the server is known unreachable.
+      () =>
+        !isAppInForeground()
+          ? 'the app went to the background'
+          : connectivity.isOffline
+            ? 'the server is unreachable'
+            : null
+    );
     // DISCHARGED ON THE ASK ITSELF. `reconcileAllGroups` returns the groups a probe really left for,
     // which is shorter than `targets` by whatever was deferred - and those come back next time.
     noteGroupsAudited(userId, deviceId, askedGroups, store);
+    sweepCutShort = sweep && !complete;
   } else {
     log(`[HISTORY_RECONCILE] no sweep - ${reason}; every group already audited`);
   }
-  noteConnection(userId, deviceId, Date.now(), store);
+  if (!sweepCutShort) noteConnection(userId, deviceId, Date.now(), store);
   return verdicts;
 }
 

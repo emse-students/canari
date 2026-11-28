@@ -671,7 +671,14 @@ export async function reconcileGroup(
    * reaches. `stayed-silent` is {@link escalateReconciliation}: the excluded member was elected and
    * never replied, which is the opposite kind of fact and must not be read as coverage.
    */
-  excludeReason: 'stated-coverage' | 'stayed-silent' = 'stated-coverage'
+  excludeReason: 'stated-coverage' | 'stayed-silent' = 'stated-coverage',
+  /**
+   * True when {@link reconcileAllGroups} calls: the "no member online" outcome of every group is then
+   * COUNTED in the pass line instead of said once per group (measured on a device, 2026-11-27: 714
+   * identical lines in one session, one per group per pass). The group is still remembered as
+   * deferred; only the line moves. A single-group trigger keeps its own line.
+   */
+  inPass = false
 ): Promise<boolean> {
   const short = groupId.slice(0, 8);
 
@@ -908,7 +915,8 @@ export async function reconcileGroup(
     // The server elects the responder, so it already knows there was none. Remembered only so the
     // peer-online edge can pick it up - it is not evidence that anything is missing.
     deferred.set(groupId, 'no-peer-online');
-    log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
+    if (!inPass)
+      log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
     return false;
   }
 
@@ -1229,8 +1237,17 @@ export async function reconcileAllGroups(
     'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
   >,
   groupIds: Iterable<string>,
-  log: (msg: string) => void
-): Promise<string[]> {
+  log: (msg: string) => void,
+  /**
+   * Why the pass must not go on, read BEFORE each group is asked, or `null` to go on. The pass
+   * outlived the connection that started it: measured on a device (2026-11-27) a pass of 157 groups
+   * kept asking for 12 s after the app was paused, and the elections then failed in transport and
+   * were reported as the server being unreachable. A group not asked is simply owed (the audit
+   * discharges only what was asked), so stopping loses nothing; the caller reads
+   * {@link ReconcilePassResult.complete}.
+   */
+  stopReason: () => string | null = () => null
+): Promise<ReconcilePassResult> {
   // A SNAPSHOT handed out in order, each group exactly once (`forEachBounded`).
   const queue = [...groupIds];
   const total = queue.length;
@@ -1244,6 +1261,12 @@ export async function reconcileAllGroups(
   // per-call line in `reconcileGroup` stays for the single-group triggers, where it explains a
   // repair that was announced and did not happen.
   let coalesced = 0;
+  // THE GROUPS NOBODY WAS ONLINE FOR, counted from the durable deferral `reconcileGroup` records, so
+  // the pass line names them once instead of one line each.
+  let noPeer = 0;
+  // The first reason the pass was told to stop, and how many groups it left unasked.
+  let stoppedBecause: string | null = null;
+  let leftUnasked = 0;
 
   const started = Date.now();
   // At most `NETWORK_READ_CONCURRENCY` elections in flight: the pass is bounded by the slowest
@@ -1252,13 +1275,23 @@ export async function reconcileAllGroups(
     queue,
     NETWORK_READ_CONCURRENCY,
     async (groupId) => {
+      const why = stoppedBecause ?? stopReason();
+      if (why) {
+        stoppedBecause ??= why;
+        leftUnasked++;
+        return;
+      }
       if (recentlyAsked(groupId, Date.now())) {
         // The same fresh-walk reset `reconcileGroup` performs before it reaches the window check.
         chased.delete(groupId);
         coalesced++;
         return;
       }
-      if (await reconcileGroup(mlsService, groupId, log)) askedGroups.push(groupId);
+      if (await reconcileGroup(mlsService, groupId, log, Date.now(), [], 'stated-coverage', true)) {
+        askedGroups.push(groupId);
+      } else if (deferred.get(groupId) === 'no-peer-online') {
+        noPeer++;
+      }
     },
     (groupId) => groupId.slice(0, 8)
   );
@@ -1276,10 +1309,28 @@ export async function reconcileAllGroups(
     coalesced > 0
       ? `, ${coalesced} already asked within ${PROBE_COALESCE_MS / 1000}s and not asked again`
       : '';
+  const waiting = noPeer > 0 ? `, ${noPeer} with no member online (asked when one returns)` : '';
   log(
-    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked${swallowed} in ${Date.now() - started} ms`
+    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked${swallowed}${waiting} in ${Date.now() - started} ms`
   );
-  return askedGroups;
+  if (stoppedBecause) {
+    // EXPECTED and necessary: the pass ended early on a fact (the app left the screen, the server
+    // cannot be reached), and the line names which, so a reader does not look for an outage.
+    log(
+      `[HISTORY_RECONCILE] pass stopped, ${stoppedBecause} - ${leftUnasked}/${total} group(s) left unasked and owed again`
+    );
+  }
+  return { asked: askedGroups, complete: stoppedBecause === null };
+}
+
+/**
+ * What a {@link reconcileAllGroups} pass settled: the groups a probe left for, and whether it
+ * covered every group it was handed (`false`: it was told to stop, so the connection must not be
+ * recorded as fully compared).
+ */
+export interface ReconcilePassResult {
+  asked: string[];
+  complete: boolean;
 }
 
 /**

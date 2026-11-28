@@ -4,6 +4,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 import { Log } from '$lib/utils/Log';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { SessionExpiredError } from '$lib/stores/auth';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
@@ -192,6 +193,14 @@ export function followAdminQueueCounts(): () => void {
   void loadAdminQueueCounts();
   const onVisibility = () => {
     if (document.visibilityState !== 'visible') return;
+    // ON A NATIVE SHELL THE RESUME ASKS ONCE, THROUGH THE SOCKET: the pause released the socket, so
+    // the foreground always reopens it and `adminQueuesChanged('socket-open')` asks - and this edge,
+    // firing a second or two earlier, was a second request for the same moment (owner's log,
+    // 2026-11-26: two asks 2.5 s apart on one resume). A reopen that fails is the link-back ask's.
+    if (isTauriRuntime()) {
+      Log.d('adminQueueCounts', 'back in the foreground: the socket reopen asks');
+      return;
+    }
     Log.d('adminQueueCounts', 'back in the foreground: counts asked again');
     void loadAdminQueueCounts();
   };

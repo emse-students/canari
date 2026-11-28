@@ -14,6 +14,11 @@ describe('isExpectedPlayInterruption', () => {
     expect(isExpectedPlayInterruption('AbortError', { ...base, sourceChanged: true })).toBe(true);
   });
 
+  it('an AbortError of a play a newer play replaced is explained (background then back)', () => {
+    expect(isExpectedPlayInterruption('AbortError', { ...base, superseded: true })).toBe(true);
+    expect(isExpectedPlayInterruption('AbortError', { ...base, superseded: false })).toBe(false);
+  });
+
   it('an AbortError with no explaining fact stays a warning', () => {
     expect(isExpectedPlayInterruption('AbortError', base)).toBe(false);
   });

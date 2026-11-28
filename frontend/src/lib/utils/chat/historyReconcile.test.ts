@@ -632,6 +632,44 @@ describe('reconcileAllGroups', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('1/2 group(s) asked'));
   });
 
+  it('counts the groups nobody was online for in the pass line, with no line per group', async () => {
+    // Measured on a device, 2026-11-27: 714 identical lines in one session, one per group per pass.
+    const mls = service({ noPeerOnline: true });
+    await reconcileAllGroups(mls, ['g1', 'g2', 'g3'], log);
+
+    const said = log.mock.calls.map(([m]) => String(m));
+    expect(said.filter((m) => m.includes('no member online for'))).toEqual([]);
+    expect(said.some((m) => m.includes('0/3 group(s) asked, 3 with no member online'))).toBe(true);
+    // Still deferred: the peer-online edge asks them when one returns.
+    const retried = service();
+    await retryDeferredReconciliations(retried, ['g1', 'g2', 'g3'], log);
+    expect(retried.sendHistoryRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops asking when told to, leaves the rest owed, and says why once', async () => {
+    // A pass of 157 groups kept asking 12 s after the app was paused (2026-11-27): the elections then
+    // failed in transport and were reported as the server being unreachable.
+    const mls = service();
+    // The app leaves the screen after the first group was let through.
+    let reads = 0;
+    const stopReason = vi.fn(() => (++reads > 1 ? 'the app went to the background' : null));
+
+    const result = await reconcileAllGroups(mls, ['a', 'b', 'c', 'd'], log, stopReason);
+
+    expect(result.complete).toBe(false);
+    expect(result.asked).toHaveLength(1);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+    const said = log.mock.calls.map(([m]) => String(m));
+    expect(
+      said.filter((m) => m.includes('pass stopped, the app went to the background'))
+    ).toHaveLength(1);
+  });
+
+  it('is complete when nothing told it to stop', async () => {
+    const result = await reconcileAllGroups(service(), [GROUP, OTHER], log, () => null);
+    expect(result).toEqual({ asked: [GROUP, OTHER], complete: true });
+  });
+
   it('runs the elections concurrently rather than one round trip after another', async () => {
     // THE POINT OF THE PASS BEING CONCURRENT AT ALL. Nine sequential elections were measured at
     // 4.35 s on a device - ~480 ms of HTTP round trip each, taking no lock and serialised for no

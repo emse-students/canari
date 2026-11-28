@@ -8590,3 +8590,19 @@ keeps the quote read from the full row (`UploadTask.replyTo`) and gives it back 
 same sight: `ChatMessageGroups` looked the quoted photo up by `msg.replyTo` only, so a row read back from
 the store lost its thumbnail even when its envelope kept the quote; `quotedIdOf` reads the envelope too.
 A reply sent from a build before this fix stays a plain photo on both sides: the quote was never written.
+
+### The connection pass stops on a fact, and counts instead of listing (owner's log of 2026-11-27, 1.8.4)
+
+- **A pass does not outlive its connection.** `reconcileAllGroups` takes a `stopReason` read before
+  each group is asked; `initializeConnection` hands it "the app left the screen" and "the server is
+  unreachable". A pass of 157 groups used to go on for 12 s after the app was paused, and its
+  elections then failed in transport and were reported as the server being unreachable
+  ([the suspension entry](../../backlog.d/p3-a-suspension-is-logged-as-the-server-being-unreachable.md)).
+  A group not asked is owed (the audit discharges only what was asked). A SWEEP cut short does not
+  write the connection record, so the next connection sweeps again; one line names the stop.
+- **No line per group for "nobody online".** 714 identical lines in one session (one per group per
+  pass, 16 passes). The pass line now carries the count (`N with no member online`); the group is
+  still deferred for the peer-online edge, and a single-group trigger keeps its own line.
+- **A skipped Graine roster pass is said once per key-group version** (`keyGroupConvergence.ts`,
+  `skipSaid`; 961 identical lines before). A pass that RAN despite a record is always said, so a
+  resume with no such line skipped.

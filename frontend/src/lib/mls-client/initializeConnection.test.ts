@@ -47,7 +47,7 @@ vi.mock('$lib/db', () => ({
 }));
 
 const { reconcileAllGroupsMock } = vi.hoisted(() => ({
-  reconcileAllGroupsMock: vi.fn().mockResolvedValue([] as string[]),
+  reconcileAllGroupsMock: vi.fn().mockResolvedValue({ asked: [] as string[], complete: true }),
 }));
 vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>();
@@ -573,7 +573,10 @@ describe('initializeConnection - the history pass leaves a group being created o
    * one is no evidence about it.
    */
   it('a store that is not the one the records were written against sweeps every group, then settles', async () => {
-    reconcileAllGroupsMock.mockResolvedValueOnce(['g-old', 'g-creating']);
+    reconcileAllGroupsMock.mockResolvedValueOnce({
+      asked: ['g-old', 'g-creating'],
+      complete: true,
+    });
     incarnationMock.mockResolvedValue('store-1');
     await connect(creatingMls());
     reconcileAllGroupsMock.mockClear();
@@ -591,6 +594,18 @@ describe('initializeConnection - the history pass leaves a group being created o
     );
     expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old', 'g-creating']);
     incarnationMock.mockResolvedValue('store-1');
+  });
+
+  it('a sweep cut short is not recorded as done: the next connection sweeps again', async () => {
+    incarnationMock.mockResolvedValue('store-cut');
+    reconcileAllGroupsMock.mockResolvedValueOnce({ asked: ['g-old'], complete: false });
+    await connect(creatingMls());
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+    reconcileAllGroupsMock.mockClear();
+
+    const log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
+    expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
   });
 
   it('a store that cannot name its incarnation is read as a new one', async () => {
