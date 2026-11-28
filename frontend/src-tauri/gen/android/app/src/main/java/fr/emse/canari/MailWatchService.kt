@@ -87,8 +87,8 @@ class MailWatchService : Service() {
          * from `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` is one Android allows for `specialUse`.
          */
         fun resumeIfArmed(context: Context, why: String) {
-            if (MailWatchVault.armed(context) == null) {
-                Log.d(TAG, "resume ($why): nothing sealed - no watch")
+            if (!MailWatchVault.persistentArmed(context)) {
+                Log.d(TAG, "resume ($why): no persistent watch armed - none resumed")
                 return
             }
             try {
@@ -143,16 +143,21 @@ class MailWatchService : Service() {
 
         /**
          * `MainActivity.onDestroy`, or a new document (the bridge's `page`): the page that ran the
-         * watcher is gone - the table hands the watch to the native watcher when armed, else leaves.
+         * watcher is gone. On the ops thread, AFTER any claim queued before it: the page's hold is
+         * released first, then the table hands the watch to the native watcher when armed (from PAGE,
+         * or from a NATIVE with no run left - a claim that was never followed by a start), else leaves.
          */
         fun stopForPageGone(context: Context) {
-            NativeMailWatcher.pageReleased()
-            if (mode != MailWatchMode.PAGE) return
-            Log.i(TAG, "the page that ran the mail watch is gone - telling the service")
-            try {
-                context.startService(intentFor(context, MailWatchCommand.PageGone))
-            } catch (e: IllegalStateException) {
-                Log.e(TAG, "stop for a gone page not delivered: ${e.javaClass.simpleName}")
+            val app = context.applicationContext
+            MailWatchVault.ops.execute {
+                NativeMailWatcher.pageReleased()
+                if (mode == MailWatchMode.OFF) return@execute
+                Log.i(TAG, "the page that ran the mail watch is gone - telling the service")
+                try {
+                    app.startService(intentFor(app, MailWatchCommand.PageGone))
+                } catch (e: IllegalStateException) {
+                    Log.e(TAG, "stop for a gone page not delivered: ${e.javaClass.simpleName}")
+                }
             }
         }
     }
@@ -169,7 +174,8 @@ class MailWatchService : Service() {
             return stickiness()
         }
         val armed = MailWatchVault.armed(this) != null
-        val effect = decideMailWatch(mode, command, armed, currentRun)
+        val persistent = MailWatchVault.persistentArmed(this)
+        val effect = decideMailWatch(mode, command, armed, currentRun, NativeMailWatcher.running, persistent)
         Log.i(TAG, "${command.javaClass.simpleName} in $mode (armed=$armed) -> ${effect.javaClass.simpleName}") // log-safe: an enum mode, a boolean and class names
         if (command is MailWatchCommand.Resume && mode == MailWatchMode.OFF && effect !is MailWatchEffect.EnterForeground) {
             // A Resume arrives through startForegroundService (boot, update, a sticky restart): the
@@ -188,7 +194,7 @@ class MailWatchService : Service() {
                 mode = MailWatchMode.PAGE
                 notificationManager().notify(NOTIFICATION_ID, notification(effect.spec))
             }
-            MailWatchEffect.HandToNative -> startNative()
+            MailWatchEffect.HandToNative -> if (!startNative()) leave("the page holds the watch", startId)
             is MailWatchEffect.Leave -> leave(effect.reason, startId)
             is MailWatchEffect.Ignore -> {
                 Log.i(TAG, "ignored: ${effect.reason}")
@@ -204,21 +210,31 @@ class MailWatchService : Service() {
      */
     private fun stickiness(): Int = if (mode == MailWatchMode.NATIVE) START_STICKY else START_NOT_STICKY
 
-    private fun startNative() {
-        mode = MailWatchMode.NATIVE
-        currentRun = NativeMailWatcher.start(this) { run, reason ->
+    /** Starts the native run; `false` when it was refused (the page holds the watch). */
+    private fun startNative(): Boolean {
+        val run = NativeMailWatcher.start(this) { run, reason ->
             try {
                 startService(intentFor(this, MailWatchCommand.NativeEnded(reason, run)))
             } catch (e: IllegalStateException) {
                 Log.e(TAG, "the native end was not delivered: ${e.javaClass.simpleName}")
             }
-        }
+        } ?: return false
+        currentRun = run
+        mode = MailWatchMode.NATIVE
+        return true
     }
 
     private fun enterForeground(spec: MailWatchSpec, target: MailWatchMode, startId: Int) {
         if (!enterForegroundOnly(spec, startId)) return
         Log.i(TAG, "in the foreground ($target): the mail watch keeps its connection")
-        if (target == MailWatchMode.NATIVE) startNative() else mode = target
+        if (target == MailWatchMode.NATIVE) {
+            if (!startNative()) {
+                leave("the page holds the watch", startId)
+                return
+            }
+        } else {
+            mode = target
+        }
         MailWatchBridge.emit("started", target.name.lowercase())
     }
 
@@ -252,16 +268,15 @@ class MailWatchService : Service() {
         Log.i(TAG, "left the foreground: $reason")
     }
 
-    /** The user swiped the app away: the page - and so the watcher - went with the task. */
+    /**
+     * The user swiped the app away: the page - and so the watcher - went with the task. Routed like
+     * a gone page ([stopForPageGone]): on the ops thread, the page's hold released first, then the
+     * table decides (`TaskRemoved` and `PageGone` are one row).
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        val effect = decideMailWatch(mode, MailWatchCommand.TaskRemoved, MailWatchVault.armed(this) != null, currentRun)
-        Log.i(TAG, "TaskRemoved in $mode -> ${effect.javaClass.simpleName}") // log-safe: an enum mode and a class name
-        when (effect) {
-            is MailWatchEffect.Leave -> leave(effect.reason, startId = null)
-            MailWatchEffect.HandToNative -> startNative()
-            else -> Unit
-        }
+        Log.i(TAG, "the task was removed from Recents in $mode")
+        stopForPageGone(this)
     }
 
     override fun onDestroy() {

@@ -1,5 +1,5 @@
 import { Log } from '$lib/utils/Log';
-import { mailClassOf } from './eligibility';
+import { mailClassOf, normalizeMailAddress } from './eligibility';
 import { classifyMailFailure, MailError } from './mailErrors';
 import { eraseMailLocalData } from './mailLocalData';
 import type { MailAccount } from './mailTypes';
@@ -102,9 +102,7 @@ function superseded(): MailError {
 }
 
 /** The address as Zimbra names it. */
-function normalized(address: string): string {
-  return address.trim().toLowerCase();
-}
+const normalized = normalizeMailAddress;
 
 export class MailSession {
   private token: string | null = null;

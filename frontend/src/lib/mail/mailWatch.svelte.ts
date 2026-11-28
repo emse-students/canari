@@ -256,9 +256,18 @@ export function pauseUntilRetry(ms: number, signal: AbortSignal): Promise<void> 
 function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal): void {
   if (isAndroidTauriRuntime()) {
     // One watcher at a time over the one cursor: the native run is stopped and JOINED first.
-    void claimAndroidMailWatch().then(() => {
-      if (!signal.aborted) watcher.start();
-    });
+    void claimAndroidMailWatch().then(
+      () => {
+        if (!signal.aborted) watcher.start();
+      },
+      (err: unknown) => {
+        // Not started: a page run beside a native one would be two writers of one cursor.
+        Log.w(
+          'MAIL-WATCH',
+          `ERROR: the claim was not sent - the page watch does not start (${String(err)})`
+        );
+      }
+    );
     return;
   }
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
@@ -280,15 +289,29 @@ function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal)
 }
 
 /**
+ * Whether the native watch persists - resumed at boot, kept in the foreground service - rather than
+ * only answering the mail push's one check: always with `mail_push = none` (lot 4's persistent
+ * connection is the only path), and with `cloudflare` only when the account keeps "Connexion
+ * permanente" (lot 5). Pure.
+ */
+export function nativeWatchPersists(
+  facts: Pick<WatchFacts, 'needsPersistent' | 'persistent'>
+): boolean {
+  return !facts.needsPersistent || facts.persistent;
+}
+
+/**
  * Arms the native watcher's sealed copy for `client`, unless the decision moved on while the
  * remembered password was read: `stillDecided` (the page's last decision is still this one) and the
  * session's generation (no sign-out, closed account or new sign-in since) are re-read RIGHT BEFORE
  * the arm is sent (review I3 of #4213). The native side orders an arm against a later forget on its
- * own executor. `true` when sent.
+ * own executor. `persistent` ({@link nativeWatchPersists}) travels with the arm, so the boot resume
+ * follows the account's choice rather than the copy's existence. `true` when sent.
  */
 export async function armNativeCopyIfCurrent(
   client: Pick<MailClient, 'userId' | 'session'>,
-  stillDecided: () => boolean
+  stillDecided: () => boolean,
+  persistent: boolean
 ): Promise<boolean> {
   const generation = client.session.generation;
   const remembered = await client.session.rememberedForNativeWatch();
@@ -297,7 +320,7 @@ export async function armNativeCopyIfCurrent(
     Log.d('MAIL-WATCH', 'the native copy decision moved on - this arm is not sent');
     return false;
   }
-  return armAndroidMailWatch(client.userId, remembered.account, remembered.password);
+  return armAndroidMailWatch(client.userId, remembered.account, remembered.password, persistent);
 }
 
 /** Writes the iOS flag the background refresh reads. Logged; a failure is said, never thrown. */
@@ -444,7 +467,7 @@ export function watchMailNotifications(): void {
       void eraseNativeMailPassword(client.userId);
       return;
     }
-    void armNativeCopyIfCurrent(client, () => lastNativeKey === key);
+    void armNativeCopyIfCurrent(client, () => lastNativeKey === key, nativeWatchPersists(facts));
   };
 
   runEndedListener = (client, reason) => {
@@ -497,6 +520,12 @@ export function watchMailNotifications(): void {
         // start is the watch with no page (boot, a restart) - this page claims it when it runs.
         serviceHeld = false;
         stopAndroidMailService('started with no watch running');
+        return;
+      }
+      if (detail.kind === 'armed' && detail.code === 'failed') {
+        // The copy was not sealed (a forget came first, the storage locked, a write failed): the
+        // next apply decides again rather than believing it armed.
+        lastNativeKey = null;
         return;
       }
       if (detail.kind === 'failed' || detail.kind === 'stopped') {

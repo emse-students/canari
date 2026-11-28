@@ -40,6 +40,16 @@ class NativeMailRunTest {
         /** Stops the run at its Nth pause (the ladder would otherwise loop for ever). */
         var stopAtPause = 1
 
+        /** The monotonic clock, and how long each wait holds on it (a normal wait: the full 300 s). */
+        var clock = 0L
+        var waitHoldsMs = 300_000L
+
+        /** Whether a stopped run may release its wait set (a forget: not). */
+        var releaseAllowed = true
+
+        /** What the release after a stop does. */
+        var release: () -> JSONObject = { ok("DestroyWaitSetResponse", "{}") }
+
         private fun count(name: String) = requests.count { it == name }
 
         override fun call(body: JSONObject, token: String?): JSONObject {
@@ -49,7 +59,10 @@ class NativeMailRunTest {
             return when (name) {
                 "AuthRequest" -> auth(count(name))
                 "CreateWaitSetRequest" -> createWaitSet()
-                "WaitSetRequest" -> wait(count(name))
+                "WaitSetRequest" -> {
+                    clock += waitHoldsMs
+                    wait(count(name))
+                }
                 "SearchRequest" -> search(body.getJSONObject(name).optJSONObject("cursor")?.getString("id"))
                 else -> error("unexpected $name")
             }
@@ -57,8 +70,12 @@ class NativeMailRunTest {
 
         override fun callAfterStop(body: JSONObject, token: String): JSONObject {
             requests += body.keys().next()
-            return ok("DestroyWaitSetResponse", "{}")
+            return release()
         }
+
+        override fun releaseAllowed() = releaseAllowed
+
+        override fun elapsedMs() = clock
 
         override fun openVault(): NativeVaultRecord? {
             vaultOpens++
@@ -198,5 +215,64 @@ class NativeMailRunTest {
         }
         assertEquals(NativeRunEnd.STOPPED, NativeMailRun(fake).watch())
         assertEquals("DestroyWaitSetRequest", fake.requests.last())
+    }
+
+    @Test
+    fun `a forgotten run leaves without releasing its wait set`() {
+        // Second round, 1: the release must never hold a forget up.
+        val fake = Fake()
+        fake.releaseAllowed = false
+        fake.wait = { n ->
+            if (n == 1) ok("WaitSetResponse", """{"seq":"1"}""") else { fake.stopped = true; throw NativeStopped() }
+        }
+        assertEquals(NativeRunEnd.STOPPED, NativeMailRun(fake).watch())
+        assertTrue("DestroyWaitSetRequest" !in fake.requests)
+    }
+
+    @Test
+    fun `after a transport failure the stale wait set is not released`() {
+        val fake = Fake()
+        fake.wait = { throw java.io.IOException("reset") }
+        assertEquals(NativeRunEnd.STOPPED, NativeMailRun(fake).watch())
+        assertTrue("DestroyWaitSetRequest" !in fake.requests)
+    }
+
+    @Test
+    fun `a wait answered empty without blocking is a failure on the ladder, never a tight loop`() {
+        // Second round, minor 8: the server answers at once, again and again.
+        val fake = Fake()
+        fake.waitHoldsMs = 10
+        fake.stopAtPause = 3
+        fake.wait = { ok("WaitSetResponse", """{"seq":"1"}""") }
+        assertEquals(NativeRunEnd.STOPPED, NativeMailRun(fake).watch())
+        assertEquals(listOf(2_000L, 4_000L, 8_000L), fake.pauses)
+        assertEquals(3, fake.requests.count { it == "WaitSetRequest" })
+    }
+
+    @Test
+    fun `a change answered at once is read at once - the floor bounds empty answers only`() {
+        val fake = Fake()
+        fake.waitHoldsMs = 10
+        fake.wait = { n ->
+            if (n == 1) ok("WaitSetResponse", """{"seq":"1","a":[{"id":"x"}]}""") else { fake.stopped = true; throw NativeStopped() }
+        }
+        fake.search = { page(101, 100, more = false) }
+        assertEquals(NativeRunEnd.STOPPED, NativeMailRun(fake).watch())
+        assertTrue(fake.pauses.isEmpty())
+        assertEquals(1, fake.notified.size)
+    }
+
+    @Test
+    fun `a delta read that cycles between page cursors ends`() {
+        // Second round, minor 8: not only an immediate repeat - A, B, A.
+        val fake = Fake()
+        fake.search = { after ->
+            when (after) {
+                null, "104" -> page(106, 105, more = true)
+                else -> page(105, 104, more = true)
+            }
+        }
+        assertEquals(NativeCheckEnd.DONE, NativeMailRun(fake).checkOnce())
+        assertEquals(3, fake.requests.count { it == "SearchRequest" })
     }
 }

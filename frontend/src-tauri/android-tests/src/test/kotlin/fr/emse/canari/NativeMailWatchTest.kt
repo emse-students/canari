@@ -136,6 +136,52 @@ class NativeMailWatchTest {
     }
 
     @Test
+    fun `a forget wins over the arms sent before it, and over none sent after it`() {
+        // Second round, 2: the forget is ordered on ARRIVAL, not when the executor reaches it.
+        val order = fr.emse.canari.mail.NativeVaultOrder()
+        val before = order.armSent()
+        order.forgetSent()
+        val after = order.armSent()
+        // The executor runs them in arrival order: the early arm, (the forget's erase), the late arm.
+        assertFalse(order.sealIf(before) { true })
+        assertTrue(order.eraseIf(null) {})
+        assertTrue(order.sealIf(after) { true })
+    }
+
+    @Test
+    fun `the run's own erase never removes a copy written after the one it opened`() {
+        // Second round, minor 1.
+        val order = fr.emse.canari.mail.NativeVaultOrder()
+        val seenAtOpen = order.writeSeen()
+        assertTrue(order.sealIf(order.armSent()) { true })
+        var erased = false
+        assertFalse(order.eraseIf(seenAtOpen) { erased = true })
+        assertFalse(erased)
+        assertTrue(order.eraseIf(order.writeSeen()) { erased = true })
+        assertTrue(erased)
+    }
+
+    @Test
+    fun `a failed seal is not a write`() {
+        val order = fr.emse.canari.mail.NativeVaultOrder()
+        val seen = order.writeSeen()
+        assertFalse(order.sealIf(order.armSent()) { false })
+        assertEquals(seen, order.writeSeen())
+    }
+
+    @Test
+    fun `the persistent-watch marker is named for its account and erased with the copy's files`() {
+        assertEquals("persistent_u1.on", fr.emse.canari.mail.nativePersistentFileName("u1"))
+        assertNull(fr.emse.canari.mail.nativePersistentFileName("../u1"))
+        assertEquals("u1", fr.emse.canari.mail.nativePersistentUserOf("persistent_u1.on"))
+        assertNull(fr.emse.canari.mail.nativePersistentUserOf("persistent_../u1.on"))
+        for (name in listOf("vault_u1.bin", "vault_u1.bin.tmp", "persistent_u1.on")) {
+            assertEquals(name, "u1", fr.emse.canari.mail.nativeCopyFileUserOf(name))
+        }
+        assertNull(fr.emse.canari.mail.nativeCopyFileUserOf("cursor_u1.json"))
+    }
+
+    @Test
     fun `one address normalisation, the page's`() {
         assertEquals("ada@etu.emse.fr", nativeAddress("  Ada@Etu.EMSE.fr "))
         assertEquals(nativeAddress("ADA@etu.emse.fr"), nativeAddress("ada@etu.emse.fr"))

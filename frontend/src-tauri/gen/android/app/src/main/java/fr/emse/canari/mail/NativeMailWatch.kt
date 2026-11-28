@@ -378,6 +378,25 @@ fun nativeVaultUserOf(fileName: String): String? {
     return id.takeIf { nativeVaultFileName(it) == fileName }
 }
 
+/**
+ * The marker of [userId]'s PERSISTENT-WATCH choice ("Connexion permanente", the arm's `persistent`
+ * field): present, the native watch resumes at boot and after a kill; absent, the sealed copy serves
+ * only the push path's `checkOnce` (mail lot 5). Erased with the copy (Rust's `erase_vault` too).
+ */
+fun nativePersistentFileName(userId: String): String? =
+    nativeVaultFileName(userId)?.let { "persistent_$userId.on" }
+
+/** The account a `persistent_<id>.on` file name is for, or `null` for any other name. */
+fun nativePersistentUserOf(fileName: String): String? {
+    if (!fileName.startsWith("persistent_") || !fileName.endsWith(".on")) return null
+    val id = fileName.removePrefix("persistent_").removeSuffix(".on")
+    return id.takeIf { nativePersistentFileName(it) == fileName }
+}
+
+/** The account any of the copy's files is for (the copy, its write in flight, its persistent marker). */
+fun nativeCopyFileUserOf(fileName: String): String? =
+    nativeVaultUserOf(fileName.removeSuffix(".tmp")) ?: nativePersistentUserOf(fileName)
+
 /** The seal's associated data: the record opens only as [userId]'s. */
 fun nativeVaultAad(userId: String): ByteArray = "canari-mail-vault:v1:$userId".toByteArray(Charsets.UTF_8)
 
@@ -389,4 +408,54 @@ fun nativeVaultRecordOf(plaintext: ByteArray): NativeVaultRecord? {
     val account = o.optString("account", "").takeIf { it.isNotBlank() } ?: return null
     val password = o.optString("password", "").takeIf { it.isNotEmpty() } ?: return null
     return NativeVaultRecord(account, password)
+}
+
+/**
+ * THE ORDER OF THE SEALED COPY'S WRITES (review of #4213, I3 and its second round). Pure, so
+ * `NativeMailWatchTest` drives every interleaving on a JVM; `MailWatchVault` runs its file work
+ * inside these calls.
+ *
+ * - **A forget wins over every arm SENT before it, and no arm sent after it.** A forget bumps
+ *   [forgets] the moment its message ARRIVES ([forgetSent]), before it is queued; an arm reads
+ *   [forgets] when its message arrives ([armSent]) and seals only if it is unchanged when it runs
+ *   ([sealIf]). Both run on one executor, so arrival order is run order.
+ * - **The run's own erase never removes a copy written after the one it opened.** Every write and
+ *   erase bumps [writes]; an erase decided from what a run opened ([eraseIf] with the [writeSeen]
+ *   read at the open) is skipped when a newer copy is there.
+ */
+class NativeVaultOrder {
+    private var forgets = 0L
+    private var writes = 0L
+
+    /** An arm's message arrived: the forgets it must not be overtaken by. */
+    @Synchronized
+    fun armSent(): Long = forgets
+
+    /** A forget's message arrived: every arm sent before it is refused. */
+    @Synchronized
+    fun forgetSent() {
+        forgets++
+    }
+
+    /** Runs [seal] when no forget arrived after the arm sent at [sentAt]; a successful seal is a write. */
+    @Synchronized
+    fun sealIf(sentAt: Long, seal: () -> Boolean): Boolean {
+        if (sentAt != forgets) return false
+        val ok = seal()
+        if (ok) writes++
+        return ok
+    }
+
+    /** The writes seen when a copy is opened: what [eraseIf] compares. */
+    @Synchronized
+    fun writeSeen(): Long = writes
+
+    /** Runs [erase] unless a write came after [seen] (`null`: erase whatever is there, a forget). */
+    @Synchronized
+    fun eraseIf(seen: Long?, erase: () -> Unit): Boolean {
+        if (seen != null && seen != writes) return false
+        erase()
+        writes++
+        return true
+    }
 }

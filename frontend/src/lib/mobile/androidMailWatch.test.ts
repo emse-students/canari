@@ -21,8 +21,8 @@ function bridge() {
     postMessage: (m: string) => sent.push(JSON.parse(m)),
   };
 }
-const answer = (kind: string) =>
-  window.dispatchEvent(new CustomEvent(NATIVE_MAIL_EVENT, { detail: { kind } }));
+const answer = (kind: string, code?: string) =>
+  window.dispatchEvent(new CustomEvent(NATIVE_MAIL_EVENT, { detail: { kind, code } }));
 
 afterEach(() => {
   delete (window as unknown as { canariMail?: unknown }).canariMail;
@@ -34,14 +34,38 @@ describe('the native watcher bridge (lot 4b)', () => {
     bridge();
     let done = false;
     const claimed = claimAndroidMailWatch().then(() => (done = true));
-    expect(sent).toEqual([{ op: 'claim' }]);
+    expect(sent).toHaveLength(1);
+    const { op, id } = sent[0] as { op: string; id: string };
+    expect(op).toBe('claim');
     answer('started');
     answer('armed');
     await Promise.resolve();
     expect(done).toBe(false);
-    answer('handed');
+    answer('handed', id);
     await claimed;
     expect(done).toBe(true);
+  });
+
+  it("a claim resolves only on ITS OWN handed - an earlier claim's answer resolves nothing", async () => {
+    bridge();
+    let done = false;
+    const claimed = claimAndroidMailWatch().then(() => (done = true));
+    const { id } = sent[0] as { id: string };
+    answer('handed', 'claim-0');
+    answer('handed');
+    await Promise.resolve();
+    expect(done).toBe(false);
+    answer('handed', id);
+    await claimed;
+  });
+
+  it('a claim that could not be sent rejects - the page must not start a second writer', async () => {
+    (window as unknown as { canariMail: unknown }).canariMail = {
+      postMessage: () => {
+        throw new Error('the port is closed');
+      },
+    };
+    await expect(claimAndroidMailWatch()).rejects.toThrow('the port is closed');
   });
 
   it('with no bridge, nothing native can run: the claim resolves at once', async () => {
@@ -54,7 +78,15 @@ describe('the native watcher bridge (lot 4b)', () => {
     expect(armAndroidMailWatch('u1', 'ada@etu.emse.fr', 'pw')).toBe(true);
     expect(sent).toEqual([
       { op: 'page' },
-      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw' },
+      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw', persistent: true },
+    ]);
+  });
+
+  it('an arm carries the persistent-watch choice', () => {
+    bridge();
+    armAndroidMailWatch('u1', 'ada@etu.emse.fr', 'pw', false);
+    expect(sent).toEqual([
+      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw', persistent: false },
     ]);
   });
 

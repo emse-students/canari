@@ -38,6 +38,7 @@ import type { MailSessionState } from './mailSession';
 import { armAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import {
   armNativeCopyIfCurrent,
+  nativeWatchPersists,
   backgroundRefresh,
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
@@ -300,17 +301,34 @@ describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
     expect(
       await armNativeCopyIfCurrent(
         sessionWith(() => {}),
-        () => true
+        () => true,
+        true
       )
     ).toBe(true);
-    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw');
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw', true);
+  });
+
+  it('carries the persistent choice into the arm', async () => {
+    await armNativeCopyIfCurrent(
+      sessionWith(() => {}),
+      () => true,
+      false
+    );
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw', false);
+  });
+
+  it('persists with no server path, and with Cloudflare only when the account keeps it', () => {
+    expect(nativeWatchPersists({ needsPersistent: false, persistent: false })).toBe(true);
+    expect(nativeWatchPersists({ needsPersistent: true, persistent: true })).toBe(true);
+    expect(nativeWatchPersists({ needsPersistent: true, persistent: false })).toBe(false);
   });
 
   it('sends nothing once the page decided otherwise (an erase came after)', async () => {
     expect(
       await armNativeCopyIfCurrent(
         sessionWith(() => {}),
-        () => false
+        () => false,
+        true
       )
     ).toBe(false);
     expect(armAndroidMailWatch).not.toHaveBeenCalled();
@@ -318,7 +336,7 @@ describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
 
   it('sends nothing once the session moved (a sign-out or a new sign-in during the read)', async () => {
     const client = sessionWith((session) => (session.generation = 2));
-    expect(await armNativeCopyIfCurrent(client, () => true)).toBe(false);
+    expect(await armNativeCopyIfCurrent(client, () => true, true)).toBe(false);
     expect(armAndroidMailWatch).not.toHaveBeenCalled();
   });
 });

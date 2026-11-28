@@ -79,6 +79,27 @@ class MailWatchTest {
     }
 
     @Test
+    fun `a page gone in NATIVE with no run left starts one, or leaves when nothing is sealed`() {
+        // Second round, 3: a reload handed the watch to native, a new page claimed it (the run is
+        // joined), its start was refused off screen, then the activity went - NATIVE with no run.
+        val gone = MailWatchCommand.PageGone
+        assertEquals(MailWatchEffect.HandToNative, decideMailWatch(native, gone, armed = true, nativeAlive = false))
+        assertTrue(decideMailWatch(native, gone, armed = false, nativeAlive = false) is MailWatchEffect.Leave)
+        assertTrue(decideMailWatch(native, gone, armed = true, nativeAlive = true) is MailWatchEffect.Ignore)
+        assertEquals(MailWatchEffect.HandToNative, decideMailWatch(native, MailWatchCommand.TaskRemoved, armed = true, nativeAlive = false))
+    }
+
+    @Test
+    fun `with the persistent watch off, the copy resumes nothing and a gone page ends the watch`() {
+        // Mail lot 5: the copy stays for the push path's check, but no persistent native watch runs.
+        val resume = MailWatchCommand.Resume(spec)
+        assertTrue(decideMailWatch(off, resume, armed = true, persistent = false) is MailWatchEffect.Ignore)
+        assertEquals(MailWatchEffect.EnterForeground(spec, native), decideMailWatch(off, resume, armed = true, persistent = true))
+        assertTrue(decideMailWatch(page, MailWatchCommand.PageGone, armed = true, persistent = false) is MailWatchEffect.Leave)
+        assertTrue(decideMailWatch(native, MailWatchCommand.PageGone, armed = true, nativeAlive = false, persistent = false) is MailWatchEffect.Leave)
+    }
+
+    @Test
     fun `a forget ends a native watch and leaves the page's to the page`() {
         // Review B1: erase while NATIVE, with no page running - the service leaves.
         assertTrue(decideMailWatch(native, MailWatchCommand.Forgotten, armed = false) is MailWatchEffect.Leave)

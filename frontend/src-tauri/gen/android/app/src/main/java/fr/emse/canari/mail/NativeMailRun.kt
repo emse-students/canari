@@ -56,8 +56,17 @@ interface NativeMailPorts {
     /** One SOAP call; the ENVELOPE answered (a fault included). [IOException] on a transport failure. */
     fun call(body: JSONObject, token: String?): JSONObject
 
-    /** The same, on a fresh connection that a stop does not refuse: the wait set's release only. */
+    /**
+     * The same, on a fresh SHORT-timeout connection that a stop does not refuse: the wait set's
+     * release only - a stop waits for it, so it must end in seconds, never in a wait's minutes.
+     */
     fun callAfterStop(body: JSONObject, token: String): JSONObject
+
+    /** Whether a stopped run releases its wait set: not on a forget (the copy is gone, leave at once). */
+    fun releaseAllowed(): Boolean
+
+    /** A MONOTONIC clock in ms: only to bound the rate of waits the server answers empty at once. */
+    fun elapsedMs(): Long
 
     /** Opens the sealed copy NOW (at each sign-in: the password is never held for the run), or `null`. */
     fun openVault(): NativeVaultRecord?
@@ -91,6 +100,13 @@ private class NativeDisarmed : Exception()
 /** The run ends by itself with [end]. */
 private class NativeEnds(val end: NativeRunEnd) : Exception()
 
+/**
+ * A wait the server answers EMPTY sooner than this did not block: counted as a failure on the
+ * ladder, so a server answering at once cannot drive a tight loop. A RATE bound only - a change is
+ * never decided by it (a wait that reports a change is read whatever its duration).
+ */
+const val NATIVE_FAST_EMPTY_WAIT_MS = 30_000L
+
 /** One native run (a persistent watch, or one check) over [ports]. */
 class NativeMailRun(private val ports: NativeMailPorts) {
     private var token: String? = null
@@ -114,11 +130,19 @@ class NativeMailRun(private val ports: NativeMailPorts) {
                     readAndNotify()
                     var seq = created.seq
                     while (true) {
+                        val asked = ports.elapsedMs()
                         val answer = waitAnswerOf(call(nativeWaitSetRequest(created.id, seq)))
                         // After EVERY wait: a copy erased while the run waited ends it now, with no
                         // other word to the server - not at the next change.
                         ensureArmed()
                         if (answer.canceled) throw NativeFault(NativeMailFault.WAIT_LOST, "canceled")
+                        if (!answer.changed && ports.elapsedMs() - asked < NATIVE_FAST_EMPTY_WAIT_MS) {
+                            failures++
+                            ports.log("a wait was answered empty without blocking - retry $failures")
+                            seq = answer.seq
+                            ports.pause(nativeRetryDelayMs(failures))
+                            continue
+                        }
                         healthy = true
                         waitedSinceSignIn = true
                         failures = 0
@@ -161,6 +185,9 @@ class NativeMailRun(private val ports: NativeMailPorts) {
                     }
                 } catch (e: IOException) {
                     ports.checkStopped()
+                    // The connection the wait set was created on is gone: the next turn creates
+                    // another, and a stop does not try to release this one.
+                    waitSet = null
                     failures++
                     healthy = false
                     ports.log("transport failure (${e.javaClass.simpleName}) - retry $failures")
@@ -262,13 +289,14 @@ class NativeMailRun(private val ports: NativeMailPorts) {
         }
         val above = mutableListOf<NativeInboxItem>()
         var after: String? = null
+        val seen = mutableSetOf<String>()
         while (true) {
             val step = nativeDeltaStep(inboxPageOf(call(nativeInboxPageRequest(after))), cursor)
             above += step.above
             val next = step.nextAfter ?: break
-            if (next == after) {
-                // A page that hands back the id it was read after would be asked for forever: the read
-                // stops here, and says so.
+            if (!seen.add(next)) {
+                // A page cursor met before in this read would be asked for forever (a repeat, or a
+                // cycle): the read stops here, and says so.
                 ports.log("ERROR: an inbox page did not advance - the read stops there")
                 break
             }
@@ -287,10 +315,14 @@ class NativeMailRun(private val ports: NativeMailPorts) {
         ports.notify(fresh)
     }
 
-    /** Releases the wait set best effort after a stop (the adapter answers even while stopping). */
+    /** Releases the wait set best effort after a stop (short timeouts), never after a forget. */
     private fun release(waitSet: String?) {
         val t = token ?: return
         if (waitSet == null) return
+        if (!ports.releaseAllowed()) {
+            ports.log("forgotten - the wait set is left to lapse by itself")
+            return
+        }
         try {
             ports.callAfterStop(nativeDestroyWaitSetRequest(waitSet), t)
             ports.log("wait set released")
