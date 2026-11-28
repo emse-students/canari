@@ -9,6 +9,8 @@ import { refusalFromResponse, ApiRefusalError } from '$lib/utils/apiRefusalError
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /** The page of a site that redeems a handoff token; the token rides in the fragment after it. */
 const HANDOFF_LANDING_PATH = '/auth/handoff';
@@ -39,6 +41,32 @@ class HandoffUrlMismatchError extends Error {
     super(`the handoff URL is not on ${site}'s origin`);
     this.name = 'HandoffUrlMismatchError';
   }
+}
+
+/**
+ * The opens whose mint has not settled yet, keyed `site + dest`. A mint takes seconds on a slow link
+ * and nothing on screen answers a tap meanwhile, so the same link is tapped again: each tap then
+ * minted its own token and opened its own browser, and the app, backgrounded under three launches,
+ * was killed. The guard is state cleared the moment the open settles, never a clock: a second tap
+ * while the first is pending is the SAME open, and is dropped.
+ *
+ * A HUNG MINT CANNOT LOCK THE LINK, and that is proven by what bounds it, not by a clock here: the
+ * mint goes through `apiFetch`, whose every call carries a response-head deadline (a typed
+ * `RequestDeadlineError`, `requestDeadline.ts`, 30 s for a write). Its expiry rejects the mint,
+ * the rejection opens the site plainly, and the `finally` below releases the guard. What follows
+ * the head is a transfer of a few hundred bytes the server has already answered, which that file
+ * deliberately leaves unbounded; the opener is a one-shot native or window call.
+ */
+const opening = new Set<string>();
+
+/**
+ * THE TAP WAS TAKEN: a mint takes seconds and nothing else on screen moves, which is what made the
+ * same link get tapped again. One toast per NATIVE open that starts (a dropped second tap shows
+ * none), so the pending state is the `opening` set made visible. The web path has none: the new tab
+ * is already the feedback.
+ */
+function showOpeningFeedback(): void {
+  showToast(m.ecosystem_site_opening(), 'info', 3000);
 }
 
 /** Said once per app run: an estate without the handoff opens every site plainly by design. */
@@ -137,8 +165,8 @@ function urlWithoutHandoff(site: EcosystemSite, dest: string, err: unknown): str
 }
 
 /** Opens `url` in the system browser (native shells). A rejected open is logged, never thrown. */
-function openInSystemBrowser(url: string, site: EcosystemSite): void {
-  void import('@tauri-apps/plugin-opener')
+function openInSystemBrowser(url: string, site: EcosystemSite): Promise<void> {
+  return import('@tauri-apps/plugin-opener')
     .then(({ openUrl }) => openUrl(url))
     .catch((e: unknown) =>
       // The class only: the URL may carry a handoff token, and an opener error can quote it.
@@ -175,6 +203,12 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
     return;
   }
   const plain = plainSiteUrl(site, dest);
+  const key = `${site.id}${dest}`;
+  if (site.handoff && opening.has(key)) {
+    // EXPECTED and necessary: the person tapped again while the first open is still minting.
+    Log.i('ecosystemSite', `${site.id} ${loggedDest(site, dest)} is already opening - tap ignored`);
+    return;
+  }
   Log.i(
     'ecosystemSite',
     `opening ${site.id} ${loggedDest(site, dest)} handoff=${site.handoff ? 'on' : 'off'}`
@@ -185,9 +219,13 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
       openInSystemBrowser(plain, site);
       return;
     }
+    opening.add(key);
+    showOpeningFeedback();
+    // The guard is released only once the OPENER has settled too (it returns its promise).
     void mintSiteHandoff(site, dest)
       .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
-      .then((url) => openInSystemBrowser(url, site));
+      .then((url) => openInSystemBrowser(url, site))
+      .finally(() => opening.delete(key));
     return;
   }
 
@@ -204,6 +242,7 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   }
   // The opener link is cut before the tab is steered: the site must not reach back into Canari.
   tab.opener = null;
+  opening.add(key);
   void mintSiteHandoff(site, dest)
     .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
     .then((url) => {
@@ -212,7 +251,8 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
         return;
       }
       tab.location.href = url;
-    });
+    })
+    .finally(() => opening.delete(key));
 }
 
 /**
@@ -246,4 +286,5 @@ export function openEcosystemSiteLink(href: string): boolean {
 /** Test seam: forgets that the not-offered state was said. */
 export function resetEcosystemSiteForTests(): void {
   notOfferedSaid = false;
+  opening.clear();
 }

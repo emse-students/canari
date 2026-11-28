@@ -93,10 +93,13 @@ export function createReplay(source: ReplaySource): Replay {
 }
 
 /**
- * The smallest and largest cell, in CSS px, a replay draws: below the first the cell's 12 px digit no
- * longer fits it. A stage too small for the minimum scrolls (see the viewer) rather than shrinking past it.
+ * The smallest and largest cell, in CSS px, a replay draws. THE MINIMUM IS A FLOOR, NOT A TARGET: it
+ * was 14 and a 18 x 32 board on an iPhone 12 (a stage of ~476 pt under the chrome) needs 13, so the
+ * clamp drew 14 and cut the last row (read 2026-11-27, 1.8.3-alpha.1). The glyphs scale with the cell
+ * ({@link replayGlyphSizes}) so a small cell stays readable; only a stage smaller than the floor allows
+ * (a window of a few hundred px) still scrolls.
  */
-export const REPLAY_CELL_MIN_PX = 14;
+export const REPLAY_CELL_MIN_PX = 8;
 export const REPLAY_CELL_MAX_PX = 44;
 
 /**
@@ -116,4 +119,16 @@ export function fitCellSize(
   const byHeight = (heightPx - gapPx * (rows - 1)) / rows;
   const fit = Math.floor(Math.min(byWidth, byHeight));
   return Math.min(Math.max(fit, REPLAY_CELL_MIN_PX), REPLAY_CELL_MAX_PX);
+}
+
+/**
+ * The digit and the flag/mine icon sizes, in CSS px, a cell of `cellPx` draws: the game's own 12 px
+ * digit and 14 px icon at their full size, scaled down with a cell too small to hold them, so a fitted
+ * replay stays readable down to {@link REPLAY_CELL_MIN_PX}.
+ */
+export function replayGlyphSizes(cellPx: number): { digitPx: number; iconPx: number } {
+  return {
+    digitPx: Math.min(12, Math.floor(cellPx * 0.7)),
+    iconPx: Math.min(14, Math.floor(cellPx * 0.8)),
+  };
 }

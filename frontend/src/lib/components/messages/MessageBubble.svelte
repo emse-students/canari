@@ -443,26 +443,19 @@
     return text ? () => void runShareOut(what, () => shareTextOut(text)) : undefined;
   });
 
-  // A photo or video with no caption is drawn like a plain one even when it answers a message
-  // (owner, 2026-11-27: "le bord jaune pour l'image dans une reponse"): no bubble padding around it,
-  // the quote stays stacked above. A reel, a voice note or a file keeps its own framing.
-  const isVisualReply = $derived(
-    !!effectiveReplyTo &&
-      (mediaRef?.type === 'image' || mediaRef?.type === 'video') &&
-      !isReelMessageRow
-  );
-  const isMediaOnly = $derived(
-    !!mediaRef && !textContent && (!effectiveReplyTo || isVisualReply) && !isDeleted
-  );
+  // BEING A REPLY NEVER CHANGES HOW THE MESSAGE ITSELF IS FRAMED (owner, 2026-11-27: "c'est pas parce
+  // que c'est une reponse qu'il faut mettre un contour"): the quote is a separate block stacked above
+  // (`MessageReplyQuote`), so every naked render below (media of any kind, link, GIF, emoji, poll)
+  // holds with or without `effectiveReplyTo`.
+  const isMediaOnly = $derived(!!mediaRef && !textContent && !isDeleted);
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
   // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
-  // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A quoted reply stacks its own
-  // bubble above, so it keeps the padded layout.
+  // 2026-10-02: "l'image est au dessus de la bulle, pas dans la bulle"). A reply keeps it: the quote
+  // is its own block above, and the bubble's top corner facing it is flattened by `stackedQuotePosition`.
   const bleedsMedia = $derived(
     !!mediaRef &&
       (mediaRef.type === 'image' || mediaRef.type === 'video') &&
       !!textContent &&
-      !effectiveReplyTo &&
       !isDeleted
   );
 
@@ -499,17 +492,17 @@
   });
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
   let textSegments = $derived(splitTextWithLinks(textContent));
-  // Link-only message (no surrounding text, no reply, not a GIF) - also renders naked
+  // Link-only message (no surrounding text, not a GIF) - also renders naked
   const isLinkOnly = $derived.by(() => {
-    if (!firstLink || isGifUrl(firstLink) || effectiveReplyTo) return false;
+    if (!firstLink || isGifUrl(firstLink)) return false;
     return textSegments.every(
       (s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === '')
     );
   });
-  // GIF-only message (no surrounding text, no reply) - renders naked like an image/media,
+  // GIF-only message (no surrounding text) - renders naked like an image/media,
   // with no bubble frame around it.
   const isGifOnly = $derived.by(() => {
-    if (!firstLink || !isGifUrl(firstLink) || effectiveReplyTo || isDeleted) return false;
+    if (!firstLink || !isGifUrl(firstLink) || isDeleted) return false;
     return textSegments.every(
       (s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === '')
     );
@@ -517,10 +510,10 @@
 
   /** Up to this many emoji (the user's own answer) still counts as "jumbomoji". */
   const JUMBO_EMOJI_MAX_COUNT = 5;
-  // Emoji-only message (no media, reply or poll) - renders naked like an image/media, at a larger
+  // Emoji-only message (no media or poll) - renders naked like an image/media, at a larger
   // size (see MessageTextBody's `jumbo` prop), like WhatsApp/Messenger.
   const isEmojiOnly = $derived.by(() => {
-    if (mediaRef || effectiveReplyTo || isPollOnly || isDeleted) return false;
+    if (mediaRef || isPollOnly || isDeleted) return false;
     return isEmojiOnlyText(textContent, JUMBO_EMOJI_MAX_COUNT);
   });
 
@@ -713,6 +706,22 @@
     );
   }
 
+  /**
+   * A PRESS THAT STARTS ON A VOICE NOTE'S WAVEFORM IS ITS SCRUBBER'S (owner, 1.8.2: "I cannot seek").
+   * The bubble read every press as one of its own: held for 420 ms it opened the actions sheet, and
+   * dragged sideways it became a reply swipe whose `touchmove` claim cancelled the stroke - so the
+   * finger that was moving the playhead moved the message instead. The scrubber says so by being a
+   * `[data-scrub]`; the bubble reads that fact at the press and arms neither gesture.
+   */
+  function pressOwnedByScrub(e: Event): boolean {
+    const target = e.target as Element | null;
+    return (
+      target !== null &&
+      typeof target.closest === 'function' &&
+      target.closest('[data-scrub]') !== null
+    );
+  }
+
   /** The actions sheet, opened from a video's chip - the long press it replaces over a video. */
   function openActionsFromVideo() {
     Log.d('MESSAGE', `actions of ${messageId} opened from its video's chip`);
@@ -731,6 +740,11 @@
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
+
+    if (pressOwnedByScrub(e)) {
+      replyGesture = null;
+      return;
+    }
 
     // Long press: arm on any non-mouse touch event on mobile - never over a video, whose hold pauses.
     if (pointerType !== 'mouse' && isMobile && !pressOwnedByVideo(e)) {
@@ -1047,7 +1061,16 @@
     // Read untracked: the ref of THIS blob, whichever re-parse of the content produced it.
     const ref = untrack(() => mediaRef);
     if (!ref) return;
-    Log.d('MESSAGE', `media ${mediaBlobId.slice(0, 8)}: download for row ${messageId.slice(0, 8)}`);
+    // `messageId` is read UNTRACKED, and that is the whole fix of "a reaction restarts a voice note":
+    // the thread passes it as a getter over its `msg` derived, and a reaction replaces the message
+    // OBJECT (`{ ...msg, reactions }`, `handleAddReaction`), so a tracked read re-ran this effect
+    // for a row whose attachment had not changed - its cleanup nulled `blobUrl`, the player was torn
+    // down and rebuilt, and the note started over from 0:00. This effect is keyed on the attachment
+    // alone.
+    Log.d(
+      'MESSAGE',
+      `media ${mediaBlobId.slice(0, 8)}: download for row ${untrack(() => messageId).slice(0, 8)}`
+    );
     // Leaves the gate's queue if the row is torn down before its turn comes.
     const abort = new AbortController();
 
@@ -1290,6 +1313,7 @@
               e.preventDefault();
               // A phone raises `contextmenu` for a touch hold too: over a video it is the player's
               // pause, never the sheet.
+              if (pressOwnedByScrub(e)) return;
               if (pressOwnedByVideo(e)) {
                 Log.d(
                   'MESSAGE',

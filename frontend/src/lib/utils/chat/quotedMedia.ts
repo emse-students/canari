@@ -44,3 +44,22 @@ function visualOf(content: string): QuotedVisual | null {
   if (isReelMessage(ref) || !ref.mediaId) return null;
   return { ref, caption: env.caption ?? '' };
 }
+
+/**
+ * The id of the message a row answers: the in-memory reference when the row has one (a send this
+ * session, a live delivery), else the one its stored body carries. A row read back from the store
+ * has NO `replyTo` field - the reference lives in its envelope - so reading the field alone drew the
+ * quote's thumbnail before a restart and not after it. `undefined` for a row that answers nothing.
+ */
+export function quotedIdOf(msg: { content: string; replyTo?: { id: string } }): string | undefined {
+  if (msg.replyTo) return msg.replyTo.id;
+  // Answered per CONTENT, like `quotedVisualMedia`: the thread asks for every row at every render.
+  if (quotedIds.has(msg.content)) return quotedIds.get(msg.content);
+  const env = parseEnvelope(msg.content);
+  const id = env.kind === 'text' || env.kind === 'media' ? env.replyTo?.id : undefined;
+  if (quotedIds.size >= ANSWERS_MAX) quotedIds.clear();
+  quotedIds.set(msg.content, id);
+  return id;
+}
+
+const quotedIds = new Map<string, string | undefined>();

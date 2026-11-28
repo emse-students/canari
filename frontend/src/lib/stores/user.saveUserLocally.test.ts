@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getSavedDisplayName, saveUserLocally } from './user';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * THE SAVED DISPLAY NAME IS ONE ACCOUNT'S. The token refresh and the session restore call
@@ -28,5 +29,31 @@ describe('saveUserLocally and the saved display name', () => {
     saveUserLocally({ id: 'gamma', displayName: 'Canari Test Gamma' });
     saveUserLocally({ id: 'delta', displayName: 'Canari Test Delta' });
     expect(getSavedDisplayName()).toBe('Canari Test Delta');
+  });
+});
+
+/**
+ * THE DEVICE COPY OF THE NOTIFICATION SETTINGS IS ONE ACCOUNT'S TOO (`notificationPreferences`): a
+ * change of account erases every other account's copy, and keeps the one signing in.
+ */
+describe('saveUserLocally and the device copies of the notification settings', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("erases the previous account's copy on a switch, and keeps the new account's own", () => {
+    saveUserLocally({ id: 'gamma' });
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('gamma'), '{}');
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('delta'), '{}');
+    saveUserLocally({ id: 'delta' });
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('gamma'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('delta'))).toBe('{}');
+  });
+
+  it('touches nothing when the same account is saved again', () => {
+    saveUserLocally({ id: 'gamma' });
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('gamma'), '{}');
+    saveUserLocally({ id: 'gamma' });
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('gamma'))).toBe('{}');
   });
 });

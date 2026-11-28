@@ -908,7 +908,7 @@ profiles) stay with global admins.
 
 **WP8 - The colle (D28), UNBLOCKED 2026-11-23.** The `alumni` SAML source has its real `sso_url`, its
 certificate and a name mapping, and a link onto an account signed in through the CAS was OBSERVED
-([authentik](infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)). Still owed: a claim `alumni_linked`; a Canari banner
+([authentik](infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)). Still owed: a claim `alumni_linked`; a Canari card (a feed card and a settings row, 2026-11-27)
 for promo N-1; a stage in `miconnect-auth`, skippable before the date the user sets and blocking
 after it. authentik links a source to the account that is ALREADY signed in, which is exactly the
 colle - proven in production on 2026-11-23 with a real alumni account.
@@ -997,13 +997,18 @@ claim and calls the editor account.
   (`users."alumniLinked"`, migration core `028`) and served on the reader's OWN profile only
   (`GET /users/me`), never to another reader of the profile. Until MiConnect emits it, every value
   is `null` and nothing shows.
-- **The reminder banner (D44).** `AlumniLinkBanner.svelte`, in the layout's banner column, decided
-  by `alumniLinkReminderDue` (`lib/profile/alumniLink.ts`, unit-tested on injected dates): an
+- **The reminder card (D44; owner, 2026-11-27: it replaced the top banner, the birthday card being the
+  better pattern).** `components/posts/AlumniLinkCard.svelte`, the quiet line at the top of the feed
+  (`FeedPromptCard`, shared with `BirthdayFeedCard`), decided by `alumniLinkReminderDue` (`lib/profile/alumniLink.ts`, unit-tested on injected dates): an
   explicit `alumniLinked === false`, and today on or after 1 September P+1 where P is the EARLIEST
   promo of the cursus (two cursus: the first one due reminds; no cursus: never). Its button opens
-  `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources`. Dismissed for the run of the app (module
-  state, no storage): a restart reminds again. The blocking half from 1 February P+2 and the
-  2027-02-01 grace are MiConnect's stage, not Canari's.
+  `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources` and records nothing; the cross records the help
+  `prompt-alumni-link` in `help_seen`, so it never returns on any device (session-only before). A
+  bench account dismisses the card once: the dismissal is per account, on the server, so no
+  "test" category and no MiConnect change is needed (owner, 2026-11-27). **The permanent way back:**
+  the feed card plus the settings row `SettingsAlumniLinkRow` (security section, same rule through
+  `followAlumniLinkReminder`, never dismissed, opens the same page) REPLACE the banner. The blocking half
+  from 1 February P+2 and the 2027-02-01 grace are MiConnect's stage, not Canari's, and remain the backstop.
 - **The duplicates list (D47)** is `/admin/alumni-duplicates` (global admin, beside the profile
   corrections), served by `GET /users/admin/alumni-duplicates` (`AlumniMergeService.listDuplicates`):
   every MiConnect account whose username starts with `alumni-` (a person account, not a service

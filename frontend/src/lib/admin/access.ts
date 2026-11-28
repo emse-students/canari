@@ -38,10 +38,12 @@ export interface AdminScopeLabels {
  * least one panel. The pending agenda is only offered to event validators, while other tiers have
  * their own guarded panels.
  *
- * The description already told the truth ("Moderation de l'agenda de vos associations"), so the
- * heading follows the description rather than the description being questioned. They are returned
- * TOGETHER, from one predicate, because a heading and its subtitle that branch separately are two
- * places to change and one to forget.
+ * THE DESCRIPTION NAMES NO SINGLE QUEUE (2026-11-27, read on dev as a space moderator): it sits on
+ * the dashboard row whose badge is the SUM of every queue the reader may act on
+ * (`adminQueueCounts.total` - reports, agenda, corrections, duplicates), and "Moderation de l'agenda"
+ * over a count of reports told the reader the wrong thing. They are returned TOGETHER, from one
+ * predicate, because a heading and its subtitle that branch separately are two places to change and
+ * one to forget.
  *
  * For a BDE super-admin the non-global wording under-promises - they also hold the reviewer grants
  * and the cartography, both named by the "Communaute" group in the nav. Under-promising is not the

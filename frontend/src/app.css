@@ -122,6 +122,44 @@
   --color-call-accept: #16a34a;
   --color-call-decline: #dc2626;
 
+  /* LE PIC AND THE MINER'S LAMP (owner, 2026-11-27): the minesweeper tutorial's character and the hint lamp.
+     Fixed in BOTH themes, like the call colours: a drawing keeps its own palette, so these are NOT built from
+     `cn-surface`. Read by `LePic.svelte` and `MinerLamp.svelte` as `var(--color-pic-<part>)`, never as a hex. */
+  --color-pic-sleeve: #0f1320;
+  --color-pic-tunic: #151a2b;
+  --color-pic-tunic-lit: #1c2236;
+  --color-pic-gold: #f6c232;
+  --color-pic-gold-shade: #d9a520;
+  --color-pic-gold-dark: #b8891a;
+  --color-pic-skin: #f1c7a1;
+  --color-pic-skin-shade: #e9b992;
+  --color-pic-skin-neck: #e3b38b;
+  --color-pic-skin-ear: #d9a882;
+  --color-pic-lapel: #f4f6f8;
+  --color-pic-lapel-shade: #dbe1e8;
+  --color-pic-ink: #0b0e18;
+  --color-pic-metal-dark: #2b2f3a;
+  --color-pic-belt: #0b0d12;
+  --color-pic-pole: #5a4636;
+  --color-pic-flag: #e5484d;
+  --color-pic-flag-shade: #c93a3f;
+  --color-pic-hair: #2a1d17;
+  --color-pic-hair-shade: #21170f;
+  --color-pic-blush: #f08a7e;
+  --color-pic-iron: #3a3f4c;
+  --color-pic-lens: #ffffff;
+  --color-pic-pupil: #1b1f2e;
+  --color-pic-mouth: #b5524a;
+  --color-pic-mouth-open: #8a2f2a;
+  --color-pic-cap-top: #dfe3ea;
+  --color-pic-cap-top-shade: #c9ced8;
+  --color-pic-metal: #4a5060;
+  --color-pic-metal-lit: #6b7284;
+  --color-pic-glass: #9aa6bd;
+  --color-pic-glass-lit: #fff3c4;
+  --color-pic-flame: #ff8a1f;
+  --color-pic-flame-core: #ffe27a;
+
   /* ================================= THE BUBBLES =================================
      The outgoing bubble is the most identity-carrying surface in a chat application, and the
      decision (user, 2026-09-08) is that it is YELLOW. The reference fills it with the product's

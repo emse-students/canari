@@ -114,6 +114,8 @@ const { m } = await import('$lib/paraglide/messages');
 const { createMlsHolder } = await import('./mlsHolder');
 const { initTabLeadershipAsync } = await import('$lib/utils/chat/connection');
 const { resetStateAuthorityForTests } = await import('$lib/mls-client/stateAuthority');
+const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
 
 type Held = { promise: Promise<void> } | null;
 
@@ -332,6 +334,43 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.getIsLoginInProgress()).toBe(false);
     expectQuietStop(s);
     expect(logs(s.cb)).toContain('after mls-init-and-storage');
+  });
+
+  // THE DEVICE COPY OF THE NOTIFICATION SETTINGS LEAVES WITH ITS ACCOUNT ON EVERY SIGN-OUT PATH: the
+  // login bound the store before its first frame could land, and a sign-out that finds no live
+  // session reached no `reset` - the copy, and the binding, outlived it (review of #4207).
+  it('unbinds the notification settings and erases every device copy of them', async () => {
+    const copy = JSON.stringify({ disabled: [], enabled: [], groupLevels: {}, groupCalls: {} });
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('alice'), copy);
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('bob'), copy);
+    const initHeld = deferred();
+    const a = fakeClient({ init: initHeld });
+    const s = session([a.client]);
+
+    const login = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
+    expect(notificationPreferences.account).toBe('alice');
+
+    await clearAuth('chosen');
+    expect(notificationPreferences.account).toBeNull();
+    expect(notificationPreferences.source).toBe('default');
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('alice'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('bob'))).toBeNull();
+
+    initHeld.resolve();
+    await login;
+    await s.holder.whenRetired();
+  });
+
+  it('erases the device copies on a sign-out with no live session (the PIN gate after a cold start)', async () => {
+    const copy = JSON.stringify({ disabled: [], enabled: [], groupLevels: {}, groupCalls: {} });
+    localStorage.setItem(ACCOUNT_KEY.notificationPreferences('alice'), copy);
+    const s = session([fakeClient().client]);
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    await clearAuth('chosen');
+    expect(notificationPreferences.account).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.notificationPreferences('alice'))).toBeNull();
+    expect(logs(s.cb)).toContain('Signed out with no live session');
   });
 
   it('releases the socket again once a reopen queued by a rotation during init has settled', async () => {

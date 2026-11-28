@@ -5,6 +5,7 @@ vi.mock('$lib/utils/nativeNotification', async (importOriginal) => ({
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
+import { createCatchupWrites } from './catchupWrites';
 import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
@@ -62,6 +63,39 @@ describe('handleSystemEvent - read_watermark', () => {
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
     expect(watermarks(ctx)).toEqual({ me: 1000 });
     expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
+  });
+
+  it('a peer mark inside a catch-up window holds its save for the close - once, final row', async () => {
+    const saved: unknown[] = [];
+    const ctx = makeCtx({ senderNorm: 'peer', userId: 'me' });
+    ctx.saveConversation = vi.fn(async (key: string) => {
+      saved.push(structuredClone(ctx.conversations.get(key)));
+    });
+    const writes = createCatchupWrites({
+      storage: null,
+      deviceKey: () => 'k',
+      conversations: ctx.conversations,
+      saveConversation: ctx.saveConversation,
+      log: vi.fn(),
+    });
+    const window = { bufferUi: true, showOverlay: false } as const;
+    writes.onBulkIngestStart(window);
+    const held = { ...ctx, catchupWrites: writes };
+
+    await handleSystemEvent('read_watermark', { at: 500 }, held as any);
+    await handleSystemEvent('read_watermark', { at: 900 }, {
+      ...held,
+      deliveryMeta: { queuedMessageId: 'frame-2' },
+    } as any);
+
+    expect(ctx.saveConversation).not.toHaveBeenCalled();
+    expect([...writes.framesLeftUnstored()]).toEqual(['frame-2']);
+    await writes.onBulkIngestEnd(window);
+
+    // ONE save, of the row the last mark left - what the per-frame saves ended on.
+    expect(ctx.saveConversation).toHaveBeenCalledTimes(1);
+    expect(saved).toHaveLength(1);
+    expect((saved[0] as any).readWatermarks.peer).toBe(900);
   });
 
   it('a read on another device keeps counted a message newer than what it read', async () => {

@@ -382,6 +382,15 @@ call invite for as long as it stayed on that network (CALL-WS-V6,
   TLS and the WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched
   version's `Builder::new` takes no argument, so it fails to compile rather than install silently. A
   vendored fork: Dependabot does not move it, an upstream release is rebased by hand.
+- **A leaving page closes its socket with code 1001, and the plugin then forwards nothing more** (2026-11-27,
+  the `LeavingConnections` patch). The reader task outlives the document: after `pagehide` the server's answer
+  to our own close was forwarded into the dead page's channel, `[TAURI] Couldn't find callback id N` once per
+  reload (iPhone 12, `1.8.3-alpha.1`, after the release itself was already sent without awaiting; the earlier
+  fix removed the 15 s repeats, not this last frame). `TauriMlsService.pausePlatformSocket` sends the
+  `disconnect` frame, then a `Close` coded `PAGE_LEAVING_CLOSE_CODE` (1001, "going away"); the plugin marks the
+  connection BEFORE writing it and the reader drops every later frame. An ordinary `disconnect()` (1000) still
+  reports its `Close` to a live page. The number is the contract between `TauriMlsService.ts` and `GOING_AWAY` in
+  the patch.
 - **The line says what the race PROVES, not who won.** The preferred address won: `debug`. Another
   address won while the preferred attempt was still PENDING: `INFO` (`... while the preferred address
   was still pending - lost: ...`) - one lost SYN on a healthy link looks exactly like this, and the
@@ -5889,3 +5898,23 @@ The bundle needs Chrome 111 or newer: Vite's default build target, Tailwind 4 an
 **Tests.** `webviewGuard.test.ts` reads the script out of the real `app.html`, parses it with acorn as ECMAScript 5 (ES2015 syntax fails the test), and runs it in a `vm` context standing in for a page: the floor decision on a table of user agents, the SyntaxError triggers, "nothing once mounted", "nothing on desktop or iOS".
 
 **Native side: log only.** `CanariApplication.logWebViewVersion` logs the WebView package and version at startup, at info level (`adb logcat -s CanariApplication`, whatever `TAG` holds). It is not sent with the device registration: that payload is being changed in another pull request, and the page already knows the version from its user agent.
+
+## The background join says WHY it failed (owner's log of 2026-11-27, 1.8.4)
+
+`nativeProcessWelcomeBackground` used to answer a bare boolean, so the push service logged
+`processReceivedWelcomeBackground: join failed group=...` at error with no cause, and the Rust line
+that held it is lost in a killed app (no logger yet,
+[entry](../backlog.d/p2-the-rust-half-of-a-push-in-a-killed-android-app-logs-nowhere.md)). It answers
+a token classified where it is thrown (`BackgroundJoinError`): `joined`, or `failed:<cause>:<prospect>`
+with the cause `write-refused` (foreground active, `mls.bin` moved: NOT_YET, warn - the app's own load
+joins the group), `welcome-refused` or `state-unreadable` (never from this state: error).
+The cause comes from the TYPED `MlsError`, never from the call site (`SendProspect::of_state_load`
+for a load or a re-seal, `of_welcome` for a refused Welcome, the send path's own reading: a stale
+`mls.bin` with no matching key package is the untyped `OpenMls`, so NOT_YET). The answer is a CLOSED
+contract, `libs/contracts/background-join-answer.cases.json`, read by the Rust and the Kotlin tests;
+`BackgroundJoinAnswer.kt` reads it, and a token outside it is `Unreadable`, said at error with the raw
+text (a null from a failed string build included, which Rust logs instead of panicking across the FFI). A Welcome for a group the state already holds is a
+success (`process_welcome` answers it `Ok`), so it never reaches the failure branch. The levels are the same on the send and the join path: NOT_YET is warn, never-from-here is error. The
+send path says ONE warn line (`drainOutboxBackground: batch encrypt failed (<prospect>: <cause>) -> N
+message(s) stay queued`): an info line reaches logcat only, so the cause would vanish from the exported
+log, and NOT_YET also covers untyped OpenMls faults.

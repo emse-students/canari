@@ -63,8 +63,12 @@ given a read-only queue whose validation actions they cannot execute.
 
 `adminScopeLabels(isGlobalAdmin())` returns the heading **and** the sentence under it, together,
 from one predicate - a heading and its subtitle that branch separately are two places to change and
-one to forget. The description was already truthful ("Moderation de l'agenda de vos associations"),
-so the heading follows the description rather than the description being questioned. The same pair
+one to forget. **The description names no single queue** (2026-11-27, read on dev as a space
+moderator): the dashboard row it sits on carries a badge that is the SUM of every queue the reader may
+act on (`adminQueueCounts.total` - reports, agenda, corrections, duplicates), and "Moderation de
+l'agenda de vos associations" over a count of reports said the wrong thing. It now reads "Ce qui attend
+votre action dans vos associations." (global: "Outils globaux et files de modération."), held by
+`access.test.ts`. The same pair
 titles the dashboard row and its group, which is why `dashboard_admin_heading`, `dashboard_admin_generic_label`
 and `dashboard_admin_generic_desc` are gone: three keys saying "Administration" where two already
 said the truth.
@@ -526,3 +530,8 @@ display name. [Reporting and blocking](../../moderation-and-blocking.md)
 ## User management
 
 Global admins can list all users (`GET /api/users/admin/list`) and toggle admin status (`PATCH /api/users/:id/admin`). An admin cannot revoke their own admin flag.
+
+**One resume asks once on a native shell (2026-11-26 log, 1.8.4).** The pause releases the socket, so
+the foreground always reopens it and `adminQueuesChanged('socket-open')` asks; the visibility edge,
+firing a moment earlier, asked a second time. On a native shell that edge now asks nothing (a failed
+reopen is the link-back ask's); the web keeps it, its socket is not paused.

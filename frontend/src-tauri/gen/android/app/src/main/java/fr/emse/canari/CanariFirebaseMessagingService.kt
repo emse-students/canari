@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.AlertedMessage
 import fr.emse.canari.push.AwaitedReplies
+import fr.emse.canari.push.BackgroundJoinAnswer
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
@@ -2070,7 +2071,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun readSeenPosts(context: Context, label: String): SeenTrends.Book? {
             val file = File(MlsContextLoader.tauriDataDir(context), "seen_posts.json")
             if (!file.exists()) {
-                Log.d(TAG, "$label no seen_posts.json yet - no trend is withheld")
+                // RECORDED: the one line a trend shown for want of a record leaves ([isSeenTrend] adds none).
+                Log.iRecorded(TAG, "$label no seen_posts.json yet - no trend is withheld")
                 return null
             }
             return try {
@@ -2089,17 +2091,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Whether this push is a campus trend for a post the device already displayed, and so shows
          * nothing (owner, 2026-11-24, "Verif sur l'appareil"). The file is read only for a trend, so
-         * every other push pays nothing. A withheld trend is a RECORDED info line (kept by the exported
-         * log) with no post id; a trend that is shown is logged by nobody - it is the ordinary case.
+         * every other push pays nothing and says nothing (it is not a trend: no decision is taken).
+         *
+         * EVERY END OF A TREND'S DECISION IS ONE RECORDED LINE ([SeenTrends.Verdict]), with no post id:
+         * a trend shown because its post was never displayed is the ordinary case, but the reading of
+         * 1.8.3-alpha.1 showed a bare `false` hides a server push that named no post - so the shown
+         * cases say which they are, and that one ACCUSES at WARN.
          */
         internal fun isSeenTrend(context: Context, data: Map<String, String>): Boolean {
             val key = data["contentKey"]
             if (key == null || key !in SeenTrends.TREND_KEYS) return false
+            val postId = data["postId"]
+            // No post named: nothing to look up, so the file is not read (the verdict is the same).
+            val book = if (postId.isNullOrBlank()) null else readSeenPosts(context, "[SEEN_TREND]")
             val me = MlsContextLoader.loadPushContext(context)?.userId
-            val withheld = SeenTrends.withholds(readSeenPosts(context, "[SEEN_TREND]"), me, key, data["postId"])
-            // A RECORDED outcome like every other end of a push ([PushShowOutcome]): no post id, no text.
-            if (withheld) context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
-            return withheld
+            val verdict = SeenTrends.decide(book, me, key, postId)
+            when (verdict) {
+                // THE withheld line is the RECORDED outcome, like every other end of a push
+                // ([PushShowOutcome], `outcome=suppressed-seen-trend`): no post id, no text.
+                SeenTrends.Verdict.WITHHELD ->
+                    context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
+                SeenTrends.Verdict.NO_POST_ID ->
+                    Log.w(TAG, "[SEEN_TREND] a campus trend names no postId - shown, the device cannot tell a displayed post (server payload)")
+                // Said once, by [readSeenPosts] (absent, unreadable): one line, not two.
+                SeenTrends.Verdict.NO_RECORD -> Unit
+                else -> Log.iRecorded(TAG, "[SEEN_TREND] a campus trend shown: ${verdict.reason}")
+            }
+            return verdict.withheld
         }
 
         /**
@@ -2649,7 +2667,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ) : EncryptBatch
 
             /** The whole batch failed; [prospect] says whether a later drain can do better. */
-            data class Failed(val prospect: OutboxRetry.Prospect) : EncryptBatch
+            data class Failed(val prospect: OutboxRetry.Prospect, val why: String = "") : EncryptBatch
         }
 
         /**
@@ -2758,7 +2776,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ciphertextsOf = when (val batch = encryptQueuedMessages(context, service, ctx, entries)) {
                 is EncryptBatch.Encrypted -> batch
                 is EncryptBatch.Failed -> {
-                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
+                    // THE ONE LINE of a failed batch: the prospect and the native cause ride here (at warn,
+                    // which the exported log keeps; an info line reaches logcat only), so a NOT_YET that
+                    // hides an untyped OpenMls fault still names it.
+                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed (${batch.prospect}${if (batch.why.isEmpty()) "" else ": ${batch.why}"}) -> ${entries.size} message(s) stay queued")
                     return List(entries.size) { batch.prospect }
                 }
             }
@@ -2900,8 +2921,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // CLASSIFIED WHERE IT WAS THROWN (Rust `SendBatchError`): a key that does not
                     // open the state is BLOCKED, a refused write or a passing failure NOT_YET.
                     val prospect = OutboxRetry.Prospect.of(json.optString("prospect").takeIf { it.isNotEmpty() }, batch = true)
-                    Log.e(TAG, "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})")
-                    return EncryptBatch.Failed(prospect)
+                    // No line here: the drain's single warn line carries the prospect AND this cause.
+                    return EncryptBatch.Failed(prospect, json.optString("error").take(120))
                 }
                 val results = json.optJSONArray("results") ?: JSONArray()
                 val out = mutableMapOf<String, String>()
@@ -4872,7 +4893,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Applies a received MLS Welcome (RECEIVER side): joins the group and writes
      * {filesDir}/mls.bin. Lets a device join a new group while the app is closed, so the
      * 1st message of a conversation is decryptable by FCM without opening the app.
-     * Returns true on success.
+     * Returns the typed answer [fr.emse.canari.push.BackgroundJoinAnswer] reads: `joined`, or
+     * `failed:<cause>:<prospect>`.
      */
     external fun nativeProcessWelcomeBackground(
         filesDir: String,
@@ -4882,7 +4904,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         welcomeB64: String,
         ratchetTreeB64: String,
-    ): Boolean
+    ): String?
 
     /**
      * Encrypts a BATCH of pending outgoing messages (text/reply) against the live epoch, loading
@@ -6874,7 +6896,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "processReceivedWelcomeBackground: MlsStateLock not acquired -> abort")
             return
         }
-        val joined: Boolean
+        val joinAnswer: BackgroundJoinAnswer.Outcome
         try {
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
@@ -6882,14 +6904,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-            joined = nativeProcessWelcomeBackground(
-                filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+            joinAnswer = BackgroundJoinAnswer.parse(
+                nativeProcessWelcomeBackground(
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+                ),
             )
         } finally {
             MlsStateLock.LOCK.unlock()
         }
 
-        if (joined) {
+        if (joinAnswer is BackgroundJoinAnswer.Outcome.Joined) {
             Log.d(TAG, "processReceivedWelcomeBackground: ✓ group joined group=$groupId")
             // FCM1: promote the membership to 'active' server-side. The JNI join does not go through
             // the foreground path (updateInvitationStatus), so without this call the device stays
@@ -6902,8 +6926,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
             enqueueWorkerIfHealthy(workRequest)
-        } else {
-            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)}")
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Failed) {
+            // The cause is CLASSIFIED WHERE IT WAS THROWN, from the typed MlsError (Rust
+            // `BackgroundJoinError`). SAME LEVELS AS THE SEND PATH: NOT_YET is warn (the app's own
+            // load takes the join, the entries stay queued), anything that never installs is error.
+            val line = "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)} " +
+                "cause=${joinAnswer.cause} prospect=${joinAnswer.prospect}"
+            if (joinAnswer.prospect == OutboxRetry.Prospect.NOT_YET) Log.w(TAG, line) else Log.e(TAG, line)
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Unreadable) {
+            // An answer outside the contract (a newer native build, a null): never guessed at.
+            Log.e(TAG, "processReceivedWelcomeBackground: join answer unreadable group=${ConversationRef.of(groupId)} raw=${joinAnswer.raw?.take(60)}")
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,

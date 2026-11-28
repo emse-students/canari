@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 /**
- * THE UNRANKED LEVELS ON SCREEN (owner, 2026-11-25), BY GENERATION AND NOT BY SIZE, PICKED IN THE MODE SHEET
- * (owner, 2026-11-26). Pinned: a newcomer starts in Libre on Debutant, a level is one of the four modes of
+ * THE UNRANKED LEVELS ON SCREEN (owner, 2026-11-25), BY GENERATION AND NOT BY SIZE, PICKED IN THE MODE MODAL
+ * (owner, 2026-11-26). Pinned: a newcomer starts in Entrainement on Debutant, a level is one of the four modes of
  * the sheet and never redraws the board (every level is the ranked size), it is remembered, and the mode is
  * locked once the first cell is dug (the game keeps its level); each level generates its board with its own
  * target score; a ranked game plays the ranked board and asks for its challenge exactly as before, whatever
- * level Libre last used.
+ * level Entrainement last used.
  */
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -50,12 +50,26 @@ async function open() {
 const pill = () =>
   document.querySelector<HTMLButtonElement>('button[aria-label^="Mode de la partie"]')!;
 const cells = () => document.querySelectorAll('[data-cell]').length;
-/** Picks a mode in the sheet, as a player does: the pastille, then the row. */
-function pick(mode: string) {
-  pill().click();
+/**
+ * Picks a mode in the mode modal, as a player does: the pastille (unless the modal is already open, as it is
+ * at a first game), the kind card, the level under Entrainement, then "Jouer".
+ */
+async function pick(mode: string) {
+  if (!document.querySelector('[data-testid="mode-modal"]')) {
+    pill().click();
+    flushSync();
+  }
+  const kind = mode === 'ranked' ? 'ranked' : 'training';
+  document.querySelector<HTMLElement>(`[data-mode="${kind}"]`)!.click();
   flushSync();
-  document.querySelector<HTMLElement>(`[data-mode="${mode}"]`)!.click();
+  if (mode !== 'ranked') {
+    document.querySelector<HTMLElement>(`[data-level="${mode}"]`)!.click();
+    flushSync();
+  }
+  document.querySelector<HTMLElement>('[data-testid="mode-play"]')!.click();
   flushSync();
+  // The modal leaves with a short outro: wait for it, as the next pick would otherwise find it still there.
+  await vi.waitFor(() => expect(document.querySelector('[data-testid="mode-modal"]')).toBeNull());
 }
 
 async function digFirst() {
@@ -82,26 +96,28 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(cells()).toBe(18 * 32);
   });
 
-  it('starts a newcomer in Libre on Debutant, and a level pick redraws nothing', async () => {
+  it('starts a newcomer in Entrainement on Debutant, and a level pick redraws nothing', async () => {
     await open();
-    expect(pill().getAttribute('aria-label')).toBe('Mode de la partie : Libre · Débutant. Changer');
-    expect(cells()).toBe(18 * 32);
-    pick('intermediate');
     expect(pill().getAttribute('aria-label')).toBe(
-      'Mode de la partie : Libre · Intermédiaire. Changer'
+      'Mode de la partie : Entraînement · Débutant. Changer'
+    );
+    expect(cells()).toBe(18 * 32);
+    await pick('intermediate');
+    expect(pill().getAttribute('aria-label')).toBe(
+      'Mode de la partie : Entraînement · Intermédiaire. Changer'
     );
     expect(localStorage.getItem('canari.minesweeper.level')).toBe('intermediate');
-    pick('expert');
+    await pick('expert');
     expect(pill().textContent).toContain('Expert');
     // A level is a generation: the grid is the ranked one at every step.
     expect(cells()).toBe(18 * 32);
   });
 
-  it('keeps a newcomer on Debutant across sessions after they pick ranked and back to Libre', async () => {
+  it('keeps a newcomer on Debutant across sessions after they pick ranked and back to Entrainement', async () => {
     // No key at all: a newcomer. The first open resolves (and stores) Debutant.
     await open();
-    pick('ranked');
-    pick('beginner');
+    await pick('ranked');
+    await pick('beginner');
     while (mounted.length) mounted.pop()!();
     document.body.innerHTML = '';
     // The next session: the mode key now exists, and must not turn the newcomer into an Expert.
@@ -111,7 +127,7 @@ describe('MinesweeperModal - unranked levels', () => {
 
   it('remembers the ranked pick over the newcomer default', async () => {
     await open();
-    pick('ranked');
+    await pick('ranked');
     while (mounted.length) mounted.pop()!();
     document.body.innerHTML = '';
     await open();
@@ -147,7 +163,7 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(document.body.textContent).toContain('150');
   }, 30_000);
 
-  it('leaves ranked untouched whatever level Libre last used: same challenge, ranked board and target', async () => {
+  it('leaves ranked untouched whatever level Entrainement last used: same challenge, ranked board and target', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     localStorage.setItem('canari.minesweeper.unranked', '0');
     startChallenge.mockResolvedValue({
