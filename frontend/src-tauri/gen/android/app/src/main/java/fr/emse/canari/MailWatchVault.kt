@@ -6,6 +6,8 @@ import android.security.keystore.KeyProperties
 import android.util.Log
 import fr.emse.canari.mail.NativeVaultOrder
 import fr.emse.canari.mail.NativeVaultRecord
+import fr.emse.canari.mail.nativeCopyFileUserOf
+import fr.emse.canari.mail.nativePersistentFileName
 import fr.emse.canari.mail.nativeVaultAad
 import fr.emse.canari.mail.nativeVaultFileName
 import fr.emse.canari.mail.nativeVaultPlaintext
@@ -90,6 +92,16 @@ object MailWatchVault {
         return files.firstOrNull()
     }
 
+    /**
+     * Whether a copy is armed WITH the persistent-watch choice on: what resumes the native watch at
+     * boot and after a kill - never the copy's existence alone (the push path needs the copy too).
+     */
+    fun persistentArmed(context: Context): Boolean {
+        val armed = armed(context) ?: return false
+        val name = nativePersistentFileName(armed.userId) ?: return false
+        return File(dir(context), name).exists()
+    }
+
     /** Whether [userId]'s copy is still there: checked by the native watcher before each cursor write and notice. */
     fun stillArmed(context: Context, userId: String): Boolean {
         val name = nativeVaultFileName(userId) ?: return false
@@ -100,13 +112,13 @@ object MailWatchVault {
      * Seals [record] for [userId], replacing any copy (this account's or another's). Atomic: a
      * sibling file renamed over it. `false` (logged) when it was not written.
      */
-    fun arm(context: Context, userId: String, record: NativeVaultRecord, sentAt: Long): Boolean {
-        val sealed = order.sealIf(sentAt) { sealUnderLock(context, userId, record) }
+    fun arm(context: Context, userId: String, record: NativeVaultRecord, persistent: Boolean, sentAt: Long): Boolean {
+        val sealed = order.sealIf(sentAt) { sealUnderLock(context, userId, record, persistent) }
         if (!sealed) Log.i(TAG, "arm not sealed (a forget arrived after it, or the write failed)")
         return sealed
     }
 
-    private fun sealUnderLock(context: Context, userId: String, record: NativeVaultRecord): Boolean {
+    private fun sealUnderLock(context: Context, userId: String, record: NativeVaultRecord, persistent: Boolean): Boolean {
         val name = nativeVaultFileName(userId)
         if (name == null) {
             Log.e(TAG, "arm refused: an account id outside the allowlist")
@@ -118,7 +130,7 @@ object MailWatchVault {
         }
         return try {
             val d = dir(context).also { it.mkdirs() }
-            d.listFiles().orEmpty().filter { nativeVaultUserOf(it.name) != null && it.name != name }.forEach {
+            d.listFiles().orEmpty().filter { nativeCopyFileUserOf(it.name).let { owner -> owner != null && owner != userId } }.forEach {
                 if (it.delete()) Log.i(TAG, "another account's sealed copy removed: one copy at a time")
                 else Log.e(TAG, "another account's sealed copy NOT removed")
             }
@@ -133,7 +145,14 @@ object MailWatchVault {
                 Log.e(TAG, "arm failed: the sealed copy was not renamed into place")
                 return false
             }
-            Log.i(TAG, "the mailbox password is sealed for the native watcher")
+            // The persistent-watch choice beside it: written AFTER the copy, so a marker never names a
+            // copy that is not there.
+            val marker = File(d, nativePersistentFileName(userId)!!)
+            if (persistent) marker.createNewFile() else if (marker.exists() && !marker.delete()) {
+                Log.e(TAG, "arm: the persistent-watch marker was NOT removed")
+                return false
+            }
+            Log.i(TAG, "the mailbox password is sealed for the native watcher (persistent=$persistent)") // log-safe: one boolean choice, never the password
             true
         } catch (e: Exception) {
             Log.e(TAG, "arm failed: ${e.javaClass.simpleName}")
@@ -188,7 +207,7 @@ object MailWatchVault {
      */
     fun erase(context: Context, userId: String?, alsoCursor: Boolean, seen: Long?): Boolean = order.eraseIf(seen) {
         val files = dir(context).listFiles().orEmpty().filter { f ->
-            val owner = nativeVaultUserOf(f.name.removeSuffix(".tmp"))
+            val owner = nativeCopyFileUserOf(f.name)
             owner != null && (userId == null || owner == userId)
         }
         for (f in files) {

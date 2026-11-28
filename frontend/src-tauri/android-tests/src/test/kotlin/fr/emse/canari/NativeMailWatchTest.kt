@@ -170,6 +170,18 @@ class NativeMailWatchTest {
     }
 
     @Test
+    fun `the persistent-watch marker is named for its account and erased with the copy's files`() {
+        assertEquals("persistent_u1.on", fr.emse.canari.mail.nativePersistentFileName("u1"))
+        assertNull(fr.emse.canari.mail.nativePersistentFileName("../u1"))
+        assertEquals("u1", fr.emse.canari.mail.nativePersistentUserOf("persistent_u1.on"))
+        assertNull(fr.emse.canari.mail.nativePersistentUserOf("persistent_../u1.on"))
+        for (name in listOf("vault_u1.bin", "vault_u1.bin.tmp", "persistent_u1.on")) {
+            assertEquals(name, "u1", fr.emse.canari.mail.nativeCopyFileUserOf(name))
+        }
+        assertNull(fr.emse.canari.mail.nativeCopyFileUserOf("cursor_u1.json"))
+    }
+
+    @Test
     fun `one address normalisation, the page's`() {
         assertEquals("ada@etu.emse.fr", nativeAddress("  Ada@Etu.EMSE.fr "))
         assertEquals(nativeAddress("ADA@etu.emse.fr"), nativeAddress("ada@etu.emse.fr"))

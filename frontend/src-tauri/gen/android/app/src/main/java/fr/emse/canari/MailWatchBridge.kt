@@ -257,7 +257,15 @@ object MailWatchBridge {
             ).fold(onSuccess = { postSummary(context, it) }, onFailure = ::refused)
             MailBridgeOp.PAGE -> MailWatchService.stopForPageGone(context)
             MailBridgeOp.CLAIM -> claim(context, o.optString("id", ""))
-            MailBridgeOp.ARM -> arm(context, o.optString("userId", ""), o.optString("account", ""), o.optString("password", ""))
+            MailBridgeOp.ARM -> arm(
+                context,
+                o.optString("userId", ""),
+                o.optString("account", ""),
+                o.optString("password", ""),
+                // The persistent-watch choice ("Connexion permanente", mail lot 5). Absent: on, the
+                // lot 4b behaviour (the switch alone was the persistent watch).
+                o.optBoolean("persistent", true),
+            )
             MailBridgeOp.FORGET -> NativeMailWatcher.forget(context, o.optString("userId", "").ifBlank { null })
             MailBridgeOp.RELEASE -> MailWatchVault.ops.execute { NativeMailWatcher.pageReleased() }
             null -> Log.e(TAG, "message refused: an unknown op")
@@ -281,7 +289,7 @@ object MailWatchBridge {
      * Seals the password for the native watcher. The page sends it ONLY with "remember" ticked AND the
      * switch on (`mailWatch.svelte.ts`); the password is never logged, and leaves this frame sealed.
      */
-    private fun arm(context: Context, userId: String, account: String, password: String) {
+    private fun arm(context: Context, userId: String, account: String, password: String, persistent: Boolean) {
         if (userId.isBlank() || account.isBlank() || password.isEmpty()) {
             Log.e(TAG, "arm refused: a missing field")
             emit("armed", "failed")
@@ -291,7 +299,11 @@ object MailWatchBridge {
         // and the arm, run after on the same executor, then seals nothing (review I3).
         val sentAt = MailWatchVault.order.armSent()
         MailWatchVault.ops.execute {
-            val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(nativeAddress(account), password), sentAt)
+            val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(nativeAddress(account), password), persistent, sentAt)
+            if (ok && !persistent && MailWatchService.mode == fr.emse.canari.mail.MailWatchMode.NATIVE) {
+                // The persistent watch was turned off while it ran: it ends (the copy stays for the push check).
+                stop(context, "the persistent watch is off")
+            }
             emit("armed", if (ok) "ok" else "failed")
         }
     }

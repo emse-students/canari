@@ -108,15 +108,18 @@ fn remove_all(files: &[std::path::PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
-/// THE ONE ERASURE of the native sealed password of `user_id` (lot 4b): its ciphertext and a write
-/// in flight. Every forget path reaches it - a mail sign-out, an unticked "remember", a refused
+/// THE ONE ERASURE of the native sealed password of `user_id` (lot 4b): its ciphertext, a write
+/// in flight, and the persistent-watch choice armed with it (`persistent_<id>.on`). Every forget path reaches it - a mail sign-out, an unticked "remember", a refused
 /// password, the Canari sign-out (all through `forgetMailPassword`), and through [`forget`] the
 /// switch turned off, D8 and the account deletion. The Keystore key is not the account's (it wraps
-/// the next copy), so the ciphertext is the whole of what is erased. The native watcher checks the
-/// file before each cursor write and each notice, so an erased copy also ends its run. Idempotent.
+/// the next copy), so the ciphertext is the whole of what is erased. A native run going is stopped
+/// by the bridge's `forget`, which every one of these paths also sends. Idempotent.
 pub(crate) fn erase_vault(dir: &Path, user_id: &str) -> Result<(), String> {
     let path = vault_path(dir, user_id)?;
-    remove_all(&[path.with_extension("bin.tmp"), path])
+    let persistent = dir
+        .join(MAIL_WATCH_DIR)
+        .join(format!("persistent_{user_id}.on"));
+    remove_all(&[path.with_extension("bin.tmp"), path, persistent])
 }
 
 /// Erases everything the watcher keeps natively for `user_id`: its cursor and the sealed password
@@ -228,12 +231,18 @@ mod tests {
             std::fs::write(vault(u), b"sealed").unwrap();
         }
         std::fs::write(vault("alice").with_extension("bin.tmp"), b"half").unwrap();
+        let persistent = dir.join(MAIL_WATCH_DIR).join("persistent_alice.on");
+        std::fs::write(&persistent, b"").unwrap();
         write_cursor(&dir, "alice", "c").unwrap();
         // A mail sign-out: the copy goes, the cursor stays.
         erase_vault(&dir, "alice").unwrap();
         erase_vault(&dir, "alice").expect("erased twice");
         assert!(!vault("alice").exists());
         assert!(!vault("alice").with_extension("bin.tmp").exists());
+        assert!(
+            !persistent.exists(),
+            "the persistent-watch choice goes with the copy"
+        );
         assert_eq!(read_cursor(&dir, "alice").unwrap().as_deref(), Some("c"));
         // The switch off / D8 / deletion: both go.
         std::fs::write(vault("alice"), b"sealed").unwrap();

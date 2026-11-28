@@ -378,6 +378,25 @@ fun nativeVaultUserOf(fileName: String): String? {
     return id.takeIf { nativeVaultFileName(it) == fileName }
 }
 
+/**
+ * The marker of [userId]'s PERSISTENT-WATCH choice ("Connexion permanente", the arm's `persistent`
+ * field): present, the native watch resumes at boot and after a kill; absent, the sealed copy serves
+ * only the push path's `checkOnce` (mail lot 5). Erased with the copy (Rust's `erase_vault` too).
+ */
+fun nativePersistentFileName(userId: String): String? =
+    nativeVaultFileName(userId)?.let { "persistent_$userId.on" }
+
+/** The account a `persistent_<id>.on` file name is for, or `null` for any other name. */
+fun nativePersistentUserOf(fileName: String): String? {
+    if (!fileName.startsWith("persistent_") || !fileName.endsWith(".on")) return null
+    val id = fileName.removePrefix("persistent_").removeSuffix(".on")
+    return id.takeIf { nativePersistentFileName(it) == fileName }
+}
+
+/** The account any of the copy's files is for (the copy, its write in flight, its persistent marker). */
+fun nativeCopyFileUserOf(fileName: String): String? =
+    nativeVaultUserOf(fileName.removeSuffix(".tmp")) ?: nativePersistentUserOf(fileName)
+
 /** The seal's associated data: the record opens only as [userId]'s. */
 fun nativeVaultAad(userId: String): ByteArray = "canari-mail-vault:v1:$userId".toByteArray(Charsets.UTF_8)
 

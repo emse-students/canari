@@ -1194,6 +1194,13 @@ at a page cursor it has already met.
 and in a debug build only the dev server's (`127.0.0.1:1420`, `localhost:1420`, and
 `TAURI_DEV_HOST:1420` from the build's environment) - never a wildcard.
 
+**The persistent watch is its own choice, armed with the copy.** The arm carries `persistent` (the
+user's "Connexion permanente", mail lot 5; absent, it is on - lot 4b's behaviour), stored natively as
+`mail_watch/persistent_<id>.on` beside the copy and erased with it (Kotlin and Rust's `erase_vault`).
+Boot, an update, a restart of a killed process and a gone page start the native watch ONLY when it is
+on (`MailWatchVault.persistentArmed`, the table's `persistent`): with it off the copy still serves the
+push path's `checkOnce`, and an arm turning it off while NATIVE stops the watch.
+
 **The restarts.**
 
 - **Boot**: `CanariBootReceiver` on `BOOT_COMPLETED` (and `MY_PACKAGE_REPLACED`) calls

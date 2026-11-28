@@ -87,8 +87,8 @@ class MailWatchService : Service() {
          * from `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` is one Android allows for `specialUse`.
          */
         fun resumeIfArmed(context: Context, why: String) {
-            if (MailWatchVault.armed(context) == null) {
-                Log.d(TAG, "resume ($why): nothing sealed - no watch")
+            if (!MailWatchVault.persistentArmed(context)) {
+                Log.d(TAG, "resume ($why): no persistent watch armed - none resumed")
                 return
             }
             try {
@@ -174,7 +174,8 @@ class MailWatchService : Service() {
             return stickiness()
         }
         val armed = MailWatchVault.armed(this) != null
-        val effect = decideMailWatch(mode, command, armed, currentRun, NativeMailWatcher.running)
+        val persistent = MailWatchVault.persistentArmed(this)
+        val effect = decideMailWatch(mode, command, armed, currentRun, NativeMailWatcher.running, persistent)
         Log.i(TAG, "${command.javaClass.simpleName} in $mode (armed=$armed) -> ${effect.javaClass.simpleName}") // log-safe: an enum mode, a boolean and class names
         if (command is MailWatchCommand.Resume && mode == MailWatchMode.OFF && effect !is MailWatchEffect.EnterForeground) {
             // A Resume arrives through startForegroundService (boot, update, a sticky restart): the

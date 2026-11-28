@@ -78,7 +78,15 @@ describe('the native watcher bridge (lot 4b)', () => {
     expect(armAndroidMailWatch('u1', 'ada@etu.emse.fr', 'pw')).toBe(true);
     expect(sent).toEqual([
       { op: 'page' },
-      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw' },
+      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw', persistent: true },
+    ]);
+  });
+
+  it('an arm carries the persistent-watch choice', () => {
+    bridge();
+    armAndroidMailWatch('u1', 'ada@etu.emse.fr', 'pw', false);
+    expect(sent).toEqual([
+      { op: 'arm', userId: 'u1', account: 'ada@etu.emse.fr', password: 'pw', persistent: false },
     ]);
   });
 

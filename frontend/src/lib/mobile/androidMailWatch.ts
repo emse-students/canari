@@ -136,9 +136,18 @@ export function claimAndroidMailWatch(): Promise<void> {
   });
 }
 
-/** Seals `password` for the native watcher (lot 4b). Never logged. `false` with no bridge. */
-export function armAndroidMailWatch(userId: string, account: string, password: string): boolean {
-  if (send('arm', { userId, account, password })) {
+/**
+ * Seals `password` for the native watcher (lot 4b). Never logged. `false` with no bridge.
+ * `persistent` is the user's persistent-watch choice ("Connexion permanente", mail lot 5): only with
+ * it on does the native watch resume at boot and after a kill; off, the copy serves the push check.
+ */
+export function armAndroidMailWatch(
+  userId: string,
+  account: string,
+  password: string,
+  persistent = true
+): boolean {
+  if (send('arm', { userId, account, password, persistent })) {
     Log.i('MAIL-WATCH', 'the native watcher is armed with the remembered password');
     return true;
   }
