@@ -256,24 +256,25 @@ object MailWatchBridge {
                 o.optString("link", ""),
             ).fold(onSuccess = { postSummary(context, it) }, onFailure = ::refused)
             MailBridgeOp.PAGE -> MailWatchService.stopForPageGone(context)
-            MailBridgeOp.CLAIM -> claim(context)
+            MailBridgeOp.CLAIM -> claim(context, o.optString("id", ""))
             MailBridgeOp.ARM -> arm(context, o.optString("userId", ""), o.optString("account", ""), o.optString("password", ""))
             MailBridgeOp.FORGET -> NativeMailWatcher.forget(context, o.optString("userId", "").ifBlank { null })
-            MailBridgeOp.RELEASE -> NativeMailWatcher.pageReleased()
+            MailBridgeOp.RELEASE -> MailWatchVault.ops.execute { NativeMailWatcher.pageReleased() }
             null -> Log.e(TAG, "message refused: an unknown op")
         }
     }
 
     /**
-     * The page's watcher is about to run: the native run stops and is JOINED - it writes no cursor and
-     * posts nothing any more - before `handed` lets the page start. Off the UI thread (a join).
+     * The page's watcher is about to run: every native run stops and is JOINED - it writes no cursor
+     * and posts nothing any more - before `handed`, carrying the claim's [id], lets THAT claim's run
+     * start. On the ops thread (a join, ordered with the release, arms and forgets).
      */
-    private fun claim(context: Context) {
-        Thread({
-            NativeMailWatcher.stopAndJoin(context, "the page claims the watch", forPage = true)
+    private fun claim(context: Context, id: String) {
+        MailWatchVault.ops.execute {
+            NativeMailWatcher.claimForPage(context)
             Log.i(TAG, "the watch is handed to the page")
-            emit("handed", null)
-        }, "canari-mail-claim").start()
+            emit("handed", id)
+        }
     }
 
     /**
@@ -288,7 +289,7 @@ object MailWatchBridge {
         }
         // The generation is read NOW, on the message's arrival: a forget sent after this arm bumps it,
         // and the arm, run after on the same executor, then seals nothing (review I3).
-        val sentAt = MailWatchVault.armGeneration()
+        val sentAt = MailWatchVault.order.armSent()
         MailWatchVault.ops.execute {
             val ok = MailWatchVault.arm(context, userId, NativeVaultRecord(nativeAddress(account), password), sentAt)
             emit("armed", if (ok) "ok" else "failed")
@@ -305,9 +306,10 @@ object MailWatchBridge {
             Log.e(TAG, "start refused: an empty notification text")
             return
         }
-        // A foreground service starts only from an app on screen: the next return on screen asks
-        // again (the page listens for the `off-screen` code).
-        if (!MainActivity.isInForeground) {
+        // A foreground service starts only from an app on screen - unless the service already holds
+        // the foreground (a NATIVE watch the page takes back): the next return on screen asks again
+        // (the page listens for the `off-screen` code).
+        if (!MainActivity.isInForeground && !MailWatchService.running) {
             Log.i(TAG, "start deferred: the app is not on screen")
             emit("failed", StartRefusal.OFF_SCREEN.code)
             return

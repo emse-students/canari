@@ -18,7 +18,8 @@ import { Log } from '$lib/utils/Log';
  *   (`fr.emse.canari://mail/<conversation>`), which the plugin's notifications cannot carry;
  * - `summary` - post the ONE notice that stands for a flood of new mails;
  * - `page` - a new document: the page before it is gone (lot 4b: the watch goes native if armed);
- * - `claim` - the page's watcher is about to run: the native run stops, JOINED, then `handed`;
+ * - `claim` - the page's watcher is about to run: the native run stops, JOINED, then `handed`
+ *   carrying the claim's own id;
  * - `arm` - seal the password for the native watcher (lot 4b): sent only with "remember" ticked AND
  *   the switch on;
  * - `forget` - EVERY forget path: the sealed copy erased AND every native run stopped and joined, as
@@ -105,22 +106,33 @@ export function announceAndroidPageReplaced(): void {
   if (send('page', {})) Log.d('MAIL-WATCH', 'told the service a new document starts');
 }
 
+let lastClaimId = 0;
+
 /**
- * The page's watcher is about to run: resolves once the native run is STOPPED AND JOINED (the
- * `handed` answer), so the two never write the cursor or notify at once. Resolves at once with no
- * bridge (nothing native can run then). The native side always answers a claim: no timer here.
+ * The page's watcher is about to run: resolves once the native run is STOPPED AND JOINED - the
+ * `handed` answer to THIS claim (its id: an earlier claim's answer resolves nothing) - so the two
+ * never write the cursor or notify at once. Resolves at once with no bridge (nothing native can run
+ * then); REJECTS when the claim could not be sent (the caller must not start a second writer). The
+ * native side always answers a claim it received: no timer here.
  */
 export function claimAndroidMailWatch(): Promise<void> {
   if (typeof window === 'undefined' || !androidMailBridge()) return Promise.resolve();
-  return new Promise((resolveIt) => {
+  const id = `claim-${++lastClaimId}`;
+  return new Promise((resolveIt, rejectIt) => {
     const onEvent = (event: Event) => {
-      if ((event as CustomEvent<{ kind?: string }>).detail?.kind !== 'handed') return;
+      const detail = (event as CustomEvent<{ kind?: string; code?: string }>).detail;
+      if (detail?.kind !== 'handed' || detail.code !== id) return;
       window.removeEventListener(NATIVE_MAIL_EVENT, onEvent);
       Log.d('MAIL-WATCH', 'the native watch is handed to the page');
       resolveIt();
     };
     window.addEventListener(NATIVE_MAIL_EVENT, onEvent);
-    send('claim', {});
+    try {
+      send('claim', { id });
+    } catch (err) {
+      window.removeEventListener(NATIVE_MAIL_EVENT, onEvent);
+      rejectIt(err instanceof Error ? err : new Error(String(err)));
+    }
   });
 }
 

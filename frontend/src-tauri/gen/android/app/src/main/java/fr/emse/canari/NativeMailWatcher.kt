@@ -3,6 +3,7 @@ package fr.emse.canari
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.SystemClock
 import android.util.Log
 import fr.emse.canari.mail.MailNoticeError
 import fr.emse.canari.mail.MailWatchCommand
@@ -44,13 +45,17 @@ import kotlin.concurrent.withLock
  *
  * ONE WRITER OF THE CURSOR AT A TIME. Each run - the persistent watch, or one push check - is its own
  * [Run] handle, stopped by the handle captured at the call (a stop never lands on a run started after
- * it). The page CLAIMS the watch before its own run starts ([stopAndJoin], the bridge's `claim`) and is
- * answered only once every native run is joined; a push check does nothing while a watcher runs, and
- * a run starting waits for a check in flight.
+ * it). The page CLAIMS the watch before its own run starts ([stopAndJoin], the bridge's `claim`): it is
+ * answered once every native run that was there is JOINED, and no persistent run starts again until
+ * the page lets the watch go ([pageReleased]); a push check does nothing while a watcher runs, and a
+ * run starting waits for a check in flight.
  *
- * FORGETTING IS ONE OP ([forget]): the sealed copy erased and every native run stopped and joined,
- * together, then the service told - the page's forget paths, and (mail lot 5) a remote `mail-forget`
- * push from the FCM service.
+ * CLAIM, RELEASE, ARM AND FORGET RUN ON ONE THREAD ([MailWatchVault.ops]), in the order their
+ * messages arrived - so the page's hold and the sealed copy are never decided by two threads at once.
+ *
+ * FORGETTING IS ONE OP ([forget]): the sealed copy erased and the native runs it concerns stopped and
+ * joined, together, then the service told - the page's forget paths, and (mail lot 5) a remote
+ * `mail-forget` push from the FCM service.
  */
 object NativeMailWatcher {
     private const val TAG = "NativeMailWatcher"
@@ -59,7 +64,10 @@ object NativeMailWatcher {
     private const val READ_TIMEOUT_MS = (NATIVE_WAIT_TIMEOUT_SECONDS + 60) * 1000
     private const val CONNECT_TIMEOUT_MS = 15_000
 
-    /** Why a run ended by itself: [MailWatchService] leaves the foreground on it. */
+    /** The wait set's release after a stop: a stop, a claim and a forget wait for it, so seconds only. */
+    private const val RELEASE_TIMEOUT_MS = 5_000
+
+    /** Why a run ended by itself: [MailWatchService] leaves the foreground on it, for THAT run only. */
     fun interface Ended {
         fun onEnded(run: Long, reason: String)
     }
@@ -91,18 +99,32 @@ object NativeMailWatcher {
         FAILED,
     }
 
-    /** One run's handle: its own stop flag, its open connection and its pause. */
+    /** One run's handle: its own stop flag, its open connection, its pause and its account. */
     private class Run(val id: Long, val thread: Thread?) {
         val lock = ReentrantLock()
         val wake = lock.newCondition()!!
         @Volatile var stopping = false
+
+        /** Stopped by a forget: the copy is gone, the wait set is not released (the run leaves at once). */
+        @Volatile var forgotten = false
+
+        /** The Canari account of the copy this run opened (`null` until its first sign-in). */
+        @Volatile var account: String? = null
         var connection: HttpsURLConnection? = null
 
-        /** Stops this run: the flag, the pause woken, the connection cut - under the lock [post] publishes under. */
-        fun stop() = lock.withLock {
-            stopping = true
-            wake.signalAll()
-            connection?.disconnect()
+        /**
+         * Stops this run: the flag set and the pause woken on the CALLER's thread, under the lock the
+         * connection is published under - and the socket torn down OFF it (the caller may be the
+         * main thread: `onStartCommand`, `onDestroy`).
+         */
+        fun stop(forget: Boolean) {
+            val conn = lock.withLock {
+                stopping = true
+                if (forget) forgotten = true
+                wake.signalAll()
+                connection
+            }
+            if (conn != null) Thread({ conn.disconnect() }, "canari-mail-cut").start()
         }
     }
 
@@ -114,35 +136,46 @@ object NativeMailWatcher {
     /** Held for the whole of one [checkOnce], so a claim, a forget or a starting run waits for it. */
     private val checkLock = ReentrantLock()
 
-    /** The page claimed the watch and has not let it go: a push check leaves it to the page. */
+    /** The page claimed the watch and has not let it go. Written on [MailWatchVault.ops] only. */
     @Volatile private var pageHolds = false
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    /** Whether a persistent native run is going (not stopping). */
     val running: Boolean get() = lock.withLock { watchRun?.let { !it.stopping && it.thread?.isAlive == true } == true }
 
     /**
-     * Starts the persistent run for the armed copy, unless one runs, and returns its id: [ended]
-     * hands it back, so the service tells the end of THIS run from an earlier one's.
+     * Starts the persistent run for the armed copy, unless one runs, and returns its id - [ended]
+     * hands it back, so the service tells the end of THIS run from an earlier one's. `null` (refused)
+     * while the page holds the watch: two writers of one cursor.
      */
-    fun start(context: Context, ended: Ended): Long {
+    fun start(context: Context, ended: Ended): Long? {
         val app = context.applicationContext
         val id = lock.withLock {
+            if (pageHolds) {
+                Log.e(TAG, "start refused: the page holds the watch")
+                return null
+            }
             val live = watchRun
             if (live != null && !live.stopping && live.thread?.isAlive == true) {
                 Log.i(TAG, "start: native run ${live.id} is already there")
                 return live.id
             }
-            pageHolds = false
             val holder = arrayOfNulls<Run>(1)
             val thread = Thread({
                 // A push check in flight ends first: one writer of the cursor.
                 checkLock.withLock { }
                 val run = holder[0]!!
-                val end = NativeMailRun(Ports(app, run)).watch()
-                Log.i(TAG, "native run ended: ${end.name}") // log-safe: an enum constant
+                val end = try {
+                    NativeMailRun(Ports(app, run)).watch().name.lowercase()
+                } catch (t: Throwable) {
+                    // Every run ends through here, whatever it threw: the service is told and leaves.
+                    Log.e(TAG, "native run ${run.id} failed unexpectedly: ${t.javaClass.simpleName}")
+                    "crashed"
+                }
+                Log.i(TAG, "native run ${run.id} ended: $end") // log-safe: an enum constant's name or a fixed word
                 lock.withLock { if (watchRun === run) watchRun = null }
-                if (end != NativeRunEnd.STOPPED) ended.onEnded(run.id, end.name.lowercase())
+                if (end != NativeRunEnd.STOPPED.name.lowercase()) ended.onEnded(run.id, end)
             }, "canari-mail-native")
             val run = Run(++lastRunId, thread)
             holder[0] = run
@@ -156,19 +189,26 @@ object NativeMailWatcher {
     }
 
     /**
-     * Stops every native run - the persistent one and a check in flight - and WAITS for them: on
-     * return nothing native writes the cursor or posts. [forPage]: the page claims the watch. Never on
-     * the main thread.
+     * The page claims the watch (the bridge's `claim`, on [MailWatchVault.ops]): every native run
+     * that is there - the persistent one and a check in flight - is stopped and JOINED, and no
+     * persistent run starts until [pageReleased]. On return, no native run that was there writes the
+     * cursor or posts any more.
      */
-    fun stopAndJoin(context: Context, why: String, forPage: Boolean = false) {
-        val (watch, check) = lock.withLock {
-            if (forPage) pageHolds = true
-            watchRun to checkRun
-        }
-        watch?.stop()
-        check?.stop()
+    fun claimForPage(context: Context) {
+        pageHolds = true
+        stopAndJoin(context, "the page claims the watch")
+    }
+
+    /**
+     * Stops every native run there NOW and waits for them (a stopped run releases its wait set with
+     * short timeouts, so this ends in seconds). Never on the main thread.
+     */
+    fun stopAndJoin(context: Context, why: String) {
+        val (watch, check) = lock.withLock { watchRun to checkRun }
+        watch?.stop(forget = false)
+        check?.stop(forget = false)
         watch?.thread?.let {
-            Log.i(TAG, "stopping the native run ($why)")
+            Log.i(TAG, "stopping native run ${watch.id} ($why)")
             it.join()
         }
         checkLock.withLock { }
@@ -178,15 +218,15 @@ object NativeMailWatcher {
     /** Stops the run there NOW (captured at the call), without blocking the caller. */
     fun stopAsync(context: Context, why: String) {
         val run = lock.withLock { watchRun } ?: return
-        run.stop()
+        run.stop(forget = false)
         Thread({
             run.thread?.join()
-            Log.i(TAG, "native run stopped ($why)")
+            Log.i(TAG, "native run ${run.id} stopped ($why)")
             unregisterNetwork(context.applicationContext)
         }, "canari-mail-native-stop").start()
     }
 
-    /** The page stopped watching, or is gone: a push check may read the delta again. */
+    /** The page stopped watching, or is gone (on [MailWatchVault.ops]): a native run may start again. */
     fun pageReleased() {
         if (pageHolds) Log.d(TAG, "the page no longer holds the watch")
         pageHolds = false
@@ -194,17 +234,35 @@ object NativeMailWatcher {
 
     /**
      * FORGET - THE ONE ERASE-AND-STOP OP (B1, I4). Erases the sealed copy ([userId]'s, or every copy
-     * when `null`: a remote revocation does not know the account), stops and joins every native run,
-     * then tells the service ([MailWatchCommand.Forgotten]: a NATIVE watch leaves, a page's goes on).
-     * On the vault's ONE executor, so it is ordered after an arm sent before it. Called by the bridge's
-     * `forget` (every forget path of the page) and - mail lot 5 - by the FCM service on a
-     * `mail-forget` data push (device revoked, account deleted, signed out everywhere).
+     * and the Keystore key when `null`: a remote revocation does not know the account), stops and
+     * joins the native runs it concerns (that account's, or one whose copy is gone - never another
+     * account's), without releasing their wait sets, then tells the service ([MailWatchCommand.Forgotten]:
+     * a NATIVE watch leaves). Its order against the arms is fixed on ARRIVAL: an arm sent before it
+     * seals nothing, one sent after it seals. Called by the bridge's `forget` (every forget path of the
+     * page) and - mail lot 5 - by the FCM service on a `mail-forget` data push (device revoked, account
+     * deleted, signed out everywhere). Returns at once; the work runs on [MailWatchVault.ops].
      */
     fun forget(context: Context, userId: String? = null) {
         val app = context.applicationContext
+        MailWatchVault.order.forgetSent()
         MailWatchVault.ops.execute {
-            MailWatchVault.erase(app, userId, alsoCursor = false)
-            stopAndJoin(app, "the sealed copy is forgotten")
+            MailWatchVault.erase(app, userId, alsoCursor = false, seen = null)
+            val (watch, check) = lock.withLock { watchRun to checkRun }
+            fun concerned(run: Run): Boolean {
+                val account = run.account
+                return userId == null || account == null || account == userId || !MailWatchVault.stillArmed(app, account)
+            }
+            val stopWatch = watch?.takeIf(::concerned)
+            val stopCheck = check?.takeIf(::concerned)
+            stopWatch?.stop(forget = true)
+            stopCheck?.stop(forget = true)
+            stopWatch?.thread?.join()
+            if (stopCheck != null) checkLock.withLock { }
+            if (watch != null && stopWatch == null) {
+                Log.i(TAG, "forget: the native run watches another account - left running")
+                return@execute
+            }
+            unregisterNetwork(app)
             try {
                 app.startService(MailWatchService.intentFor(app, MailWatchCommand.Forgotten))
             } catch (e: IllegalStateException) {
@@ -237,7 +295,12 @@ object NativeMailWatcher {
                 }
                 Run(++lastRunId, null).also { checkRun = it }
             }
-            val end = NativeMailRun(Ports(app, run)).checkOnce()
+            val end = try {
+                NativeMailRun(Ports(app, run)).checkOnce()
+            } catch (t: Throwable) {
+                Log.e(TAG, "check failed unexpectedly: ${t.javaClass.simpleName}")
+                NativeCheckEnd.FAILED
+            }
             Log.i(TAG, "check: ${end.name}") // log-safe: an enum constant
             return when (end) {
                 NativeCheckEnd.DONE -> CheckOutcome.DONE
@@ -256,34 +319,41 @@ object NativeMailWatcher {
 
     /** The platform side of one [Run]. */
     private class Ports(private val context: Context, private val run: Run) : NativeMailPorts {
-        /** The account of the copy this run opened: the cursor and the copy checks are its own. */
-        private var userId: String? = null
+        /** The copy's writes seen at the last open: the run's own erase never removes a newer copy. */
+        private var seenAtOpen: Long? = null
 
         override fun call(body: JSONObject, token: String?): JSONObject {
             checkStopped()
-            return post(soapEnvelope(body, token), publish = true)
+            return post(soapEnvelope(body, token), publish = true, timeoutMs = null)
         }
 
         override fun callAfterStop(body: JSONObject, token: String): JSONObject =
-            post(soapEnvelope(body, token), publish = false)
+            post(soapEnvelope(body, token), publish = false, timeoutMs = RELEASE_TIMEOUT_MS)
+
+        override fun releaseAllowed(): Boolean = !run.forgotten
+
+        override fun elapsedMs(): Long = SystemClock.elapsedRealtime()
 
         override fun openVault(): NativeVaultRecord? {
             val armed = MailWatchVault.armed(context) ?: return null
-            if (userId != null && userId != armed.userId) {
+            val mine = run.account
+            if (mine != null && mine != armed.userId) {
                 Log.e(TAG, "the sealed copy now names another account - the run ends")
                 return null
             }
-            userId = armed.userId
+            run.account = armed.userId
+            seenAtOpen = MailWatchVault.order.writeSeen()
             return MailWatchVault.open(armed)
         }
 
-        override fun stillArmed(): Boolean = userId?.let { MailWatchVault.stillArmed(context, it) } == true
+        override fun stillArmed(): Boolean = run.account?.let { MailWatchVault.stillArmed(context, it) } == true
 
         override fun eraseVault(reason: NativeEraseReason) {
-            MailWatchVault.erase(context, userId ?: return, alsoCursor = reason == NativeEraseReason.ACCOUNT_CLOSED)
+            val account = run.account ?: return
+            MailWatchVault.erase(context, account, alsoCursor = reason == NativeEraseReason.ACCOUNT_CLOSED, seen = seenAtOpen)
         }
 
-        private fun cursorFile(): File? = userId?.let { MailWatchVault.cursorFile(context, it) }
+        private fun cursorFile(): File? = run.account?.let { MailWatchVault.cursorFile(context, it) }
 
         override fun readCursor(): String? = cursorFile()?.takeIf { it.exists() }?.readText()
 
@@ -320,8 +390,9 @@ object NativeMailWatcher {
         /**
          * One POST. With [publish], the connection is published on the run UNDER its lock, after
          * re-reading the stop flag there: a stop either sees it (and cuts it) or is seen here.
+         * [timeoutMs] replaces both timeouts (the release after a stop).
          */
-        private fun post(envelope: JSONObject, publish: Boolean): JSONObject {
+        private fun post(envelope: JSONObject, publish: Boolean, timeoutMs: Int?): JSONObject {
             val conn = URL(NATIVE_MAIL_SOAP_URL).openConnection() as HttpsURLConnection
             if (publish) {
                 run.lock.withLock {
@@ -332,8 +403,8 @@ object NativeMailWatcher {
             try {
                 conn.instanceFollowRedirects = false
                 conn.requestMethod = "POST"
-                conn.connectTimeout = CONNECT_TIMEOUT_MS
-                conn.readTimeout = READ_TIMEOUT_MS
+                conn.connectTimeout = timeoutMs ?: CONNECT_TIMEOUT_MS
+                conn.readTimeout = timeoutMs ?: READ_TIMEOUT_MS
                 conn.doOutput = true
                 conn.useCaches = false
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")

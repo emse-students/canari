@@ -390,3 +390,53 @@ fun nativeVaultRecordOf(plaintext: ByteArray): NativeVaultRecord? {
     val password = o.optString("password", "").takeIf { it.isNotEmpty() } ?: return null
     return NativeVaultRecord(account, password)
 }
+
+/**
+ * THE ORDER OF THE SEALED COPY'S WRITES (review of #4213, I3 and its second round). Pure, so
+ * `NativeMailWatchTest` drives every interleaving on a JVM; `MailWatchVault` runs its file work
+ * inside these calls.
+ *
+ * - **A forget wins over every arm SENT before it, and no arm sent after it.** A forget bumps
+ *   [forgets] the moment its message ARRIVES ([forgetSent]), before it is queued; an arm reads
+ *   [forgets] when its message arrives ([armSent]) and seals only if it is unchanged when it runs
+ *   ([sealIf]). Both run on one executor, so arrival order is run order.
+ * - **The run's own erase never removes a copy written after the one it opened.** Every write and
+ *   erase bumps [writes]; an erase decided from what a run opened ([eraseIf] with the [writeSeen]
+ *   read at the open) is skipped when a newer copy is there.
+ */
+class NativeVaultOrder {
+    private var forgets = 0L
+    private var writes = 0L
+
+    /** An arm's message arrived: the forgets it must not be overtaken by. */
+    @Synchronized
+    fun armSent(): Long = forgets
+
+    /** A forget's message arrived: every arm sent before it is refused. */
+    @Synchronized
+    fun forgetSent() {
+        forgets++
+    }
+
+    /** Runs [seal] when no forget arrived after the arm sent at [sentAt]; a successful seal is a write. */
+    @Synchronized
+    fun sealIf(sentAt: Long, seal: () -> Boolean): Boolean {
+        if (sentAt != forgets) return false
+        val ok = seal()
+        if (ok) writes++
+        return ok
+    }
+
+    /** The writes seen when a copy is opened: what [eraseIf] compares. */
+    @Synchronized
+    fun writeSeen(): Long = writes
+
+    /** Runs [erase] unless a write came after [seen] (`null`: erase whatever is there, a forget). */
+    @Synchronized
+    fun eraseIf(seen: Long?, erase: () -> Unit): Boolean {
+        if (seen != null && seen != writes) return false
+        erase()
+        writes++
+        return true
+    }
+}

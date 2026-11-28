@@ -2,6 +2,7 @@ import { forgetAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { normalizeMailAddress } from './eligibility';
 
 /**
  * THE NEW-MAIL WATCHER'S HIGH-WATER MARK - WHAT MAKES "ALREADY NOTIFIED" A DURABLE FACT
@@ -173,7 +174,7 @@ export async function readMailWatchCursor(
     Log.w('MAIL-WATCH', 'ERROR: the cursor has an unknown shape - a baseline will be taken');
     return null;
   }
-  if (entry.account !== account.toLowerCase()) {
+  if (entry.account !== normalizeMailAddress(account)) {
     Log.i('MAIL-WATCH', 'the cursor was taken in another mailbox - a baseline will be taken');
     return null;
   }
@@ -188,7 +189,11 @@ export function writeMailWatchCursor(
 ): Promise<boolean> {
   return store.write(
     userId,
-    JSON.stringify({ v: VERSION, account: cursor.account.toLowerCase(), highest: cursor.highest })
+    JSON.stringify({
+      v: VERSION,
+      account: normalizeMailAddress(cursor.account),
+      highest: cursor.highest,
+    })
   );
 }
 

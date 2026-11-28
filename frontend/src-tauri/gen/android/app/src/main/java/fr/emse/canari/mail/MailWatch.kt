@@ -78,13 +78,20 @@ sealed interface MailWatchEffect {
 /**
  * The one transition table. [armed] is whether a sealed copy exists (the user ticked "remember" AND
  * turned the switch on - the page arms it only then, and every forget path erases it). [currentRun]
- * is the id of the native run the service started last.
+ * is the id of the native run the service started last; [nativeAlive] whether a native run is
+ * going (a page that claimed it and then went leaves NATIVE with none - the next page-gone starts one).
  *
  * - THE PAGE WINS while it watches: a start hands the watch to it, from either state.
  * - A page that goes leaves the watch to the native watcher when armed, else ends it.
  * - NOTHING BUT A STOP, A FORGET OR ITS OWN END ENDS A NATIVE RUN: it is the watch with no page.
  */
-fun decideMailWatch(mode: MailWatchMode, command: MailWatchCommand, armed: Boolean, currentRun: Long = 0): MailWatchEffect = when (command) {
+fun decideMailWatch(
+    mode: MailWatchMode,
+    command: MailWatchCommand,
+    armed: Boolean,
+    currentRun: Long = 0,
+    nativeAlive: Boolean = true,
+): MailWatchEffect = when (command) {
     is MailWatchCommand.Start -> when (mode) {
         MailWatchMode.OFF -> MailWatchEffect.EnterForeground(command.spec, MailWatchMode.PAGE)
         MailWatchMode.PAGE -> MailWatchEffect.Refresh(command.spec)
@@ -96,7 +103,11 @@ fun decideMailWatch(mode: MailWatchMode, command: MailWatchCommand, armed: Boole
         val what = if (command == MailWatchCommand.PageGone) "the page is gone" else "the task was removed from Recents"
         when (mode) {
             MailWatchMode.PAGE -> if (armed) MailWatchEffect.HandToNative else MailWatchEffect.Leave("$what, nothing sealed")
-            MailWatchMode.NATIVE -> MailWatchEffect.Ignore("$what - the native watcher runs without it")
+            MailWatchMode.NATIVE -> when {
+                nativeAlive -> MailWatchEffect.Ignore("$what - the native watcher runs without it")
+                armed -> MailWatchEffect.HandToNative
+                else -> MailWatchEffect.Leave("$what, no native run and nothing sealed")
+            }
             MailWatchMode.OFF -> MailWatchEffect.Ignore("$what with no watch held")
         }
     }

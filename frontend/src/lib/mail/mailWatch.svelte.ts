@@ -203,9 +203,18 @@ export function pauseUntilRetry(ms: number, signal: AbortSignal): Promise<void> 
 function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal): void {
   if (isAndroidTauriRuntime()) {
     // One watcher at a time over the one cursor: the native run is stopped and JOINED first.
-    void claimAndroidMailWatch().then(() => {
-      if (!signal.aborted) watcher.start();
-    });
+    void claimAndroidMailWatch().then(
+      () => {
+        if (!signal.aborted) watcher.start();
+      },
+      (err: unknown) => {
+        // Not started: a page run beside a native one would be two writers of one cursor.
+        Log.w(
+          'MAIL-WATCH',
+          `ERROR: the claim was not sent - the page watch does not start (${String(err)})`
+        );
+      }
+    );
     return;
   }
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
@@ -430,6 +439,12 @@ export function watchMailNotifications(): void {
         // start is the watch with no page (boot, a restart) - this page claims it when it runs.
         serviceHeld = false;
         stopAndroidMailService('started with no watch running');
+        return;
+      }
+      if (detail.kind === 'armed' && detail.code === 'failed') {
+        // The copy was not sealed (a forget came first, the storage locked, a write failed): the
+        // next apply decides again rather than believing it armed.
+        lastNativeKey = null;
         return;
       }
       if (detail.kind === 'failed' || detail.kind === 'stopped') {

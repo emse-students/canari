@@ -1166,8 +1166,29 @@ page's watcher stops it sends `release`, so a push check may read again.
 stop flag, connection and pause, and an id: a stop acts on the handle captured at the call, so it
 never lands on a run started after it, and the service ignores the end of an earlier run
 (`NativeEnded` carries the id). The connection is published under the run's lock after re-reading the
-stop flag there, so a stop either sees it and cuts it or is seen before connecting. Redirects are
-never followed (`instanceFollowRedirects = false`).
+stop flag there, so a stop either sees it and cuts it or is seen before connecting, and the socket
+is torn down off the caller's thread (it may be the main thread). Redirects are never followed
+(`instanceFollowRedirects = false`). A stopped run releases its wait set with 5 s timeouts (a claim
+and a forget wait for it), not after a transport failure (that wait set is stale) and never after a
+forget. A thrown error of any kind ends the run as `crashed`, logged at error level, and the service
+leaves.
+
+**Claim, release, arm and forget run on ONE thread** (`MailWatchVault.ops`) in the order their
+messages arrived, and a gone page's release goes through it too before the service is told - so the
+page's hold is never decided by two threads, and a native run is never started while the page holds
+the watch (`start` refuses then). A forget is ordered on ARRIVAL (`NativeVaultOrder`, JVM-tested): it
+wins over every arm sent before it and over none sent after it; an `armed` `failed` answer clears the
+page's last decision so the next apply arms again. The run's own erase (a refused password, a closed
+account) and the removal of a copy that can never open are skipped when a newer copy was written
+since the one opened. A forget naming an account stops only that account's run (or one whose copy is
+gone); a forget naming none erases every copy AND the Keystore key.
+
+**NATIVE with no run is not a state the service stays in**: a gone page in NATIVE starts the native
+run again when none is alive (a page that claimed it and whose start was then refused off screen),
+or leaves when nothing is sealed; and a `start` is accepted off screen while the service already
+holds the foreground. A wait the server answers EMPTY in under 30 s did not block: it counts as a
+failure on the ladder (a rate bound - a change is read whatever its duration), and a delta read stops
+at a page cursor it has already met.
 
 **The bridge's origins are an allowlist** (`mailBridgeOrigins`): the app's `http://tauri.localhost`,
 and in a debug build only the dev server's (`127.0.0.1:1420`, `localhost:1420`, and
