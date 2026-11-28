@@ -22,7 +22,7 @@
  * the JOIN until the call's own group is proven current (`services/callGroupCurrent.ts`); it no
  * longer waits for the catch-up of every conversation (owner, 2026-11-28: 10.7 s of a 1.8.2 answer
  * were other conversations' frames - calls.md, "The answer joins on its own group").
- * {@link whenSessionCaughtUp} is one of the proofs that join waits for.
+ * {@link whenNextCatchUp} is one of the EVENTS that wait re-reads its facts on - never a proof.
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -47,8 +47,16 @@ const MAX_PENDING_AGE_MS = 2 * 60_000;
 let pending: PendingCallAccept | null = null;
 let handler: ((why: string) => void) | null = null;
 let caughtUp = false;
-/** Waiters of {@link whenSessionCaughtUp}, released the next time the session reads caught up. */
-let caughtUpWaiters: Array<() => void> = [];
+/** Waiters of {@link whenNextCatchUp}, released the next time the session reads caught up. */
+let caughtUpWaiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
+
+/** The session the catch-up waiters belonged to ended: they are rejected with it. */
+export class SessionCatchUpAbandonedError extends Error {
+  constructor(reason: string) {
+    super(`[CallAccept] the session ended before its next catch-up: ${reason}`);
+    this.name = 'SessionCatchUpAbandonedError';
+  }
+}
 
 /**
  * Registers THE one handler that acts on an intent (`useChatSession`: `answerFromSystemSurface`).
@@ -77,7 +85,7 @@ function actIfReady(why: string): void {
 
 /**
  * Records whether the session's socket is up and caught up (`ConnectionDeps.onCaughtUp` sets it,
- * a closed socket clears it). Becoming caught up releases {@link whenSessionCaughtUp}.
+ * a closed socket clears it). Becoming caught up releases {@link whenNextCatchUp}.
  */
 export function setSessionCaughtUp(value: boolean): void {
   if (caughtUp === value) return;
@@ -86,17 +94,42 @@ export function setSessionCaughtUp(value: boolean): void {
   if (!value) return;
   const released = caughtUpWaiters;
   caughtUpWaiters = [];
-  for (const resolve of released) resolve();
+  for (const { resolve } of released) resolve();
 }
 
 /**
- * Resolves once the session's socket is up and its post-connect catch-up is done - at once when it
- * already is. One of the proofs a call answered on the ring joins on (`callGroupCurrent.ts`): every
- * group, the call's included, has absorbed what the server held when the socket opened.
+ * Resolves at the NEXT time the session reads caught up - never at once, even when it already is:
+ * it is an EVENT a wait re-reads its facts on (a connection's catch-up just ended), never a proof
+ * of anything (`callGroupCurrent.ts`).
+ *
+ * @param signal aborting it removes the waiter and rejects with the signal's reason.
+ * @throws {SessionCatchUpAbandonedError} (as a rejection) when the session ends first.
  */
-export function whenSessionCaughtUp(): Promise<void> {
-  if (caughtUp) return Promise.resolve();
-  return new Promise((resolve) => caughtUpWaiters.push(resolve));
+export function whenNextCatchUp(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject };
+    caughtUpWaiters.push(waiter);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        caughtUpWaiters = caughtUpWaiters.filter((w) => w !== waiter);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
+}
+
+/**
+ * Rejects every {@link whenNextCatchUp} waiter: the session they belong to was signed out, and the
+ * next account's catch-up must not wake them. Returns how many there were, for the caller's log.
+ */
+export function abandonCatchUpWaiters(reason: string): number {
+  const abandoned = caughtUpWaiters;
+  caughtUpWaiters = [];
+  for (const { reject } of abandoned) reject(new SessionCatchUpAbandonedError(reason));
+  return abandoned.length;
 }
 
 /**

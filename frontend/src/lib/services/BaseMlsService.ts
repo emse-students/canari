@@ -2838,16 +2838,29 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly groupDrainedArmed = new Set<string>();
 
   /** @inheritdoc */
-  whenGroupDrained(groupId: string): Promise<void> {
+  whenGroupDrained(groupId: string, signal?: AbortSignal): Promise<void> {
     // A DESTROYED CLIENT DRAINS NOTHING MORE, so a waiter registered after `destroy` would wait for
     // ever: `abandonGroupDrainedWaiters` ran once, at the destroy, and never again.
     if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
     if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
       const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
-      waiters.push({ resolve, reject });
+      waiters.push(waiter);
       this.groupDrainedWaiters.set(groupId, waiters);
       this.armGroupDrained(groupId);
+      // A WAITER WHOSE CALLER STOPPED IS REMOVED, never left for the next pull to wake.
+      signal?.addEventListener(
+        'abort',
+        () => {
+          const left = (this.groupDrainedWaiters.get(groupId) ?? []).filter((w) => w !== waiter);
+          if (left.length > 0) this.groupDrainedWaiters.set(groupId, left);
+          else this.groupDrainedWaiters.delete(groupId);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
     });
   }
 
@@ -2857,9 +2870,9 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** @inheritdoc */
-  whenGroupFrameApplied(groupId: string): Promise<void> {
+  whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void> {
     if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
-    return this.messageScheduler.whenGroupFrameApplied(groupId);
+    return this.messageScheduler.whenGroupFrameApplied(groupId, signal);
   }
 
   /**

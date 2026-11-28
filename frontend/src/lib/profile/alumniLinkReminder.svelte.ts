@@ -33,7 +33,6 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
     };
   });
 
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the instant of this derivation, read once and never mutated
   const due = $derived(!!profile && alumniLinkReminderDue(profile, new Date()) && !!target());
 
   return {

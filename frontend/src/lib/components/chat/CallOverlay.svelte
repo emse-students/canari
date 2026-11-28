@@ -70,7 +70,7 @@
   import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
-  import { onMount, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import { screenAwakeHolder } from '$lib/mobile/screenAwake';
 
   let {
@@ -83,10 +83,17 @@
 
   const call = useCallModel(() => callService);
 
-  // AN ANSWER FROM THE RING TIMES ITS SCREEN: the first moment the user sees the call, measured from
-  // the native tap (`CallService.noteCallScreenShown`; silent for a call that did not come from it).
-  onMount(() => callService.noteCallScreenShown());
   const fullScreen = $derived(callView.showsFullScreen);
+
+  // AN ANSWER FROM THE RING TIMES ITS SCREEN: the first moment the user sees the call in each shape -
+  // the full screen, or the banner the PIN lock leaves - measured from the native tap
+  // (`CallService.noteCallScreenShown`, once per shape; silent for a call that did not come from it).
+  // Re-read on every state change, so an invite that put the screen up first is timed at the answer.
+  $effect(() => {
+    const shape = fullScreen ? 'full screen' : 'banner';
+    if (call.callState === 'idle' || call.callState === 'ended') return;
+    untrack(() => callService.noteCallScreenShown(shape));
+  });
 
   // Back minimises; the call is never ended by a navigation gesture. The chevron and Escape go
   // through `dismissFromUi` too, so every way out of the full screen leaves the stack the same way

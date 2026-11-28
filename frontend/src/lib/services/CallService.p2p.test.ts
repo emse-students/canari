@@ -583,21 +583,33 @@ class FakeTransform {
 const fakeTrack = () =>
   Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
 /**
- * The call group's drained proof (`callGroupCurrent.ts`), held by each test that answers on the ring:
- * resolved when the test says the group is current. Replaced per test.
+ * The call group as the wait of an answer from the ring reads it (`callGroupCurrent.ts`): this device
+ * holds it at `local`, the server at `server`, and `frame` fires when a frame of it is applied - a
+ * test moves the epoch with {@link applyCallGroupFrame}. Replaced per test.
  */
-let callGroupDrained = Promise.withResolvers<void>();
+let callGroup = { local: 0, server: 1, frame: Promise.withResolvers<void>() };
+
+/** Applies one frame of the call group: its epoch becomes `epoch`, and the wait reads it again. */
+const applyCallGroupFrame = (epoch: number) => {
+  const applied = callGroup.frame;
+  callGroup.local = epoch;
+  callGroup.frame = Promise.withResolvers<void>();
+  applied.resolve();
+};
 
 const fakeMls = {
   getDeviceId: () => 'device-1',
-  // THE CALL GROUP'S PROOFS (callGroupCurrent.ts): the server's epoch is unknown here, so the drain
-  // (or the session's catch-up) decides - a test answering on the ring resolves `callGroupDrained`.
-  getGroupServerStatus: vi.fn(async () => 'error' as const),
-  getEpoch: vi.fn(() => 0),
-  getLocalGroups: vi.fn(() => [] as string[]),
+  // THE CALL GROUP'S ONE PROOF (callGroupCurrent.ts): held here at `callGroup.local`, at the server
+  // at `callGroup.server` - a test answering on the ring applies the frame that closes the gap.
+  getGroupServerStatus: vi.fn(async (groupId: string) => ({
+    groupId,
+    activeEpoch: callGroup.server,
+  })),
+  getEpoch: vi.fn(() => callGroup.local),
+  getLocalGroups: vi.fn(() => ['group-1']),
   leadGroup: vi.fn(() => () => {}),
-  whenGroupFrameApplied: vi.fn(() => new Promise<void>(() => {})),
-  whenGroupDrained: vi.fn(() => callGroupDrained.promise),
+  whenGroupFrameApplied: vi.fn(() => callGroup.frame.promise),
+  whenGroupDrained: vi.fn(() => new Promise<void>(() => {})),
   isGroupDrained: vi.fn(() => false),
   // The conversation's MLS tree: this device is alice's; bob and carol are the other members.
   getGroupMemberIdentities: vi.fn(async () => ['alice:device-1', 'bob:device-b', 'carol:device-c']),
@@ -5424,8 +5436,9 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
 
 /**
  * AN ANSWER ON THE NATIVE RING JOINS WITH NO INVITE (calls.md, "An answer from the ring joins on the
- * ring's facts"). Driven through the real `pendingCallAccept` gate and the real `acceptCall`: the
- * room token is the authority, and nothing happens before the session's catch-up is done.
+ * ring's facts", "The answer joins on its own group"). Driven through the real `pendingCallAccept`
+ * gate and the real `acceptCall`: the screen at once, the room token / ICE / microphone once MLS is
+ * up, and the keys and the "answered" notice once the call's own group is at the server's epoch.
  */
 describe('an answer on the native ring, no invite ever delivered', () => {
   const RING_ANSWER = {
@@ -5435,11 +5448,19 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     callerId: 'peer@example.org',
   };
 
+  beforeEach(async () => {
+    callGroup = { local: 0, server: 1, frame: Promise.withResolvers<void>() };
+    const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
+    setMlsReady(true);
+  });
+
   afterEach(async () => {
     const gate = await import('$lib/stores/pendingCallAccept');
     gate.setSessionCaughtUp(false);
     gate.takePendingCallAccept();
     gate.setPendingCallAcceptHandler(null);
+    const { setMlsReady } = await import('$lib/composables/session/mlsReadiness');
+    setMlsReady(false);
   });
 
   async function answeredOnTheRing(service: CallService) {
@@ -5449,70 +5470,92 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     return gate;
   }
 
-  beforeEach(() => {
-    callGroupDrained = Promise.withResolvers<void>();
-  });
+  const logLines = async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    return vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+  };
 
-  it('shows the call at once, waits for its own group only, then asks the room token and joins', async () => {
+  it('shows the call at once, starts the setup, and derives the keys only at the server epoch', async () => {
     const service = new CallService(fakeMls);
     order.length = 0;
     vi.mocked(fakeMls.sendMessage).mockClear();
+    vi.mocked(fakeMls.exportSecret).mockClear();
     vi.mocked(fakeMls.leadGroup).mockClear();
     await answeredOnTheRing(service);
     await settle();
     // THE SCREEN AT ONCE: the call is on, connecting - and the group leads the drain.
     expect(get(service.callState)).toBe('incall');
     expect(fakeMls.leadGroup).toHaveBeenCalledWith('group-1');
-    // The group is not proven current yet: nothing asked, nothing sent.
-    expect(order).toHaveLength(0);
+    // MLS is up: the token is asked in parallel with the group wait - but no key, no notice, no room.
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(fakeMls.exportSecret).not.toHaveBeenCalled();
     expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+    expect(FakeSocket.instances).toHaveLength(0);
 
-    // The group drained - the session's whole catch-up has NOT ended, and is not waited for.
-    callGroupDrained.resolve();
+    applyCallGroupFrame(1);
     await settle();
 
-    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(fakeMls.exportSecret).toHaveBeenCalled();
     expect(sentCallFrames().some((c) => c.answered)).toBe(true);
     expect(FakeSocket.instances).toHaveLength(1);
     expect(service.incomingCallerId).toBe('peer@example.org');
   });
 
-  it("the session's catch-up still proves it, said at WARN when the group was not listed whole", async () => {
+  it('a session already caught up is no proof: the group below the server still waits', async () => {
     const service = new CallService(fakeMls);
-    order.length = 0;
-    const { appendLog } = await import('$lib/utils/sessionLog');
-    vi.mocked(appendLog).mockClear();
+    vi.mocked(fakeMls.sendMessage).mockClear();
     const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
     await settle();
-    expect(order).toHaveLength(0);
-
+    gate.setSessionCaughtUp(false);
     gate.setSessionCaughtUp(true);
     await settle();
 
-    expect(order[0]).toBe('api:/api/calls/room-token');
-    expect(
-      vi
-        .mocked(appendLog)
-        .mock.calls.some(([l]) => String(l).includes('WARN group group-1 NOT proven current'))
-    ).toBe(true);
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+    expect(FakeSocket.instances).toHaveLength(0);
   });
 
-  it('a hang-up during the wait ends it: nothing asked, the lead released', async () => {
+  it('a hang-up during the wait ends the call at once, and its notice waits for the group', async () => {
     const release = vi.fn();
     vi.mocked(fakeMls.leadGroup).mockReturnValueOnce(release);
     const service = new CallService(fakeMls);
-    order.length = 0;
+    vi.mocked(fakeMls.sendMessage).mockClear();
     await answeredOnTheRing(service);
     await settle();
 
     service.endCall();
     await settle();
-    expect(release).toHaveBeenCalledTimes(1);
+    // The screen and the record do not wait; the notice does.
+    expect(get(service.callState)).not.toBe('incall');
+    expect(sentCallFrames().some((c) => c.hangup)).toBe(false);
+    expect(
+      (await logLines()).some((l) => l.includes('held until its group is proven current'))
+    ).toBe(true);
 
-    callGroupDrained.resolve();
+    applyCallGroupFrame(1);
     await settle();
-    expect(order.filter((o) => o === 'api:/api/calls/room-token')).toHaveLength(0);
+    expect(sentCallFrames().filter((c) => c.hangup)).toHaveLength(1);
+    expect(release).toHaveBeenCalledTimes(1);
     expect(FakeSocket.instances).toHaveLength(0);
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+  });
+
+  it('the session ending under the wait is no failure: no toast, nothing sent', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    await answeredOnTheRing(service);
+    await settle();
+
+    const { GroupDrainAbandonedError } = await import('$lib/mls-client');
+    callGroup.frame.reject(new GroupDrainAbandonedError('group-1'));
+    await settle();
+
+    expect(showToast).not.toHaveBeenCalled();
+    expect(sentCallFrames()).toHaveLength(0);
+    expect(get(service.callState)).toBe('idle');
+    expect((await logLines()).some((l) => l.includes('set aside - the session ended'))).toBe(true);
   });
 
   it('joins nothing when the room token says the ring is over (410)', async () => {
@@ -5522,7 +5565,6 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     const service = new CallService(fakeMls);
     vi.mocked(fakeMls.sendMessage).mockClear();
     await answeredOnTheRing(service);
-    callGroupDrained.resolve();
     await settle();
 
     expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
@@ -5533,7 +5575,7 @@ describe('an answer on the native ring, no invite ever delivered', () => {
   it('a second answer of the call being joined starts nothing and accuses nothing', async () => {
     const service = new CallService(fakeMls);
     const gate = await answeredOnTheRing(service);
-    callGroupDrained.resolve();
+    applyCallGroupFrame(1);
     await settle();
     const { appendLog } = await import('$lib/utils/sessionLog');
     vi.mocked(appendLog).mockClear();
@@ -5545,6 +5587,23 @@ describe('an answer on the native ring, no invite ever delivered', () => {
     expect(order).toHaveLength(0);
     expect(FakeSocket.instances).toHaveLength(1);
     expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('WARN'))).toBe(false);
+  });
+
+  it('times the call screen once per shape it is shown in', async () => {
+    const service = new CallService(fakeMls);
+    await answeredOnTheRing(service);
+    await settle();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+
+    service.noteCallScreenShown('banner');
+    service.noteCallScreenShown('banner');
+    service.noteCallScreenShown('full screen');
+
+    const timed = (await logLines()).filter((l) => l.includes('timing: call screen shown as'));
+    expect(timed).toHaveLength(2);
+    expect(timed[0]).toContain('as banner');
+    expect(timed[1]).toContain('as full screen');
   });
 });
 

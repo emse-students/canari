@@ -247,6 +247,19 @@ describe('whenGroupDrained', () => {
     ).toBe(0);
   });
 
+  it('a waiter whose caller stopped is removed at once, never left for the next pull to wake', async () => {
+    const svc = liveService();
+    const stop = new AbortController();
+    const waiting = svc.whenGroupDrained('g-1', stop.signal);
+
+    stop.abort(new Error('the call ended'));
+
+    await expect(waiting).rejects.toThrow('the call ended');
+    expect(
+      (svc as unknown as { pendingGroupDrainWaiters(): number }).pendingGroupDrainWaiters()
+    ).toBe(0);
+  });
+
   it('is rejected at once when asked AFTER the destroy - a late waiter is never left pending', async () => {
     const svc = liveService();
     Object.assign(svc, { destroyPlatformResources: () => undefined });

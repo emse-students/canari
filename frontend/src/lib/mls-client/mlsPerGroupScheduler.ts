@@ -445,14 +445,36 @@ export class MlsPerGroupScheduler {
    * epoch. Never resolves on its own while nothing of the group arrives: pair it with a wait that
    * does ({@link waitUntilGroupIdle}, or the service's drained proof). Rejected with the abandon
    * reason once the owning client ended ({@link abandonGroupIdleWaiters}).
+   *
+   * @param signal aborting it REMOVES the waiter and rejects with the signal's reason, so a caller
+   *   that stopped waiting leaves nothing registered.
    */
-  whenGroupFrameApplied(groupId: string): Promise<void> {
+  whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void> {
     if (this.groupIdleAbandonedWith) return Promise.reject(this.groupIdleAbandonedWith(groupId));
+    if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
       const waiters = this.groupFrameWaiters.get(groupId) ?? [];
-      waiters.push({ resolve, reject });
+      waiters.push(waiter);
       this.groupFrameWaiters.set(groupId, waiters);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          const left = (this.groupFrameWaiters.get(groupId) ?? []).filter((w) => w !== waiter);
+          if (left.length > 0) this.groupFrameWaiters.set(groupId, left);
+          else this.groupFrameWaiters.delete(groupId);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
     });
+  }
+
+  /** How many {@link whenGroupFrameApplied} waiters are registered, across groups (tests, logs). */
+  get groupFrameWaiterCount(): number {
+    let n = 0;
+    for (const waiters of this.groupFrameWaiters.values()) n += waiters.length;
+    return n;
   }
 
   /** Wakes the {@link whenGroupFrameApplied} waiters of the bucket whose frame was just applied. */
@@ -1011,6 +1033,12 @@ export class MlsPerGroupScheduler {
     return bucket;
   }
 
+  /**
+   * Drops the emptied buckets from the rotation. THE ROUND-ROBIN INDEX FOLLOWS ITS BUCKET: each key
+   * removed below it shifts it down by one, so the bucket whose turn is next keeps it. Without that,
+   * a bucket emptied before the index - a leading group's above all ({@link leadGroup}), drained out
+   * of turn - made the rotation skip the next group's turn.
+   */
   private pruneEmptyKeys(): void {
     for (let i = this.rrKeys.length - 1; i >= 0; i--) {
       const key = this.rrKeys[i];
@@ -1019,6 +1047,7 @@ export class MlsPerGroupScheduler {
         this.rrKeys.splice(i, 1);
         this.rrKeySet.delete(key);
         this.buckets.delete(key);
+        if (i < this.rrIndex) this.rrIndex -= 1;
       }
     }
     if (this.rrIndex >= this.rrKeys.length) {
@@ -1033,8 +1062,9 @@ export class MlsPerGroupScheduler {
     const tiers: Array<keyof GroupBuckets> =
       this.mode === 'tauri' ? ['control', 'welcome', 'messages'] : ['messages'];
 
-    // A LEADING GROUP FIRST ({@link leadGroup}), in its own tier order; the round-robin index is
-    // left where it was, so the other groups resume their turns exactly as before.
+    // A LEADING GROUP FIRST ({@link leadGroup}), in its own tier order. The round-robin index is not
+    // advanced by it, and `pruneEmptyKeys` keeps it on the same bucket when the lead's bucket empties
+    // ahead of it, so the other groups resume their turns where they were.
     for (const key of this.leadGroups.keys()) {
       const bucket = this.buckets.get(key);
       if (!bucket) continue;

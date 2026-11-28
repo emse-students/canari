@@ -801,43 +801,85 @@ either. So:
   name and avatar from the local cache, `resolveCallPeers`) and `acceptCall(..., { awaitCallGroup:
   true })` goes to `incall` - the full screen, `connecting` - before anything is awaited. A hang-up
   from that screen ends the wait.
-- **The join on its own group (B1).** `services/callGroupCurrent.ts` waits for the FIRST of three
-  proofs, each an event, none a clock: `epoch-reached` - once MLS is up (`whenMlsReady`) the
-  delivery service's `activeEpoch` for the group is read (`getGroupServerStatus`), and the local
-  epoch is compared to it now and after each frame of the group the scheduler applies
-  (`whenGroupFrameApplied`); `group-drained` - `whenGroupDrained`, now woken when the pull's LISTING
-  lands, not only at the end of the whole drain (a group with nothing queued is drained from that
-  moment), deferred past an incomplete listing by `untilListedWhole`; `session-caught-up` - the old
-  gate, reached after `group-drained` on every complete catch-up, and alone only when the listing
-  failed: then the join goes ahead as it always did and says `WARN group ... NOT proven current`.
+- **The join on its own group (B1).** `services/callGroupCurrent.ts` waits for ONE proof: once MLS
+  is up (`whenMlsReady`), the delivery service's `activeEpoch` for the group is read
+  (`getGroupServerStatus`), and the proof is `epoch-reached` - this device HOLDS the group
+  (`getLocalGroups()`) at exactly that epoch. Nothing else proves it:
+  - **A caught-up session is no proof.** The old `onCaughtUp` gate is gone from the join: in a steady
+    state the session is already caught up while the call group can still be behind (a commit the
+    push woke the app for, not yet pulled). The next end of a catch-up (`whenNextCatchUp`) is only an
+    EVENT on which the facts are read again.
+  - **Drained is not current.** "Applied everything listed on this link" says nothing of a commit
+    the listing did not carry. A pull's end (`whenGroupDrained`, complete or incomplete) is an event;
+    a group drained still below the server is a contradiction, said at `WARN ... drained at epoch X
+    while the server holds Y`, and waited on. The one exception is a server that answers WITHOUT an
+    epoch (a build predating the field): then a held group drained on this link is the only fact
+    there is, and it is accepted as `drained-no-server-epoch`.
+  - **A local epoch ABOVE the server's proves nothing** - a commit of ours staged and not accepted
+    yet, or an external rejoin whose commit is still in flight (Tauri reads the pre-merge epoch, the
+    staged one is one above): `WARN ... AHEAD of the server`, and the server is read again at the
+    next event.
+  - **An unreadable server epoch** (`error`, `absent`) is said ONCE at WARN with its cause and read
+    again at the next pull or connection event - never on a frame, never on a timer. The wait goes on
+    until the epoch is reached or the call ends: the user hangs up, or the room token's `410` ends it
+    once the ring window has closed.
+  - **The epoch line is logged only when the pair `local/server` changes**, not at every frame.
+- **The invite carries no epoch**, nor does the ring's push. So the callee cannot know which epoch
+  the caller derived its keys at; the server's `activeEpoch` is the only statement of "current" there
+  is, and a commit landing between the caller's derivation and the callee's read is the race every
+  join had before, unchanged (the keys are re-derived at the next epoch by both sides).
 - **A group behind is served first.** While the wait runs the group LEADS the drain
   (`MlsPerGroupScheduler.leadGroup`): its frames, in their own order and tier order, are picked
-  before any other bucket's, and the round-robin resumes where it was. Nothing across groups
-  depended on the round-robin's order; a frame a commit holds back stays held back. The lead ends
-  with the wait - a proof, a hang-up (`endCall`) or the cleanup.
-- **The whole setup waits, not only the keys.** The token, the ICE servers and the microphone could
-  start during the wait, but they would then run before MLS is up on a cold start (the PIN): the
-  wait is about one round trip once MLS is up, and nothing reaches the server or the hardware for a
-  session that is not there.
+  before any other bucket's. A frame a commit holds back stays held back. The round-robin index
+  FOLLOWS ITS BUCKET: `pruneEmptyKeys` shifts it down for each emptied bucket below it, so a bucket
+  emptied out of turn (the lead's above all) never costs the next group its turn. The lead ends with
+  the wait.
+- **Only the keys and the "answered" notice wait for the proof.** The room token, the ICE servers
+  and the microphone start once MLS is up (`wait.mlsReady`), in parallel with the group wait, so
+  nothing reaches the server or the hardware for a session that is not there (a cold start's PIN).
+  The notice leaves once the token is in hand (a refused answer tells nobody) AND the group is
+  current.
+- **A hang-up during the wait.** The screen and the record are immediate. The MLS hangup notice is
+  sent in the group, so it is HELD behind the same proof (`endCall`: `held until its group is proven
+  current`) and the wait goes on for it alone; the server's ring-end does not replace it (it reaches
+  the devices still ringing, not the caller's record of the call). It is bounded by the proof or by
+  the session's end, never by a clock: a sign-out drops it, said.
+- **Nothing outlives the wait.** Every waiter it registers is removable through an `AbortSignal`
+  (`whenMlsReady`, `whenGroupFrameApplied`, `whenGroupDrained`, `whenNextCatchUp`), one controller per
+  round aborted when the round moves on or the wait stops (never `AbortSignal.any`, absent from the
+  WKWebView of iOS before 17.4). A sign-out rejects the parked catch-up waiters
+  (`abandonCatchUpWaiters`, beside `abandonMlsReadyWaiters` in `forgetAccount`), so the next
+  account's catch-up wakes none of them.
+- **A session that ends under the wait is no call failure.** The destroyed client
+  (`GroupDrainAbandonedError`), an MLS wait abandoned (`MlsSessionEndedError`) or a catch-up wait
+  abandoned are rethrown as `CallGroupSessionEndedError`: the call is set aside with no toast and
+  nothing sent through a client that is gone. A handle of a later call is never reset by an earlier
+  one's proof (`if (this.callGroupWait === wait)`).
 
 **Why the epoch is a proof.** Every accepted commit advances the server's `activeEpoch` under its
-lock (`baseEpoch == activeEpoch`), so a local epoch at or past it has no commit left to apply, and
-`exportSecret` there is what every member at that epoch derives. A group this device does not hold
-is never proven this way (the drain decides). A commit landing after the read is the race every
-join had before, unchanged.
+lock (`baseEpoch == activeEpoch`), so a local epoch equal to it has no commit left to apply, and
+`exportSecret` there is what every member at that epoch derives.
 
 **Measured where.** The `[CallAccept] timing:` lines, each in ms after the native tap: the intent
-recorded, handed to the session, the call screen asked for and shown (`CallOverlay` mount), the
-join started, the room joined; `[Call] timing: group ... current (<proof>) after N ms`; and the
-`E2E proven` line carries the same suffix. `connect_ms` now includes the wait.
+recorded, handed to the session, the call screen asked for, the call screen shown - once per shape,
+`full screen` or `banner` (the PIN lock), said by `CallOverlay` whenever its shape changes, so an
+invite that put the screen up before the answer is timed at the answer - the setup started (MLS
+ready), the keys allowed, the room joined; `[Call] timing: group ... current (<proof>) after N ms`;
+and the `E2E proven` line carries the same suffix. `connect_ms` now includes the wait.
 
-**Covered by** `callGroupCurrent.test.ts` (each proof; an epoch behind reached at the frame that
-brings it, never before; a group not held; an unknown server epoch; an incomplete listing deferred;
-the WARN; a stop releases the lead once; a client ended), `mlsPerGroupScheduler.leadGroup.test.ts`
-(the lead first in its own order, both modes; release and counted holders; the frame event and its
-abandon), `BaseMlsService.groupDrained.test.ts` (drained at the listing, before another group's
-frames are applied), `CallService.p2p.test.ts` and `pendingCallAccept*.test.ts`. **Owed:** the
-reading in [backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
+**Covered by** `callGroupCurrent.test.ts` (the epoch reached at the frame that brings it; a caught-up
+session no proof; drained below the server a WARN and a wait; an incomplete listing; ahead of the
+server a WARN and a re-read; a group not held; an unreadable epoch said once and re-read on a pull or
+a connection only; no server epoch and a drain; the epoch line only on change; a stopped wait leaving
+no waiter, incomplete pulls after it waking nothing; a stop before MLS is up; a destroyed client a
+typed session end), `mlsPerGroupScheduler.leadGroup.test.ts` (the lead first, both modes; release and
+counted holders; the frame event, its abandon and its removal; the round-robin index after an
+emptied bucket), `BaseMlsService.groupDrained.test.ts` (drained at the listing; an aborted waiter
+removed), `mlsReadiness.test.ts`, `pendingCallAccept*.test.ts` (the next catch-up, removable, and
+abandoned at sign-out) and `CallService.p2p.test.ts` (the setup before the proof and the keys after
+it; a caught-up session no proof; the hangup notice held then sent; a session end with no toast and
+nothing sent; the screen timed per shape). **Owed:** the reading in
+[backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
 
 ### A decline on the ring reaches the caller (2026-10-30)
 

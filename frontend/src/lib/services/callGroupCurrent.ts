@@ -1,5 +1,5 @@
 /**
- * THE JOIN OF A CALL ANSWERED ON THE NATIVE RING WAITS FOR ITS OWN GROUP, NEVER FOR EVERY GROUP.
+ * THE KEYS OF A CALL ANSWERED ON THE NATIVE RING WAIT FOR ITS OWN GROUP, NEVER FOR EVERY GROUP.
  *
  * The media keys of a call are its conversation's MLS `exportSecret` at the current epoch
  * (`utils/callKeys.ts`), and the "answered" notice is sent in that group. Nothing else the session
@@ -7,31 +7,49 @@
  * catch-up of EVERY conversation - and on the owner's phone (1.8.2, 2026-11-27) that was 10.7 s of
  * a resume's 180 frames of other conversations between the tap and the join.
  *
- * WHAT PROVES THE GROUP CURRENT - three facts, each an EVENT, none a clock; the first one wins:
+ * THE ONE PROOF: this device holds the group at EXACTLY the epoch the delivery service holds for
+ * it (`GET /api/mls/groups/:id`, `activeEpoch`). Every accepted commit advances the server's epoch
+ * under its lock (`baseEpoch == activeEpoch`), so a local epoch equal to it has no commit left to
+ * apply, and `exportSecret` there is what every member at that epoch derives. The call's invite and
+ * its ring carry no epoch, so the server's row is the only statement of "current" there is.
  *
- * - `epoch-reached`: this device holds the group at the epoch the delivery service holds for it
- *   (`GET /api/mls/groups/:id`, `activeEpoch`, read once MLS is up). The server's epoch is where
- *   every accepted commit lands, so a local epoch at or past it has no commit left to apply, and
- *   the keys exported now are the keys every member at that epoch exports. Re-read after each frame
- *   of the group the scheduler applies (`whenGroupFrameApplied`), never on a timer.
- * - `group-drained`: the mailbox was listed whole on this link and the scheduler holds nothing of
- *   the group (`IMlsService.whenGroupDrained`); a listing that ended incomplete defers it to the
- *   next complete one (`untilListedWhole`).
- * - `session-caught-up`: the connection's whole catch-up ended (`whenSessionCaughtUp`) - the gate
- *   every build before 1.8.4 used, which every complete catch-up reaches AFTER `group-drained`. It
- *   wins alone only when the listing ended incomplete (the mailbox is then unknown, and no group can
- *   be proven drained): the join then goes ahead as it always did, said at WARN, because a group not
- *   proven current is a signal, never a path to keep quiet about.
+ * - A local epoch ABOVE the server's proves nothing (a commit of ours staged and not accepted, an
+ *   external rejoin whose commit is still in flight): said at WARN, and the server's epoch is read
+ *   again on the next event.
+ * - "Drained" is NOT a proof - applied is not current: it is an EVENT on which the epoch is read
+ *   again. A drained group still below the server is a contradiction, said at WARN, and waited on.
+ *   The one exception is a server that answers WITHOUT an epoch (a build predating the field): then
+ *   a held group drained on this link is the only fact there is, and it is accepted, said.
+ * - A server epoch that cannot be READ (no answer, an error) is said ONCE at WARN with its cause, and
+ *   read again on the next pull or connection event - never on a timer. The wait goes on until the
+ *   epoch is reached or the call ends (the user hangs up; the room token's `410` ends it once the
+ *   ring window has closed).
+ *
+ * THE EVENTS the facts are re-read on, each a waiter REMOVED when the wait moves on or stops: a
+ * frame of the group applied (`whenGroupFrameApplied`), a pull ending (`whenGroupDrained`, which
+ * resolves or ends incomplete), a connection's catch-up ending (`whenNextCatchUp`). No clock.
  *
  * A GROUP BEHIND IS SERVED FIRST: while the wait runs the group leads the drain
- * (`IMlsService.leadGroup`), so its commits are applied ahead of the other conversations' frames
- * instead of one turn in N of the round-robin. The lead ends with the wait, whichever way it ends.
+ * (`IMlsService.leadGroup`). The lead ends with the wait, whichever way it ends.
  */
-import { untilListedWhole, type IMlsService } from '$lib/mls-client';
+import { GroupDrainAbandonedError, type IMlsService } from '$lib/mls-client';
+import { MlsSessionEndedError } from '$lib/composables/session/mlsReadiness';
+import { SessionCatchUpAbandonedError } from '$lib/stores/pendingCallAccept';
 import { CallSetupAbandonedError } from '$lib/utils/callFailure';
 
 /** Which fact proved the call's group current. */
-export type CallGroupProof = 'epoch-reached' | 'group-drained' | 'session-caught-up';
+export type CallGroupProof = 'epoch-reached' | 'drained-no-server-epoch';
+
+/**
+ * The session the wait belonged to ended under it - a sign-out, an account switch, the MLS client
+ * destroyed. Not a failure of the call: nothing is told to anyone through a client that is gone.
+ */
+export class CallGroupSessionEndedError extends Error {
+  constructor(groupId: string, cause: unknown) {
+    super(`the session ended while the call waited for group ${groupId.slice(0, 8)}`, { cause });
+    this.name = 'CallGroupSessionEndedError';
+  }
+}
 
 /** What the wait reads; injected so the ordering is tested without a client. */
 export interface CallGroupCurrentDeps {
@@ -46,27 +64,37 @@ export interface CallGroupCurrentDeps {
     | 'leadGroup'
   >;
   /** Resolves once MLS is initialised for the session (`mlsReadiness.ts`). */
-  whenMlsReady(): Promise<void>;
-  /** Resolves once the connection's catch-up has ended (`pendingCallAccept.ts`). */
-  whenSessionCaughtUp(): Promise<void>;
+  whenMlsReady(signal?: AbortSignal): Promise<void>;
+  /** Resolves at the next end of a connection's catch-up (`pendingCallAccept.ts`). */
+  whenNextCatchUp(signal?: AbortSignal): Promise<void>;
   log(line: string): void;
 }
 
-/** A wait in progress: the proof, and the stop a call that ended before it calls. */
+/** A wait in progress. */
 export interface CallGroupWait {
+  /** Resolves once MLS is up for this session - what the steps needing no epoch wait for. */
+  readonly mlsReady: Promise<void>;
   /**
-   * Resolves with the first proof. Rejects with {@link CallSetupAbandonedError} when {@link stop}
-   * came first (the call ended during the wait), and with the client's own error when the MLS client
-   * ended under it.
+   * Resolves with the proof. Rejects with {@link CallSetupAbandonedError} when {@link stop} came
+   * first, and with {@link CallGroupSessionEndedError} when the session ended under it.
    */
   readonly proof: Promise<CallGroupProof>;
-  /** Ends the wait - its lead on the drain, its epoch reads, its proof. Idempotent. */
+  /** Whether {@link proof} has settled, either way. */
+  readonly settled: boolean;
+  /** Ends the wait - its lead on the drain, its waiters, its proof. Idempotent. */
   stop(): void;
 }
 
-/** A branch that has nothing to prove: it never settles, and the race is decided by the others. */
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => {});
+/** What woke the wait. */
+type WaitEvent = 'frame' | 'pull' | 'catch-up';
+
+/** Whether `e` says the session (the MLS client, the signed-in account) ended. */
+function sessionEnded(e: unknown): boolean {
+  return (
+    e instanceof GroupDrainAbandonedError ||
+    e instanceof MlsSessionEndedError ||
+    e instanceof SessionCatchUpAbandonedError
+  );
 }
 
 /**
@@ -82,77 +110,139 @@ export function waitForCallGroupCurrent(
   const short = groupId.slice(0, 8);
   const startedAt = performance.now();
   const since = () => Math.round(performance.now() - startedAt);
-  log(`[Call] join of call=${callId} waits for its group ${short} to be current`);
+  log(`[Call] keys of call=${callId} wait for its group ${short} to be current`);
   const releaseLead = mls.leadGroup(groupId);
-  let stopped = false;
-  let abandon!: (e: Error) => void;
-  /** The branch {@link stop} settles: a call that ended does not leave its setup awaiting for ever. */
-  const stoppedFirst = new Promise<never>((_, reject) => (abandon = reject));
+  /** Aborted by {@link stop}: every waiter of the wait is removed with it. */
+  const stopped = new AbortController();
+  let settled = false;
   const stop = () => {
-    if (stopped) return;
-    stopped = true;
+    if (stopped.signal.aborted) return;
     releaseLead();
-    abandon(new CallSetupAbandonedError(`waiting for group ${short}`));
+    stopped.abort(new CallSetupAbandonedError(`waiting for group ${short}`));
   };
 
-  const epochReached = (async (): Promise<CallGroupProof> => {
-    await deps.whenMlsReady();
-    if (stopped) return never();
-    const status = await mls.getGroupServerStatus(groupId);
-    if (stopped) return never();
-    const target = status === 'absent' || status === 'error' ? undefined : status.activeEpoch;
-    if (target === undefined) {
-      // NOT A FAILURE OF THE JOIN: this proof is unavailable, and the two drained proofs decide.
-      log(
-        `[Call] group ${short}: the server's epoch is unknown (${typeof status === 'string' ? status : 'no activeEpoch'}) - the drain proves it current`
-      );
-      return never();
+  const mlsReady = deps.whenMlsReady(stopped.signal);
+
+  /** Waits for the next event, every waiter registered for it removed once one fires. */
+  const nextEvent = async (): Promise<WaitEvent> => {
+    // One controller per round, aborted by the stop too - never `AbortSignal.any`, absent from the
+    // WKWebView of iOS before 17.4.
+    const round = new AbortController();
+    const signal = round.signal;
+    const onStop = () => round.abort(stopped.signal.reason);
+    stopped.signal.addEventListener('abort', onStop, { once: true });
+    // An incomplete listing is a pull event like a complete one: the epoch is what decides.
+    const pull = mls.isGroupDrained(groupId)
+      ? new Promise<never>(() => {})
+      : mls.whenGroupDrained(groupId, signal).then(
+          () => 'pull' as const,
+          (e: unknown) => {
+            if (signal.aborted || sessionEnded(e)) throw e;
+            return 'pull' as const;
+          }
+        );
+    try {
+      return await Promise.race([
+        mls.whenGroupFrameApplied(groupId, signal).then(() => 'frame' as const),
+        pull,
+        deps.whenNextCatchUp(signal).then(() => 'catch-up' as const),
+      ]);
+    } finally {
+      stopped.signal.removeEventListener('abort', onStop);
+      if (!signal.aborted) round.abort(new Error('the wait moved on'));
     }
+  };
+
+  const run = async (): Promise<CallGroupProof> => {
+    await mlsReady;
+    /** The server's epoch: a number, `none` (it sent none), or `unread` (to read on a pull/connection). */
+    let target: number | 'none' | 'unread' = 'unread';
+    let readTarget = true;
+    let unreadableSaid = false;
+    let lastSaid: string | null = null;
+    let event: WaitEvent | null = null;
     for (;;) {
-      if (stopped) return never();
-      const held = mls.getLocalGroups().includes(groupId);
-      const local = held ? mls.getEpoch(groupId) : null;
-      if (local !== null && local >= target) {
-        log(`[Call] group ${short} at epoch ${local}, the server's is ${target}`);
-        return 'epoch-reached';
+      if (stopped.signal.aborted) throw stopped.signal.reason;
+      if (readTarget) {
+        readTarget = false;
+        const status = await mls.getGroupServerStatus(groupId);
+        if (stopped.signal.aborted) throw stopped.signal.reason;
+        if (status === 'absent' || status === 'error') {
+          target = 'unread';
+          if (!unreadableSaid) {
+            unreadableSaid = true;
+            log(
+              `[Call] WARN group ${short}: the server's epoch could not be read (${status}) - read again at the next pull or connection; the keys wait`
+            );
+          }
+        } else if (status.activeEpoch === undefined) {
+          target = 'none';
+          log(`[Call] group ${short}: the server sends no epoch - a drain on this link decides`);
+        } else {
+          target = status.activeEpoch;
+        }
       }
-      log(
-        `[Call] group ${short} ${held ? `at epoch ${local}` : 'not held here'}, the server's is ${target} - its next frame is read first`
-      );
-      await mls.whenGroupFrameApplied(groupId);
+      const held = mls.getLocalGroups().includes(groupId);
+      if (typeof target === 'number') {
+        const local = held ? mls.getEpoch(groupId) : null;
+        const said = `${local}/${target}`;
+        if (said !== lastSaid) {
+          lastSaid = said;
+          log(
+            `[Call] group ${short} ${held ? `at epoch ${local}` : 'not held here'}, the server's is ${target}`
+          );
+          if (local !== null && local > target) {
+            log(
+              `[Call] WARN group ${short} is AHEAD of the server (${local} > ${target}) - a commit of ours not accepted yet proves nothing; the server's epoch is read again at the next event`
+            );
+          }
+        }
+        if (local === target) return 'epoch-reached';
+        if (local !== null && local > target) readTarget = true;
+        else if (event !== 'frame' && event !== 'catch-up' && mls.isGroupDrained(groupId)) {
+          log(
+            `[Call] WARN group ${short} drained at epoch ${local ?? 'none'} while the server holds ${target} - waiting for the commits that close the gap`
+          );
+        }
+      } else if (target === 'none' && held && mls.isGroupDrained(groupId)) {
+        return 'drained-no-server-epoch';
+      }
+      event = await nextEvent();
+      if (target === 'unread' && (event === 'pull' || event === 'catch-up')) readTarget = true;
     }
-  })();
+  };
 
-  const drained = untilListedWhole(
-    () => mls.whenGroupDrained(groupId),
-    `the join of call ${callId}`
-  ).then((): CallGroupProof => 'group-drained');
-
-  const caughtUp = deps.whenSessionCaughtUp().then((): CallGroupProof => {
-    if (!stopped && !mls.isGroupDrained(groupId)) {
-      log(
-        `[Call] WARN group ${short} NOT proven current - the catch-up ended without listing the mailbox whole; the call joins at the epoch this device holds`
-      );
-    }
-    return 'session-caught-up';
-  });
-
-  const proof = Promise.race([epochReached, drained, caughtUp, stoppedFirst]).then(
+  const proof = run().then(
     (how) => {
+      settled = true;
       stop();
       log(`[Call] timing: group ${short} current (${how}) after ${since()} ms`);
       return how;
     },
     (e: unknown) => {
+      settled = true;
       const ended = e instanceof CallSetupAbandonedError;
       stop();
-      log(
-        ended
-          ? `[Call] the wait for group ${short} stopped after ${since()} ms - the call ended`
-          : `[Call] ERROR the wait for group ${short} ended after ${since()} ms: ${String(e)}`
-      );
+      if (ended) {
+        log(`[Call] the wait for group ${short} stopped after ${since()} ms - the call ended`);
+        throw e;
+      }
+      if (sessionEnded(e)) {
+        log(`[Call] the wait for group ${short} ended after ${since()} ms - the session ended`);
+        throw new CallGroupSessionEndedError(groupId, e);
+      }
+      log(`[Call] ERROR the wait for group ${short} failed after ${since()} ms: ${String(e)}`);
       throw e;
     }
   );
-  return { proof, stop };
+  // The proof is awaited by the caller; `mlsReady` too, but only on paths that reach it.
+  mlsReady.catch(() => {});
+  return {
+    mlsReady,
+    proof,
+    get settled() {
+      return settled;
+    },
+    stop,
+  };
 }

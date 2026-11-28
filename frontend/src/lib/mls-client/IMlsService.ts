@@ -1780,8 +1780,9 @@ export interface IMlsService {
    *   already was when asked.
    * @throws {MailboxListingIncompleteError} (as a rejection) when a pull ends without listing the
    *   whole mailbox while it waits: the state is unknown, and the caller says what that means for it.
+   * @param signal aborting it REMOVES the waiter and rejects with the signal's reason.
    */
-  whenGroupDrained(groupId: string): Promise<void>;
+  whenGroupDrained(groupId: string, signal?: AbortSignal): Promise<void>;
   /**
    * Applies `groupId`'s queued frames ahead of every other group's until the returned release is
    * called (idempotent). Order within the group is unchanged. For a decision that needs ONE group
@@ -1795,8 +1796,9 @@ export interface IMlsService {
    * never resolves while nothing of the group arrives, so it is always raced with a wait that does.
    *
    * @throws {GroupDrainAbandonedError} (as a rejection) once the service is destroyed.
+   * @param signal aborting it REMOVES the waiter and rejects with the signal's reason.
    */
-  whenGroupFrameApplied(groupId: string): Promise<void>;
+  whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void>;
   /**
    * Tells the service the local conversation store is now authoritative.
    *

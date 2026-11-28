@@ -95,6 +95,7 @@ import {
   type SettledListing,
 } from '$lib/utils/graine/salonSendGate';
 import { abandonMlsReadyWaiters, whenMlsReady } from '$lib/composables/session/mlsReadiness';
+import { abandonCatchUpWaiters } from '$lib/stores/pendingCallAccept';
 import {
   readWorkspaceSnapshot,
   serializeWorkspaceSnapshot,
@@ -1562,6 +1563,9 @@ export function useChannelWorkspaces() {
     resetSalonSendGate();
     const abandoned = abandonMlsReadyWaiters('signed out');
     if (abandoned > 0) log(`[WORKSPACE-LOAD] signed out: ${abandoned} key-group wait(s) abandoned`);
+    // A call's wait for its group re-reads on the next catch-up: never the next account's.
+    const catchUps = abandonCatchUpWaiters('signed out');
+    if (catchUps > 0) log(`[CallAccept] signed out: ${catchUps} catch-up wait(s) abandoned`);
     // A gesture this tab handed to the main tab belongs to the session that just ended: never run
     // for the next one (`tabCommitDelegation.ts`).
     const handedOver = abandonDelegatedCommits('signed out');

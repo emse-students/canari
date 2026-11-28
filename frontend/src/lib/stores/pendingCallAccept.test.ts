@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  abandonCatchUpWaiters,
   markConnectionCaughtUp,
   parsePendingCallAccept,
   setPendingCallAccept,
   setPendingCallAcceptHandler,
   setSessionCaughtUp,
+  SessionCatchUpAbandonedError,
   takePendingCallAccept,
-  whenSessionCaughtUp,
+  whenNextCatchUp,
 } from './pendingCallAccept';
 import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
 
@@ -55,40 +57,44 @@ describe('a native answer is handed to the session at once - the catch-up is not
   });
 });
 
-describe('whenSessionCaughtUp - one proof the join waits for', () => {
-  it('resolves at once when the session is caught up', async () => {
+describe('whenNextCatchUp - an event the call wait re-reads its facts on, never a proof', () => {
+  it('a session already caught up does not resolve it: only the NEXT catch-up does', async () => {
     setSessionCaughtUp(true);
-    await expect(whenSessionCaughtUp()).resolves.toBeUndefined();
-  });
-
-  it('waits for the catch-up, and a socket that closed waits for the next one', async () => {
     let done = false;
-    void whenSessionCaughtUp().then(() => (done = true));
+    void whenNextCatchUp().then(() => (done = true));
     await Promise.resolve();
     expect(done).toBe(false);
+    setSessionCaughtUp(false);
     setSessionCaughtUp(true);
     await Promise.resolve();
     expect(done).toBe(true);
-
-    setSessionCaughtUp(false);
-    let next = false;
-    void whenSessionCaughtUp().then(() => (next = true));
-    await Promise.resolve();
-    expect(next).toBe(false);
   });
 
-  it('a catch-up that ended on a dropped socket is no catch-up, nor a stale one', async () => {
-    setSessionCaughtUp(true);
-    // The socket dropped during the fetch: the flag must not stay true for the reconnect to inherit.
-    markConnectionCaughtUp(false);
+  it('a catch-up that ended on a dropped socket wakes nothing, the reconnect one does', async () => {
     let done = false;
-    void whenSessionCaughtUp().then(() => (done = true));
+    void whenNextCatchUp().then(() => (done = true));
+    markConnectionCaughtUp(false);
     await Promise.resolve();
     expect(done).toBe(false);
-    // The reconnect's own catch-up decides.
     markConnectionCaughtUp(true);
     await Promise.resolve();
     expect(done).toBe(true);
+  });
+
+  it('an aborted waiter is removed and rejected with the reason', async () => {
+    const stop = new AbortController();
+    const wait = whenNextCatchUp(stop.signal);
+    stop.abort(new Error('the call ended'));
+    await expect(wait).rejects.toThrow('the call ended');
+    expect(abandonCatchUpWaiters('nothing left')).toBe(0);
+  });
+
+  it('a sign-out rejects every waiter, so the catch-up of the next account wakes none of them', async () => {
+    const wait = whenNextCatchUp();
+    expect(abandonCatchUpWaiters('signed out')).toBe(1);
+    await expect(wait).rejects.toBeInstanceOf(SessionCatchUpAbandonedError);
+    setSessionCaughtUp(true);
+    expect(abandonCatchUpWaiters('again')).toBe(0);
   });
 
   it('the session reports the socket state at the end of the catch-up, not a constant', () => {

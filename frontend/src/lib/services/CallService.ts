@@ -25,9 +25,13 @@ import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
-import { takePendingCallAccept, whenSessionCaughtUp } from '$lib/stores/pendingCallAccept';
-import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
-import { waitForCallGroupCurrent, type CallGroupWait } from './callGroupCurrent';
+import { takePendingCallAccept, whenNextCatchUp } from '$lib/stores/pendingCallAccept';
+import { MlsSessionEndedError, whenMlsReady } from '$lib/composables/session/mlsReadiness';
+import {
+  CallGroupSessionEndedError,
+  waitForCallGroupCurrent,
+  type CallGroupWait,
+} from './callGroupCurrent';
 import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
@@ -425,6 +429,8 @@ export class CallService {
   private nativeTapAt: number | null = null;
   /** The join's wait for the call's own group ({@link waitForCallGroupCurrent}), while it runs. */
   private callGroupWait: CallGroupWait | null = null;
+  /** The call screen shapes already timed for this call ({@link noteCallScreenShown}). */
+  private screenShapesTimed = new Set<string>();
   /**
    * `performance.now()` when the ring started: on the caller once the ring LEFT (the server's
    * fan-out answered, then the invite - the setup before it is the app's time, not the human's), on
@@ -1052,12 +1058,15 @@ export class CallService {
   }
 
   /**
-   * Said by the call screen when it mounts (`CallOverlay`): for an answer from the ring, the first
-   * moment the user sees the call - the measure of "the screen shows at once".
+   * Said by the call screen whenever what it shows changes (`CallOverlay`): for an answer from the
+   * ring, the first moment the user sees the call in each shape - the full screen, or the banner the
+   * PIN lock leaves - timed once per shape. An invite that arrived first had the screen up already:
+   * the answer's own state change says it again, now that the tap is known.
    */
-  public noteCallScreenShown(): void {
-    if (this.nativeTapAt === null) return;
-    appendLog(`[CallAccept] timing: call screen shown${this.sinceNativeTap()}`);
+  public noteCallScreenShown(shape: 'full screen' | 'banner'): void {
+    if (this.nativeTapAt === null || this.screenShapesTimed.has(shape)) return;
+    this.screenShapesTimed.add(shape);
+    appendLog(`[CallAccept] timing: call screen shown as ${shape}${this.sinceNativeTap()}`);
   }
 
   /**
@@ -1221,9 +1230,13 @@ export class CallService {
     appMsgPartial: canari.IAppMessage,
     sentAt?: number
   ): Promise<EventTime> {
+    return this.sendMlsNotification(groupId, this.callSignalFrame(appMsgPartial), sentAt);
+  }
+
+  /** The frame {@link sendCallSignal} sends, shaped NOW for the call's kind (a held send keeps it). */
+  private callSignalFrame(appMsgPartial: canari.IAppMessage): canari.IAppMessage {
     const group = this.groupCall || this.incomingKind === 'group';
-    const msg = group ? asGroupCallSignal(appMsgPartial) : appMsgPartial;
-    return this.sendMlsNotification(groupId, msg, sentAt);
+    return group ? asGroupCallSignal(appMsgPartial) : appMsgPartial;
   }
 
   /**
@@ -1477,22 +1490,33 @@ export class CallService {
       }
       this.callState.set('incall');
       this.markAnswered('this device answered');
+      /** What the keys and the "answered" notice wait for: the call's group proven current. */
+      let groupProof: Promise<unknown> = Promise.resolve();
       if (opts.awaitCallGroup) {
         appendLog(`[CallAccept] timing: call screen asked for${this.sinceNativeTap()}`);
         // THE KEYS AND THE "ANSWERED" NOTICE NEED THE CALL'S GROUP AT ITS CURRENT EPOCH, and nothing
-        // else the session catches up on changes them. The whole setup waits for that one proof -
-        // the token, the ICE servers and the microphone too, so nothing reaches the server or the
-        // hardware before MLS is up for this session (`whenMlsReady`).
+        // else the session catches up on changes them: only they wait for the proof. The token, the
+        // ICE servers and the microphone wait only for MLS to be up for this session, so nothing
+        // reaches the server or the hardware for a session that is not there (a cold start's PIN).
         const wait = waitForCallGroupCurrent(
-          { mls: this.mlsService, whenMlsReady, whenSessionCaughtUp, log: appendLog },
+          { mls: this.mlsService, whenMlsReady, whenNextCatchUp, log: appendLog },
           groupId,
           callId
         );
         this.callGroupWait = wait;
-        await this.timedStep('call-group-current', () => wait.proof);
-        this.callGroupWait = null;
-        this.assertSetupLive(seq, 'after its group was proven current');
-        appendLog(`[CallAccept] timing: the join starts${this.sinceNativeTap()}`);
+        await this.timedStep('mls-ready', () => wait.mlsReady);
+        this.assertSetupLive(seq, 'after MLS was ready');
+        appendLog(`[CallAccept] timing: the setup starts${this.sinceNativeTap()}`);
+        groupProof = this.timedStep('call-group-current', () => wait.proof).then(() => {
+          // Only THIS call's handle: a later call may hold the field by now.
+          if (this.callGroupWait === wait) this.callGroupWait = null;
+          // A hang-up during the wait keeps it running for its own notice (`endCall`): the proof
+          // then reaches a call that is over, and nothing of the join may follow it.
+          if (get(this.callState) !== 'incall' || !this.setupLive(seq)) {
+            throw new CallSetupAbandonedError('its group was proven after the call ended');
+          }
+          appendLog(`[CallAccept] timing: the keys may be derived${this.sinceNativeTap()}`);
+        });
       }
       // FOUR STEPS SIDE BY SIDE, joined before the room: none needs another's result. Serial, they
       // were 1.2-2.6 s of "connecting" (Android 1.5.3, 2026-10-31). Each logs its own duration.
@@ -1513,6 +1537,11 @@ export class CallService {
         this.assertSetupLive(seq, 'after the room token');
         this.currentRoomToken = roomToken;
         this.adoptCallKind(roomToken, 'the room token', kindFromInvite);
+      });
+      // The notice leaves once the token is in hand (a refused answer tells nobody) AND the group is
+      // current (it is sent in that group, at that epoch).
+      const answered = Promise.all([token, groupProof]).then(() => {
+        this.assertSetupLive(seq, 'before the answered notice');
         this.announceAnswered(groupId, callId);
       });
       const keys = () => this.setupEncryption(groupId, callId, 'callee', seq);
@@ -1520,7 +1549,10 @@ export class CallService {
         token,
         this.timedStep('ice-servers', () => this.fetchIceServers(groupId, callId)),
         this.timedStep('media', () => this.setupMedia(useVideo, seq)),
-        this.timedStep('keys', () => (kindFromInvite ? keys() : token.then(keys))),
+        this.timedStep('keys', () =>
+          groupProof.then(() => (kindFromInvite ? keys() : token.then(keys)))
+        ),
+        answered,
       ]);
       this.assertSetupLive(seq, 'after the parallel setup');
       this.adoptIceServers(ice);
@@ -1535,6 +1567,13 @@ export class CallService {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
       // and a step that failed BECAUSE it ended (its socket closed under it) is no failure to show.
       if (e instanceof CallSetupAbandonedError) return;
+      // THE SESSION ENDED UNDER THE WAIT (a sign-out, an account switch): no failure to show, and
+      // nothing sent through a client that is gone - the screen simply closes.
+      if (e instanceof CallGroupSessionEndedError || e instanceof MlsSessionEndedError) {
+        appendLog(`[Call] call=${callId} set aside - the session ended before it could join`);
+        if (this.setupLive(seq)) this.cleanup();
+        return;
+      }
       if (!this.setupLive(seq)) {
         appendLog(`[Call] a setup step failed after its call ended: ${String(e)} - not reported`);
         return;
@@ -1597,10 +1636,13 @@ export class CallService {
     // and the relay's `PeerLeft`), and a second pass would write a second "call ended" message.
     const state = get(this.callState);
     if (state === 'idle' || state === 'ended') return;
-    // A join still waiting for its group ends with the call, not with the summary's cleanup: its lead
-    // on the drain would otherwise outlive the call by the summary's length.
-    this.callGroupWait?.stop();
+    // A KEY WAIT STILL RUNNING is taken off the call here, not by the summary's cleanup. If a hangup
+    // notice is to leave, it is held behind that wait's proof - sent at the group's current epoch,
+    // never at one the caller may have left - and the wait goes on for it alone; otherwise it stops.
+    const pendingWait = this.callGroupWait;
     this.callGroupWait = null;
+    const holdNotice = notify && pendingWait !== null && !pendingWait.settled;
+    if (pendingWait && !holdNotice) pendingWait.stop();
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = state === 'calling';
     // Typed, and only for a call nobody answered: incoming = a ring this device refused; calling =
@@ -1644,10 +1686,24 @@ export class CallService {
     // acceptance is patched in once the send answers (`onCallEndAnswered`).
     let hangup: Promise<EventTime | null> = Promise.resolve(null);
     if (notify && groupId && callId) {
-      hangup = this.sendCallSignal(
-        groupId,
-        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
-        endedAt
+      const frame = this.callSignalFrame(
+        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
+      );
+      const send = () => this.sendMlsNotification(groupId, frame, endedAt);
+      if (holdNotice) {
+        appendLog(
+          `[Call] hangup notice of ${callId} held until its group is proven current - the screen and the record do not wait`
+        );
+      }
+      hangup = (
+        holdNotice && pendingWait
+          ? pendingWait.proof.then(send, (e: unknown) => {
+              appendLog(
+                `[Call] hangup notice of ${callId} not sent - its group was never proven current: ${String(e)}`
+              );
+              return null;
+            })
+          : send()
       ).catch((e: unknown) => {
         console.error(
           `[Call] hangup of ${callId} not sent - its record carries no server time: ${String(e)}`
@@ -1806,6 +1862,7 @@ export class CallService {
     this.callGroupWait = null;
     this.tapAt = null;
     this.nativeTapAt = null;
+    this.screenShapesTimed.clear();
     this.ringStartAt = null;
     this.answeredAt = null;
     this.ringMs = null;

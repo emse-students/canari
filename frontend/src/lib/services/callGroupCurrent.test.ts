@@ -1,48 +1,83 @@
-import { MailboxListingIncompleteError } from '$lib/mls-client';
+import { GroupDrainAbandonedError, MailboxListingIncompleteError } from '$lib/mls-client';
 import { CallSetupAbandonedError } from '$lib/utils/callFailure';
-import { waitForCallGroupCurrent, type CallGroupCurrentDeps } from './callGroupCurrent';
+import {
+  CallGroupSessionEndedError,
+  waitForCallGroupCurrent,
+  type CallGroupCurrentDeps,
+} from './callGroupCurrent';
 
 /**
- * THE JOIN OF A CALL ANSWERED ON THE RING WAITS FOR ITS OWN GROUP (calls.md, "The answer joins on its
- * own group"): the first of three proofs - the server's epoch reached, the group drained, the
- * session's catch-up - and the group leads the drain while it waits.
+ * THE KEYS OF A CALL ANSWERED ON THE RING WAIT FOR ITS OWN GROUP AT THE SERVER'S EPOCH (calls.md,
+ * "The answer joins on its own group"): one proof, re-read on events, every waiter removed when the
+ * wait moves on or stops.
  */
 
 /** Lets every settled promise's callbacks run. */
 const flush = async () => {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
 };
 
-/** A world the test moves by hand: every proof is a promise it resolves, every epoch a field. */
-function world(opts: { serverEpoch?: number | 'error'; localEpoch?: number; held?: boolean } = {}) {
+type Status = 'error' | 'absent' | { groupId: string; activeEpoch?: number };
+
+/** One kind of waiter the test can fire, counting how many are still registered. */
+function eventSource() {
+  let waiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
+  return {
+    wait(signal?: AbortSignal): Promise<void> {
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise((resolve, reject) => {
+        const w = { resolve, reject };
+        waiters.push(w);
+        signal?.addEventListener('abort', () => {
+          waiters = waiters.filter((x) => x !== w);
+          reject(signal.reason);
+        });
+      });
+    },
+    fire() {
+      const fired = waiters;
+      waiters = [];
+      for (const w of fired) w.resolve();
+    },
+    fail(e: unknown) {
+      const fired = waiters;
+      waiters = [];
+      for (const w of fired) w.reject(e);
+    },
+    get count() {
+      return waiters.length;
+    },
+  };
+}
+
+/** A world the test moves by hand. */
+function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
   const lines: string[] = [];
-  const mlsReady = Promise.withResolvers<void>();
-  const caughtUp = Promise.withResolvers<void>();
-  let drained = Promise.withResolvers<void>();
-  let frameApplied = Promise.withResolvers<void>();
+  const mlsReady = eventSource();
+  const frame = eventSource();
+  const pull = eventSource();
+  const catchUp = eventSource();
   const state = {
-    local: opts.localEpoch ?? 3,
+    status: (opts.status ?? { groupId: 'group-1', activeEpoch: 3 }) as Status,
+    local: opts.local ?? 3,
     held: opts.held ?? true,
-    isDrained: false,
+    drained: false,
+    ready: false,
   };
   const release = vi.fn();
   const mls = {
     getEpoch: vi.fn(() => state.local),
     getLocalGroups: vi.fn(() => (state.held ? ['group-1'] : [])),
-    getGroupServerStatus: vi.fn(async () =>
-      opts.serverEpoch === 'error'
-        ? ('error' as const)
-        : { groupId: 'group-1', activeEpoch: opts.serverEpoch ?? 3 }
-    ),
-    whenGroupFrameApplied: vi.fn(() => frameApplied.promise),
-    whenGroupDrained: vi.fn(() => drained.promise),
-    isGroupDrained: vi.fn(() => state.isDrained),
+    getGroupServerStatus: vi.fn(async () => state.status),
+    whenGroupFrameApplied: vi.fn((_g: string, signal?: AbortSignal) => frame.wait(signal)),
+    whenGroupDrained: vi.fn((_g: string, signal?: AbortSignal) => pull.wait(signal)),
+    isGroupDrained: vi.fn(() => state.drained),
     leadGroup: vi.fn(() => release),
   };
   const deps: CallGroupCurrentDeps = {
     mls: mls as unknown as CallGroupCurrentDeps['mls'],
-    whenMlsReady: () => mlsReady.promise,
-    whenSessionCaughtUp: () => caughtUp.promise,
+    whenMlsReady: (signal) => (state.ready ? Promise.resolve() : mlsReady.wait(signal)),
+    whenNextCatchUp: (signal) => catchUp.wait(signal),
     log: (l) => lines.push(l),
   };
   return {
@@ -52,152 +87,214 @@ function world(opts: { serverEpoch?: number | 'error'; localEpoch?: number; held
     lines,
     release,
     mlsReady,
-    caughtUp,
-    /** One frame of the group applied: the epoch is read again. */
+    frame,
+    pull,
+    catchUp,
+    ready() {
+      state.ready = true;
+      mlsReady.fire();
+    },
     applyFrame(epoch: number) {
       state.local = epoch;
-      const done = frameApplied;
-      frameApplied = Promise.withResolvers<void>();
-      done.resolve();
+      frame.fire();
     },
-    drain() {
-      state.isDrained = true;
-      drained.resolve();
-    },
-    listingIncomplete() {
-      const done = drained;
-      drained = Promise.withResolvers<void>();
-      done.reject(new MailboxListingIncompleteError('group-1', new Error('page refused')));
-    },
+    warned: (text: string) => lines.some((l) => l.includes('WARN') && l.includes(text)),
   };
 }
 
-describe('waitForCallGroupCurrent', () => {
-  it('the group leads the drain while the wait runs, and only then', async () => {
-    const w = world();
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    expect(w.mls.leadGroup).toHaveBeenCalledWith('group-1');
-    expect(w.release).not.toHaveBeenCalled();
+/** Starts the wait and records its outcome. */
+function start(w: ReturnType<typeof world>) {
+  const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
+  const outcome: { proof: string | null; error: unknown } = { proof: null, error: null };
+  wait.proof.then(
+    (p) => (outcome.proof = p),
+    (e: unknown) => (outcome.error = e)
+  );
+  return { wait, outcome };
+}
 
-    w.mlsReady.resolve();
-    await expect(wait.proof).resolves.toBe('epoch-reached');
+describe('waitForCallGroupCurrent', () => {
+  it('leads the drain while it waits, and only then', async () => {
+    const w = world();
+    const { outcome } = start(w);
+    expect(w.mls.leadGroup).toHaveBeenCalledWith('group-1');
+    w.ready();
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
     expect(w.release).toHaveBeenCalledTimes(1);
   });
 
-  it('a group at the server epoch is current once MLS is up - the catch-up is not waited for', async () => {
-    const w = world({ serverEpoch: 5, localEpoch: 5 });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    let proof: string | null = null;
-    void wait.proof.then((p) => (proof = p));
+  it('reads nothing before MLS is up, then proves a group at the server epoch at once', async () => {
+    const w = world({ local: 5, status: { groupId: 'group-1', activeEpoch: 5 } });
+    const { wait, outcome } = start(w);
     await flush();
-    // MLS is not up yet (a cold start still at the PIN): nothing is read, nothing proven.
-    expect(proof).toBeNull();
+    expect(outcome.proof).toBeNull();
     expect(w.mls.getGroupServerStatus).not.toHaveBeenCalled();
-
-    w.mlsReady.resolve();
+    w.ready();
+    await expect(wait.mlsReady).resolves.toBeUndefined();
     await flush();
-    expect(proof).toBe('epoch-reached');
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('a group behind is current at the frame that brings it to the server epoch, never before', async () => {
-    const w = world({ serverEpoch: 7, localEpoch: 5 });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    let proof: string | null = null;
-    void wait.proof.then((p) => (proof = p));
-    w.mlsReady.resolve();
+  it('a caught-up session is no proof: local below the server waits, whatever the catch-up says', async () => {
+    const w = world({ local: 5, status: { groupId: 'group-1', activeEpoch: 7 } });
+    w.state.ready = true;
+    const { outcome } = start(w);
     await flush();
-    expect(proof).toBeNull();
+    w.catchUp.fire();
+    await flush();
+    expect(outcome.proof).toBeNull();
 
     w.applyFrame(6);
     await flush();
-    expect(proof).toBeNull();
-
+    expect(outcome.proof).toBeNull();
     w.applyFrame(7);
     await flush();
-    expect(proof).toBe('epoch-reached');
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('a group this device does not hold is never proven by its epoch - the drain decides', async () => {
-    const w = world({ serverEpoch: 0, localEpoch: 0, held: false });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    let proof: string | null = null;
-    void wait.proof.then((p) => (proof = p));
-    w.mlsReady.resolve();
+  it('drained is not a proof: a drained group below the server is a WARN, and the wait goes on', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    const { outcome } = start(w);
     await flush();
-    expect(proof).toBeNull();
+    w.state.drained = true;
+    w.pull.fire();
+    await flush();
+    expect(outcome.proof).toBeNull();
+    expect(w.warned('drained at epoch 2 while the server holds 4')).toBe(true);
 
-    w.drain();
+    w.applyFrame(4);
     await flush();
-    expect(proof).toBe('group-drained');
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('a server epoch unknown leaves the proof to the drain', async () => {
-    const w = world({ serverEpoch: 'error' });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    w.mlsReady.resolve();
+  it('an incomplete listing with the server epoch known keeps waiting for the epoch', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
+    w.state.ready = true;
+    const { outcome } = start(w);
     await flush();
-    w.drain();
-    await expect(wait.proof).resolves.toBe('group-drained');
-    expect(w.lines.some((l) => l.includes("the server's epoch is unknown (error)"))).toBe(true);
+    w.pull.fail(new MailboxListingIncompleteError('group-1', new Error('page refused')));
+    await flush();
+    expect(outcome.proof).toBeNull();
+    expect(outcome.error).toBeNull();
+    w.applyFrame(2);
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it('a listing that ended incomplete defers the drained proof to the next complete one', async () => {
-    const w = world({ serverEpoch: 'error' });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    let proof: string | null = null;
-    void wait.proof.then((p) => (proof = p));
-    w.listingIncomplete();
+  it('a local epoch AHEAD of the server proves nothing: WARN, and the server is read again', async () => {
+    const w = world({ local: 6, status: { groupId: 'group-1', activeEpoch: 5 } });
+    w.state.ready = true;
+    const { outcome } = start(w);
     await flush();
-    expect(proof).toBeNull();
+    expect(outcome.proof).toBeNull();
+    expect(w.warned('AHEAD of the server (6 > 5)')).toBe(true);
 
-    w.drain();
+    // The commit of ours is accepted: the server says 6 at the next read.
+    w.state.status = { groupId: 'group-1', activeEpoch: 6 };
+    w.frame.fire();
     await flush();
-    expect(proof).toBe('group-drained');
+    expect(w.mls.getGroupServerStatus).toHaveBeenCalledTimes(2);
+    expect(outcome.proof).toBe('epoch-reached');
   });
 
-  it("the session's catch-up proves it too, said at WARN when the group was not drained", async () => {
-    const w = world({ serverEpoch: 'error' });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    w.caughtUp.resolve();
-    await expect(wait.proof).resolves.toBe('session-caught-up');
-    expect(w.lines.some((l) => l.includes('WARN group group-1 NOT proven current'))).toBe(true);
-  });
-
-  it('a catch-up over a drained group is no warning', async () => {
-    const w = world({ serverEpoch: 'error' });
-    w.state.isDrained = true;
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    w.caughtUp.resolve();
-    await expect(wait.proof).resolves.toBe('session-caught-up');
-    expect(w.lines.some((l) => l.includes('WARN'))).toBe(false);
-  });
-
-  it('a stop - the call ended - abandons the wait and releases the lead, once', async () => {
-    const w = world({ serverEpoch: 9, localEpoch: 1 });
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    w.mlsReady.resolve();
+  it('a group this device does not hold is never proven by its epoch', async () => {
+    const w = world({ local: 0, status: { groupId: 'group-1', activeEpoch: 0 }, held: false });
+    w.state.ready = true;
+    const { outcome } = start(w);
     await flush();
+    w.state.drained = true;
+    w.pull.fire();
+    await flush();
+    expect(outcome.proof).toBeNull();
+  });
+
+  it('an unreadable server epoch is said ONCE, read again on a pull or a connection, never on a frame', async () => {
+    const w = world({ status: 'error', local: 3 });
+    w.state.ready = true;
+    const { outcome } = start(w);
+    await flush();
+    w.frame.fire();
+    await flush();
+    expect(w.mls.getGroupServerStatus).toHaveBeenCalledTimes(1);
+    w.catchUp.fire();
+    await flush();
+    expect(w.mls.getGroupServerStatus).toHaveBeenCalledTimes(2);
+    expect(w.lines.filter((l) => l.includes('could not be read (error)'))).toHaveLength(1);
+    expect(outcome.proof).toBeNull();
+
+    w.state.status = { groupId: 'group-1', activeEpoch: 3 };
+    w.pull.fire();
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('a server that sends no epoch: a HELD group drained on this link is the proof', async () => {
+    const w = world({ status: { groupId: 'group-1' } });
+    w.state.ready = true;
+    const { outcome } = start(w);
+    await flush();
+    expect(outcome.proof).toBeNull();
+    w.state.drained = true;
+    w.pull.fire();
+    await flush();
+    expect(outcome.proof).toBe('drained-no-server-epoch');
+  });
+
+  it('logs the epoch only when it changes', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 9 } });
+    w.state.ready = true;
+    start(w);
+    await flush();
+    w.frame.fire();
+    await flush();
+    w.frame.fire();
+    await flush();
+    w.applyFrame(2);
+    await flush();
+    expect(w.lines.filter((l) => l.includes("the server's is 9"))).toHaveLength(2);
+  });
+
+  it('a stopped wait leaves no waiter behind, and incomplete pulls after it wake nothing', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 9 } });
+    w.state.ready = true;
+    const { wait, outcome } = start(w);
+    await flush();
+    expect(w.frame.count + w.pull.count + w.catchUp.count).toBe(3);
 
     wait.stop();
     wait.stop();
-    await expect(wait.proof).rejects.toBeInstanceOf(CallSetupAbandonedError);
+    await flush();
+    expect(outcome.error).toBeInstanceOf(CallSetupAbandonedError);
     expect(w.release).toHaveBeenCalledTimes(1);
+    expect(w.frame.count + w.pull.count + w.catchUp.count).toBe(0);
 
-    // A frame after the stop reads nothing more.
-    const reads = w.mls.getEpoch.mock.calls.length;
-    w.applyFrame(9);
+    const lines = w.lines.length;
+    w.pull.fail(new MailboxListingIncompleteError('group-1', new Error('page refused')));
+    w.frame.fire();
     await flush();
-    expect(w.mls.getEpoch.mock.calls.length).toBe(reads);
+    expect(w.lines.length).toBe(lines);
+    expect(w.mls.getGroupServerStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('an MLS client that ended under the wait fails it with its own error', async () => {
-    const w = world({ serverEpoch: 9, localEpoch: 1 });
-    w.mls.whenGroupFrameApplied.mockImplementation(() =>
-      Promise.reject(new Error('client destroyed'))
-    );
-    const wait = waitForCallGroupCurrent(w.deps, 'group-1', 'call-1');
-    w.mlsReady.resolve();
-    await expect(wait.proof).rejects.toThrow('client destroyed');
+  it('a stop before MLS is up removes the parked MLS-ready waiter', async () => {
+    const w = world();
+    const { wait } = start(w);
+    expect(w.mlsReady.count).toBe(1);
+    wait.stop();
+    await expect(wait.mlsReady).rejects.toBeInstanceOf(CallSetupAbandonedError);
+    expect(w.mlsReady.count).toBe(0);
+  });
+
+  it('the client destroyed under it is a session end, typed - never a call failure', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 9 } });
+    w.state.ready = true;
+    const { outcome } = start(w);
+    await flush();
+    w.frame.fail(new GroupDrainAbandonedError('group-1'));
+    await flush();
+    expect(outcome.error).toBeInstanceOf(CallGroupSessionEndedError);
     expect(w.release).toHaveBeenCalledTimes(1);
   });
 });

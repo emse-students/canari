@@ -103,3 +103,46 @@ describe('whenGroupFrameApplied', () => {
     await expect(scheduler.whenGroupFrameApplied('call')).rejects.toThrow('ended before call');
   });
 });
+
+describe('a removable frame waiter', () => {
+  it('an aborted waiter is removed at once and rejected with the reason', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const stop = new AbortController();
+    const pending = scheduler.whenGroupFrameApplied('call', stop.signal);
+    expect(scheduler.groupFrameWaiterCount).toBe(1);
+
+    stop.abort(new Error('the call ended'));
+
+    await expect(pending).rejects.toThrow('the call ended');
+    expect(scheduler.groupFrameWaiterCount).toBe(0);
+  });
+
+  it('an already aborted signal registers nothing', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const stop = new AbortController();
+    stop.abort(new Error('gone'));
+    await expect(scheduler.whenGroupFrameApplied('call', stop.signal)).rejects.toThrow('gone');
+    expect(scheduler.groupFrameWaiterCount).toBe(0);
+  });
+});
+
+describe.each(['web', 'tauri'] as const)(
+  'the round-robin index follows its bucket (%s)',
+  (mode) => {
+    it('a bucket emptied ahead of the index does not cost the next group its turn', async () => {
+      const scheduler = new MlsPerGroupScheduler(mode);
+      for (const m of [msg('a', 'a1'), msg('b', 'b1'), msg('b', 'b2'), msg('c', 'c1')]) {
+        scheduler.enqueue(m);
+      }
+      scheduler.enqueue(msg('c', 'c2'));
+
+      const applied: string[] = [];
+      await scheduler.drain(async (m) => {
+        applied.push(labelOf(m));
+      });
+
+      // `a` empties at its first turn: `b` is next, never skipped for `c`.
+      expect(applied).toEqual(['a1', 'b1', 'c1', 'b2', 'c2']);
+    });
+  }
+);

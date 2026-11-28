@@ -14,7 +14,7 @@
  */
 
 /** Thrown to whoever was waiting for MLS when the session they waited for ended instead. */
-class MlsSessionEndedError extends Error {
+export class MlsSessionEndedError extends Error {
   constructor(reason: string) {
     super(`[MLS-READY] the session ended before MLS was ready: ${reason}`);
     this.name = 'MlsSessionEndedError';
@@ -24,10 +24,27 @@ class MlsSessionEndedError extends Error {
 let ready = false;
 let waiters: { resolve: () => void; reject: (error: Error) => void }[] = [];
 
-/** Resolves once MLS is initialised for the current session (at once if it already is). */
-export function whenMlsReady(): Promise<void> {
+/**
+ * Resolves once MLS is initialised for the current session (at once if it already is).
+ *
+ * @param signal aborting it REMOVES the waiter and rejects with the signal's reason: a caller that
+ *   stopped waiting (a call that ended) leaves nothing parked for the next session to wake.
+ */
+export function whenMlsReady(signal?: AbortSignal): Promise<void> {
   if (ready) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const waiter = { resolve, reject };
+    waiters.push(waiter);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        waiters = waiters.filter((w) => w !== waiter);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
 }
 
 /** Records whether MLS is up for the session. Called by the one writer of `isLoggedIn`. */
