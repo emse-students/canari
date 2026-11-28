@@ -7,7 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 import type { MessageReaction } from '$lib/types';
-import { createCatchupWrites } from './catchupWrites';
+import { recordConversationMove } from '$lib/utils/chat/conversationMoves';
+import { CatchupWritesNotStoredError, createCatchupWrites } from './catchupWrites';
 import { applyReactionFrame, type ReactionFrame } from './reactionFrame';
 
 type Row = { id: string; senderId: string; reactions?: MessageReaction[]; [k: string]: unknown };
@@ -272,5 +273,140 @@ describe('the window and the checkpoint hold', () => {
     release();
     release();
     expect(writes.deferring()).toBe(true);
+  });
+});
+
+describe('a checkpoint over writes that did not land', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('is REFUSED over a failed save, keeps the frame withheld, and passes once the save lands', async () => {
+    const saveConversation = vi
+      .fn<(key: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('disk'))
+      .mockResolvedValue(undefined);
+    const { writes } = ledger({ saveConversation });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferConversationSave('convo-a', 'f0');
+
+    await expect(writes.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+      CatchupWritesNotStoredError
+    );
+    expect([...writes.framesLeftUnstored()]).toEqual(['f0']);
+    // The refused hold stood down: nothing is held back from the writer behind it.
+    expect(writes.deferring()).toBe(true);
+
+    const release = await writes.holdRowsForCheckpoint();
+    expect(writes.framesLeftUnstored().size).toBe(0);
+    release();
+  });
+
+  it('is REFUSED over a reaction that could neither be written nor parked, and keeps it', async () => {
+    const park = vi.fn().mockRejectedValue(new Error('park refused'));
+    const { writes } = ledger({
+      storage: {
+        getMessagesByIds: vi.fn(async () => ({
+          rows: new Map([['m1', {}]]),
+          unreadable: new Set(),
+        })),
+        mergeMessages: vi.fn().mockRejectedValue(new Error('QuotaExceededError')),
+      } as never,
+    });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferReaction({
+      convoKey: 'convo-a',
+      messageId: 'm1',
+      fold: () => null,
+      frameId: 'f9',
+      park,
+    });
+
+    await expect(writes.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+      CatchupWritesNotStoredError
+    );
+    expect([...writes.framesLeftUnstored()]).toEqual(['f9']);
+  });
+
+  it('writes what a flush that threw had not written, on the next one', async () => {
+    // An unexpected throw: the log line the flush opens with.
+    const log = vi.fn().mockImplementationOnce(() => {
+      throw new Error('log broke');
+    });
+    const { writes, saveConversation } = ledger({ log });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferConversationSave('convo-a', 'f1');
+    await writes.onBulkIngestEnd(WINDOW);
+    expect(saveConversation).not.toHaveBeenCalled();
+    expect([...writes.framesLeftUnstored()]).toEqual(['f1']);
+    writes.onBulkIngestStart(WINDOW);
+    await writes.onBulkIngestEnd(WINDOW);
+    expect(saveConversation).toHaveBeenCalledTimes(1);
+    expect(writes.framesLeftUnstored().size).toBe(0);
+  });
+});
+
+describe('a thread a Welcome re-keyed', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const fold = (id: string) => (row: Row) => ({
+    ...row,
+    reactions: [...(row.reactions ?? []), { userId: id, emoji: '+1', at: 1 }],
+  });
+
+  it('is written under the new key when its rows moved there', async () => {
+    recordConversationMove('old-key', 'convo-a');
+    const store = fakeStore({ 'convo-a': [{ id: 'm1', senderId: 'a' }] });
+    const { writes } = ledger({ storage: store.storage as never });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferReaction({
+      convoKey: 'old-key',
+      messageId: 'm1',
+      fold: fold('p') as never,
+      park: vi.fn(),
+    });
+    await writes.onBulkIngestEnd(WINDOW);
+    expect(store.mergeCalls.map((c) => c.convo)).toEqual(['convo-a']);
+    expect(store.snapshot()['convo-a'].m1.reactions).toHaveLength(1);
+  });
+
+  it('is written under the old key when the move of the rows failed, never routed to an empty key', async () => {
+    recordConversationMove('old-key-2', 'convo-b');
+    const store = fakeStore({ 'old-key-2': [{ id: 'm3', senderId: 'a' }] });
+    const { writes } = ledger({ storage: store.storage as never });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferReaction({
+      convoKey: 'old-key-2',
+      messageId: 'm3',
+      fold: fold('p') as never,
+      park: vi.fn(),
+    });
+    await writes.onBulkIngestEnd(WINDOW);
+    expect(store.mergeCalls.map((c) => c.convo)).toEqual(['old-key-2']);
+    expect(store.snapshot()['old-key-2'].m3.reactions).toHaveLength(1);
+  });
+
+  it('says at error when rows were changed and fewer were written', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = fakeStore({ 'convo-a': [{ id: 'm1', senderId: 'a' }] });
+    store.storage.mergeMessages.mockImplementation(async (_c, ids, merge) => {
+      for (const id of ids) merge({ id, senderId: 'a' } as Row);
+      return new Set<string>();
+    });
+    const { writes } = ledger({ storage: store.storage as never });
+    writes.onBulkIngestStart(WINDOW);
+    writes.deferReaction({
+      convoKey: 'convo-a',
+      messageId: 'm1',
+      fold: fold('p') as never,
+      park: vi.fn(),
+    });
+    await writes.onBulkIngestEnd(WINDOW);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('only 0 written'));
   });
 });

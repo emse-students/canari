@@ -1663,7 +1663,9 @@ export async function handleSystemEvent(
           log(`[READ] save of ${convoKey.slice(0, 8)}… held for the window's close`);
         } else {
           await saveConversation?.(convoKey).catch((e: unknown) => {
-            log(`[READ] read mark of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`);
+            console.error(
+              `[READ] read mark of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
+            );
           });
         }
       }

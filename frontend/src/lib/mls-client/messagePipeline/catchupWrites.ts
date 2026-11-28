@@ -42,9 +42,22 @@ export interface DeferredReaction {
   park: (cause: unknown) => Promise<void>;
 }
 
+/**
+ * Held writes could not be written before a checkpoint: it is refused while they stand, and the
+ * next one's hold writes them again (rows before ratchet).
+ */
+export class CatchupWritesNotStoredError extends Error {
+  constructor(readonly writes: number) {
+    super(
+      `${writes} held write(s) of frames already applied did not land - the checkpoint must wait`
+    );
+    this.name = 'CatchupWritesNotStoredError';
+  }
+}
+
 /** What the ledger reads and writes. */
 export interface CatchupWritesDeps {
-  storage: IStorage | null;
+  storage: Pick<IStorage, 'getMessagesByIds' | 'mergeMessages'> | null;
   deviceKey: () => string;
   conversations: { get(key: string): Conversation | undefined };
   saveConversation: (key: string) => Promise<void>;
@@ -94,16 +107,34 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
     }
   };
 
-  /** One conversation's reactions in ONE merge, each row folded in frame order. */
-  async function writeReactions(convoKey: string, entries: DeferredReaction[]): Promise<void> {
+  /**
+   * One conversation's reactions in ONE merge, each row folded in frame order.
+   *
+   * WHERE THE ROWS ARE, not where the thread is: a Welcome that re-keyed the thread moves its rows
+   * with it, and a move that failed leaves them under the old key. Each key is asked which of the
+   * rows it HOLDS (the thread's key now, then the key the frame named) and only those are merged -
+   * a fold routed to a key that holds nothing would change 0 rows in silence.
+   *
+   * @returns the reactions that could neither be written nor parked: kept by the caller, never lost
+   */
+  async function writeReactions(
+    convoKey: string,
+    entries: DeferredReaction[]
+  ): Promise<DeferredReaction[]> {
     const { storage } = deps;
-    if (!storage) return;
+    if (!storage) {
+      // Nothing defers without a store (the handler returns first): reaching this is a defect.
+      console.error(
+        `[CATCHUP_WRITES] ${entries.length} reaction(s) for ${convoKey.slice(0, 8)}… held with no store to write them`
+      );
+      return entries;
+    }
     const home = homeOf(convoKey);
     if (home === null) {
       log(
         `[CATCHUP_WRITES] ${entries.length} reaction(s) for ${convoKey.slice(0, 8)}… dropped: no conversation shows that thread any more`
       );
-      return;
+      return [];
     }
     const folds = new Map<string, StoredRowFold[]>();
     for (const entry of entries) {
@@ -112,39 +143,68 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
       folds.set(entry.messageId, list);
     }
     try {
-      const written = await storage.mergeMessages(
-        home,
-        [...folds.keys()],
-        (current) => {
-          let row = current;
-          for (const fold of folds.get(current.id) ?? []) row = fold(row) ?? row;
-          return row === current ? null : row;
-        },
-        deps.deviceKey()
-      );
+      let remaining = [...folds.keys()];
+      let foldedRows = 0;
+      let writtenRows = 0;
+      for (const key of new Set([home, convoKey])) {
+        if (remaining.length === 0) break;
+        const found = await storage.getMessagesByIds(key, remaining, deps.deviceKey());
+        const present = remaining.filter((id) => found.rows.has(id));
+        if (present.length === 0) continue;
+        const foldedIds = new Set<string>();
+        const written = await storage.mergeMessages(
+          key,
+          present,
+          (current) => {
+            let row = current;
+            for (const fold of folds.get(current.id) ?? []) row = fold(row) ?? row;
+            if (row === current) return null;
+            foldedIds.add(current.id);
+            return row;
+          },
+          deps.deviceKey()
+        );
+        foldedRows += foldedIds.size;
+        writtenRows += written.size;
+        remaining = remaining.filter((id) => !present.includes(id));
+      }
+      if (foldedRows > writtenRows) {
+        console.error(
+          `[CATCHUP_WRITES] ${foldedRows} row(s) of ${home.slice(0, 8)}… changed by a reaction but only ${writtenRows} written - the store refused the rest`
+        );
+      }
+      if (remaining.length > 0) {
+        console.warn(
+          `[CATCHUP_WRITES] ${remaining.length} message(s) reacted to in ${home.slice(0, 8)}… are in the store under no key this device knows - their reactions were not written (a row deleted since, or a failed move)`
+        );
+      }
       log(
-        `[CATCHUP_WRITES] ${entries.length} reaction(s) on ${folds.size} message(s) of ${home.slice(0, 8)}… written in one merge (${written.size} row(s) changed)`
+        `[CATCHUP_WRITES] ${entries.length} reaction(s) on ${folds.size} message(s) of ${home.slice(0, 8)}… written in one merge (${writtenRows} row(s) changed)`
       );
+      return [];
     } catch (e) {
       // What the per-frame path did for each frame: KEPT as a pending mutation, never only logged.
       console.error(
         `[CATCHUP_WRITES] the merge of ${entries.length} reaction(s) into ${home.slice(0, 8)}… threw - each is kept as a pending mutation:`,
         e
       );
+      const unsettled: DeferredReaction[] = [];
       for (const entry of entries) {
         try {
           await entry.park(e);
         } catch (parkError) {
           console.error(
-            `[CATCHUP_WRITES] a reaction on ${entry.messageId.slice(0, 8)} could not be parked either:`,
+            `[CATCHUP_WRITES] a reaction on ${entry.messageId.slice(0, 8)} could not be parked either - held for the next flush:`,
             parkError
           );
+          unsettled.push(entry);
         }
       }
+      return unsettled;
     }
   }
 
-  /** Writes everything held, once per conversation. Never rejects. */
+  /** Writes everything held, once per conversation. Never rejects; what it could not write stays held. */
   function flush(origin: 'close' | 'hold'): Promise<void> {
     chain = chain
       .then(async () => {
@@ -152,6 +212,12 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
         const takenReactions = reactions.splice(0);
         const takenSaves = new Map(saves);
         saves.clear();
+        const byConvo = new Map<string, DeferredReaction[]>();
+        for (const entry of takenReactions) {
+          const list = byConvo.get(entry.convoKey) ?? [];
+          list.push(entry);
+          byConvo.set(entry.convoKey, list);
+        }
         const frames = [
           ...takenReactions.flatMap((r) => (r.frameId ? [r.frameId] : [])),
           ...[...takenSaves.values()].flatMap((s) => [...s]),
@@ -161,16 +227,15 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
           log(
             `[CATCHUP_WRITES] ${origin}: ${takenReactions.length} reaction(s) and ${takenSaves.size} conversation save(s) to write`
           );
-          const byConvo = new Map<string, DeferredReaction[]>();
-          for (const entry of takenReactions) {
-            const list = byConvo.get(entry.convoKey) ?? [];
-            list.push(entry);
-            byConvo.set(entry.convoKey, list);
+          for (const [convoKey, entries] of byConvo) {
+            const unsettled = await writeReactions(convoKey, entries);
+            byConvo.delete(convoKey);
+            reactions.push(...unsettled);
           }
-          for (const [convoKey, entries] of byConvo) await writeReactions(convoKey, entries);
           for (const [convoKey, ids] of takenSaves) {
             const home = homeOf(convoKey);
             if (home === null) {
+              takenSaves.delete(convoKey);
               log(
                 `[CATCHUP_WRITES] save of ${convoKey.slice(0, 8)}… dropped: the conversation left the map during the window`
               );
@@ -178,6 +243,7 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
             }
             try {
               await deps.saveConversation(home);
+              takenSaves.delete(convoKey);
             } catch (e) {
               // KEPT for the next flush, its frames' acks withheld: it is idempotent, and swallowing
               // it (what the per-frame path did) lost the read mark for good.
@@ -185,10 +251,23 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
                 `[CATCHUP_WRITES] saving ${home.slice(0, 8)}… failed - kept for the next flush:`,
                 e
               );
+              takenSaves.delete(convoKey);
               const kept = saves.get(convoKey) ?? new Set<string>();
               for (const id of ids) kept.add(id);
               saves.set(convoKey, kept);
             }
+          }
+        } catch (e) {
+          // AN UNEXPECTED THROW LOSES NOTHING: whatever was taken and not yet written goes back.
+          console.error(
+            `[CATCHUP_WRITES] a flush threw (${origin}) - what it had not written is held again:`,
+            e
+          );
+          for (const entries of byConvo.values()) reactions.unshift(...entries);
+          for (const [convoKey, ids] of takenSaves) {
+            const kept = saves.get(convoKey) ?? new Set<string>();
+            for (const id of ids) kept.add(id);
+            saves.set(convoKey, kept);
           }
         } finally {
           track(frames, -1);
@@ -222,6 +301,17 @@ export function createCatchupWrites(deps: CatchupWritesDeps): CatchupWrites {
     async holdRowsForCheckpoint() {
       holds += 1;
       await flush('hold');
+      const left = reactions.length + saves.size;
+      if (left > 0) {
+        // REFUSED, never handed over: a checkpoint that exported now would let the frames it covers be
+        // acknowledged ahead of a write that has not landed (idsDurableEnoughToAck), and a kill
+        // would lose the read mark or the reaction for good. The next hold writes them again.
+        holds -= 1;
+        console.error(
+          `[CATCHUP_WRITES] a checkpoint is refused: ${left} held write(s) did not land - the next hold writes them again`
+        );
+        throw new CatchupWritesNotStoredError(left);
+      }
       let released = false;
       return () => {
         if (released) return;

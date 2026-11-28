@@ -1564,7 +1564,9 @@ async function handleKnownGroup({
             deliveryMeta?.queuedMessageId
           );
         } finally {
-          // A reaction is what this frame leaves on disk: stored (or kept pending) by now.
+          // A reaction is what this frame owes the disk: stored, kept pending, or - inside a catch-up
+          // window - held by the catch-up ledger, which every checkpoint's hold writes first (and
+          // refuses the checkpoint when it cannot), so the row is covered either way.
           settleRow();
         }
         // The frame trigger of a reaction notification: the decision is the caller's

@@ -4039,9 +4039,9 @@ A later `1.8.2` log showed the same shape, so the owner decided (2026-11-28) to 
 **The mechanism is the texts' own, in one place** (`mls-client/messagePipeline/catchupWrites.ts`, registered by
 `setupMessageHandler` as a bulk-ingest observer, BEFORE the UI render buffer's):
 
-- while a UI-buffering window is open and no checkpoint hold stands (`deferring()`), the reaction handler
+- while a UI-buffering window is open and no checkpoint hold stands (`deferring()`; every drain opens one, so every drain batches), the reaction handler
   hands its compare-and-set fold to the ledger (`deferReaction`) and the read-mark handler hands the
-  conversation key (`deferConversationSave`) instead of awaiting the store. Nothing else changes in the
+  conversation key (`deferConversationSave`) instead of awaiting the store - a mark of THIS account read on its other device is deferred like a peer's, both go through the same branch. Nothing else changes in the
   handler: memory, the notification trigger and the pending-mutation parking are as before;
 - the window's CLOSE (`onBulkIngestEnd`, the drain's own completion - no timer, no debounce) writes them: ONE
   `mergeMessages` per conversation (the folds of a row run in frame order inside the one merge) and ONE
@@ -4062,8 +4062,10 @@ a held reaction. Pinned by `catchupWrites.test.ts` (the same rows, the same reac
 conversation, nothing on disk before the close, a replay changing nothing, a throwing merge parked per frame) and
 `systemMessageHandler.readState.test.ts` (two marks, one save of the last row).
 
+**A checkpoint is refused while a held write stands** (`CatchupWritesNotStoredError`, as the texts' `BufferedRowsNotStoredError`): a landed checkpoint lets the frames it covers be acknowledged without reading `framesLeftUnstored` (`idsDurableEnoughToAck`), so a hold that could not write everything throws and the next hold writes it again. **A thread opened mid-drain shows memory first**: `renderStoredPage` merges the stored reactions into the ones memory holds (`mergeReactions`, the later state per pair wins) instead of replacing them, because the stored row can be behind a frame already applied. **Rows are written where they ARE**: each key (the thread's key now, then the key the frame named) is asked which rows it holds, so a re-key whose row move failed never routes a fold to an empty key; a fold that changed more rows than were written is said at ERROR.
+
 **Failures are kept, never swallowed.** A merge that throws parks each of its reactions as a pending mutation (the
-per-frame path's answer, said at ERROR). A save that throws stays in the ledger with its frames withheld and is
+per-frame path's answer, said at ERROR); a reaction that cannot even be parked stays held, and an unexpected throw of a flush puts back everything it had not written. A save that throws stays in the ledger with its frames withheld and is
 written at the next close or hold - the per-frame path swallowed it and lost the mark. A thread that left the map
 during the window is dropped and said; one a Welcome re-keyed is written under its new key (`movedKeyOf`).
 Logs: `[CATCHUP_WRITES]` at each flush, each drop and each failure.
