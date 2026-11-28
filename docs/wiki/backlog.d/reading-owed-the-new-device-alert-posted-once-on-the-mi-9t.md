@@ -1,6 +1,8 @@
 ## P2 - reading owed: the new-device alert posted once on the Mi 9T (2026-11-01)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 The device-notice ledger's markers were refused by the filesystem (name too long) from
 1.4.1-alpha.2 to 1.6.0, so the background engines never posted "a new device was added to your

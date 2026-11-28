@@ -1,6 +1,8 @@
 ## P2 - read the next release's Android log: the Gradle cache restored from the new key, no Maven Central request (2026-11-25)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 

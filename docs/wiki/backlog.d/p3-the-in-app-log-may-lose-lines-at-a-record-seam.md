@@ -1,6 +1,8 @@
 ## P3 - the in-app log's cause line fell at a batch seam, and nothing says whether a line can be lost there (iPhone 12, 1.8.2-alpha.8)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 **Read.** In the iPhone ring pulled on 2026-11-26 the line that names the sweep's cause (`[HISTORY_RECONCILE] sweeping every group - <reason>`, written by `initializeConnection` through `appendLog`, so a `console.log` the ring captures) was ABSENT while the pass's own line was present; the ring has a record seam at 17:46:07.639-.734 exactly there ([device-verification](../device-verification.md)).
 

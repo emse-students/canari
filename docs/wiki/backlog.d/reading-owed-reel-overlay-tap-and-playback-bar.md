@@ -1,6 +1,8 @@
 ## P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 

@@ -1,6 +1,8 @@
 ## P2 - Reading owed - "Mes notes" on both phones, and a profile notepad arriving in it (2026-11-26)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 **Built, covered by tests, never run on a device** ([chat](../frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22);
 owner decisions of 2026-11-22, items 10-14, and 2026-11-25, item 3; charter principles 1 then 2,

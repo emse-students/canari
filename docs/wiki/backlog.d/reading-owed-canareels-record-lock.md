@@ -1,6 +1,8 @@
 ## Reading owed - CanaReels: slide to the padlock locks a take, one tap on stop ends it
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built 2026-11-27 (`feat/canareels-record-lock`, owner decision of the day): while a take is held, a
 padlock appears left of the shutter; lifting the finger over it keeps recording hands-free and the
