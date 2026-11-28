@@ -233,12 +233,12 @@
             {m.minesweeper_tutorial_lost()}
           </p>
         {:else if hintStep !== null}
-          <p class="text-accent-text text-xs font-extrabold tracking-wider uppercase">
+          <p class="text-accent-text text-xs font-extrabold">
             {m.minesweeper_lesson_hint_tag({ n: String(hintStep + 1), total: String(stepCount) })}
           </p>
           <p data-testid="tutorial-hint">{lesson.hints[hintStep].text()}</p>
         {:else}
-          <p class="text-text-muted text-xs font-extrabold tracking-wider uppercase">
+          <p class="text-text-muted text-xs font-extrabold">
             {m.minesweeper_lesson_goal()}
           </p>
           <p data-testid="tutorial-goal">{lesson.body()}</p>
