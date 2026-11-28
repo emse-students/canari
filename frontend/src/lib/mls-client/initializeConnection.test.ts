@@ -79,6 +79,7 @@ import {
   resetAuditRecord,
 } from '$lib/utils/chat/historyReconcile';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
+import { flushMacrotask } from '../../test/flush';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 const BG = 'the app went to the background';
@@ -711,7 +712,7 @@ describe('initializeConnection - the history pass leaves a group being created o
     const first = connect(creatingMls());
     await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1));
     const second = connect(creatingMls());
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     // The second connection's pass waits for the first instead of running beside it.
     expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
     finish(pass({ asked: ['g-old', 'g-creating'], complete: true }));
