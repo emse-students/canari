@@ -2925,15 +2925,25 @@ export abstract class BaseMlsService implements IMlsService {
         );
         return 'still-behind';
       } catch (e) {
-        // THE LOG COULD NOT BE READ - a transport failure, not an answer. Nothing is known about
-        // the gap, and a mark left here would have the sync watchdog FORGET the group on a failed
-        // fetch: the mark this call set is taken back, one another path set stays its own.
-        if (!markedBefore) clearEpochGap(groupId);
-        console.warn(
-          `[GAP] ${short} the commit log could not be read - nothing known about the gap${markedBefore ? '' : ', its mark taken back'}:`,
+        // CLASSIFIED AT THE THROW, BY TYPE. Only a request that got NO ANSWER says nothing about
+        // the gap: the mark this call set is taken back - left on a failed fetch, it would have the
+        // sync watchdog FORGET the group - and one another path set stays its own.
+        if (isTransportFailure(e)) {
+          if (!markedBefore) clearEpochGap(groupId);
+          console.warn(
+            `[GAP] ${short} the commit log got no answer - nothing known about the gap${markedBefore ? '' : ', its mark taken back'}:`,
+            e
+          );
+          return 'unreachable';
+        }
+        // Anything else is an ANSWER or a LOCAL fault - the server refused the log (a 403), a
+        // commit could not be settled, merged or persisted, the log could not be parsed: the
+        // group is really not caught up, and the mark stays for rung 2.
+        console.error(
+          `[GAP] ${short} rung 1 failed (${e instanceof Error ? e.name : typeof e}) - the mark stays, left to the sync watchdog for rung 2:`,
           e
         );
-        return 'unreachable';
+        return 'still-behind';
       }
     });
   }

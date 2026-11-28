@@ -31,10 +31,11 @@
  * the group at an epoch other than the server's (or not held) with NOTHING MORE COMING FROM THE
  * MAILBOX - drained on this link, or never listed on it with no pull running or owed
  * (`mailboxListing`: the boot pull refused, a 502) - ISSUES a pull for the group (`pullForGroup`)
- * and reads everything again at its end. One ask per state of the facts. A pull that could not list
- * the mailbox while the link stayed up (`incomplete`) is said at WARN and asked again - after the
- * end of a pull still running or owed, at once when none is; a second such one in a row ends the
- * wait ({@link CallGroupUnlistedError}).
+ * and reads everything again at its end. One ask per state of the facts. A pull that ended
+ * before the listing while another is running or owed was SUPERSEDED, not failed: nothing is
+ * counted, and the ask waits for that pull's end. One that could not list the mailbox with the link
+ * up and nothing pending FAILED: said at WARN, asked again at once, and a second such one in a row
+ * ends the wait ({@link CallGroupUnlistedError}).
  *
  * A GROUP DRAINED BELOW THE SERVER AFTER A COMPLETE PULL IS CAUGHT UP FROM THE COMMIT LOG FIRST -
  * the same first, non-destructive rung a refused commit takes (`catchUpFromCommitLog`: rung 1, its
@@ -576,10 +577,18 @@ export function waitForCallGroupCurrent(
               `[Call] group ${short}: the pull asked for it could not list the mailbox - the link is down, waiting for the reconnect`
             );
             reaskAfterEvent = true;
+          } else if (mls.mailboxListing() === 'pending') {
+            // SUPERSEDED, NOT FAILED: a pull still running or owed lists the mailbox instead, and
+            // its end is an event. Nothing counted; the ask waits for it.
+            log(
+              `[Call] group ${short}: the pull asked for it ended before the listing - a pull still running or owed lists it, its end awaited`
+            );
+            reaskAfterEvent = true;
           } else {
+            // FAILED: nothing listed the mailbox and nothing will - asked again now, and counted.
             incompleteAsks += 1;
             log(
-              `[Call] WARN group ${short}: the pull asked for it could not list the mailbox, the link up (${incompleteAsks} in a row)`
+              `[Call] WARN group ${short}: the pull asked for it could not list the mailbox, the link up and nothing pending (${incompleteAsks} in a row)`
             );
             if (incompleteAsks >= 2) {
               throw new CallGroupUnlistedError(
@@ -589,10 +598,7 @@ export function waitForCallGroupCurrent(
                 'two pulls asked in a row, the link up, could not list the mailbox'
               );
             }
-            // A pull still running or owed will end with an event: the ask waits for it. With none,
-            // nothing will come - asked again now, and counted.
-            if (mls.mailboxListing() === 'pending') reaskAfterEvent = true;
-            else askedFor = null;
+            askedFor = null;
           }
           readTarget = true;
           continue;

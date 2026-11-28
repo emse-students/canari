@@ -838,10 +838,11 @@ either. So:
   carried as a fact, never inferred from "not drained", which a failed pull also leaves. The wait
   asks a pull for the group (`IMlsService.pullForGroup`, which says whether it LISTED the mailbox on
   this link or was `incomplete`) and reads everything again at its end. One ask per state of the
-  facts (`local/server`). A pull incomplete with the link still up is said at WARN and asked again -
-  after the end of a pull still running or owed, at once when none is; a second such one in a row
-  ends the wait (`CallGroupUnlistedError`). One that came back incomplete because the link went down
-  counts for nothing.
+  facts (`local/server`). A pull that ended before the listing while another is running or owed
+  was SUPERSEDED, not failed: nothing is counted, and the ask waits for that pull's end. One that
+  could not list the mailbox with the link up and nothing pending FAILED: said at WARN, asked again
+  at once, and a second such one in a row ends the wait (`CallGroupUnlistedError`). One that came
+  back incomplete because the link went down counts for nothing.
 - **A known limit: the pull is the session's.** `pullForGroup` goes through
   `fetchPendingMessages`, which waits on the other groups' drain before it lists (`owePull`): a
   behind group's frames are served first by the lead (`leadGroup`) during a long catch-up, but the
@@ -853,10 +854,13 @@ either. So:
   `GET /groups/:id` can read N+1 before the fan-out row exists: the log has the commit the mailbox
   lacks. Healed, the facts are read again; held, the wait asks a pull of its own and replays once
   more; only a replay the log ANSWERED and could not heal (holed, pruned below its floor, a commit
-  that will not apply) is `behind`, and only that one keeps the mark. A log that could not be read
-  (`unreachable`, a transport failure) takes the mark back - a mark left on a failed fetch would
+  that will not apply) is `behind`, and only that one keeps the mark. The failure is classified AT THE THROW, by type: only a
+  request that got no answer (`isTransportFailure`) is `unreachable`, which takes the mark back - a mark left on a failed fetch would
   have the sync watchdog forget the group 45 s later - and is a wait offline,
-  `CallGroupLogUnreachableError` online.
+  `CallGroupLogUnreachableError` online. A server's refusal of the log (a 403) or a local fault (a
+  commit that would not settle, merge or persist, a log that would not parse) is an answer:
+  `still-behind`, said at ERROR, the mark kept for rung 2
+  (`BaseMlsService.commitLogCatchUp.test.ts`).
   more; only a replay that cannot heal is `behind`.
 - **A state that held across a complete pull, with nothing of ours coming, is an ANSWER**, typed
   (`CallGroupUnprovenError`, carrying both epochs), and the call fails visibly - the toast, the

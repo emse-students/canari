@@ -523,7 +523,7 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     expect(w.lines.some((l) => l.includes('WARN call=call-1'))).toBe(true);
   });
 
-  it('an incomplete pull, the link up, a pull still owed: said at WARN, asked again after its end', async () => {
+  it('a pull SUPERSEDED by one still owed is not a failure: nothing counted, asked again after its end', async () => {
     const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
     const { outcome } = start(w);
@@ -532,7 +532,8 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     await flush();
     expect(outcome.error).toBeNull();
     expect(w.pullsAsked).toBe(1);
-    expect(w.warned('could not list the mailbox, the link up (1 in a row)')).toBe(true);
+    expect(w.warned('could not list the mailbox')).toBe(false);
+    expect(w.lines.some((l) => l.includes('a pull still running or owed lists it'))).toBe(true);
     w.pull.fire();
     await flush();
     expect(w.pullsAsked).toBe(2);
@@ -555,18 +556,24 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     expect(outcome.error).toBeInstanceOf(CallGroupUnlistedError);
   });
 
-  it('two incomplete pulls in a row, the link up, end the wait, typed and visible', async () => {
+  it('pulls superseded twice in a row, the link up, never fail the wait', async () => {
     const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
     const { outcome } = start(w);
     await flush();
     w.endPull(() => {}, 'incomplete');
     await flush();
-    w.catchUp.fire();
+    w.pull.fire();
     await flush();
     w.endPull(() => {}, 'incomplete');
     await flush();
-    expect(outcome.error).toBeInstanceOf(CallGroupUnlistedError);
+    expect(outcome.error).toBeNull();
+    w.pull.fire();
+    await flush();
+    expect(w.pullsAsked).toBe(3);
+    w.endPull(() => (w.state.status = { groupId: 'group-1', activeEpoch: 3 }));
+    await flush();
+    expect(outcome.proof).toBe('epoch-reached');
   });
 });
 
