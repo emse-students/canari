@@ -808,6 +808,9 @@ async function endAccountSessionLocally(
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
   clearDeviceKeyAndWrapKey();
+  // `clearUserLocally` erases the settings copies on disk; the binding in memory goes with them, or a
+  // save answering late would write the ended account's copy back.
+  notificationPreferences.reset();
   clearUserLocally();
   cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }
@@ -1881,6 +1884,10 @@ export async function loginImpl(
     // is armed BEFORE the socket can deliver a byte, and the restore's seeding releases it - the
     // held frames and the boot pull alike (`notifyConversationRowsSeeded`).
     mlsService.holdInboundUntilRowsSeeded();
+    // THE NOTIFICATION SETTINGS ARE THIS ACCOUNT'S BEFORE THE FIRST FRAME CAN BE DECIDED: its device
+    // copy of the last answer (or the default, said), and the offline mark that keeps a read from
+    // being started where there is no server. The read itself starts below, once the session is live.
+    notificationPreferences.bind(ctx.getUserId(), { offline: offlineSession });
     if (!offlineSession) markBoot('gateway-handshake-started');
     const startedHandshake = offlineSession
       ? null
@@ -3955,9 +3962,14 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): P
         '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
       );
       void ctx.retireMls(stopping);
+      // The login BOUND the notification settings to the leaving account before its first frame
+      // could land (`bind`): unbound here too, or a frame it still decides is taken on that set.
+      notificationPreferences.reset();
       return Promise.resolve();
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    // Nothing is bound behind a PIN gate after a cold start, but a reset is free and leaves no doubt.
+    notificationPreferences.reset();
     // AN EXPIRED SESSION ENDED WITH A FINAL CHECKPOINT (`attemptReconnectImpl`) that may still be
     // sealing through this client: it is destroyed only once that write settled.
     // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state

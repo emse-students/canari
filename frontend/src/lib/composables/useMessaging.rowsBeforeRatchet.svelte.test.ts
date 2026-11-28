@@ -53,10 +53,16 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 /** The poison metric is read by the tests that must - or must not - count a dropped row. */
 vi.mock('$lib/mls-client/mlsRecoveryMetrics', () => ({ logMlsMetric: vi.fn() }));
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
+
 const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
 const { logMlsMetric } = await import('$lib/mls-client/mlsRecoveryMetrics');
 const { RowRefusedError } = await import('$lib/db/rowWriteFailure');
 const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 const { keepPendingMutation } = await import('$lib/utils/chat/pendingMutationStore');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';

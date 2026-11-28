@@ -26,7 +26,11 @@ vi.mock('$app/state', () => ({
   page: { params: {}, url: new URL('https://canari.test/posts?feed=all'), state: {} },
 }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ globalSession: session }));
-vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1' }));
+// The Alumni link card at the top of the feed reads the own profile: none is due here.
+vi.mock('$lib/stores/user', () => ({
+  currentUserId: () => 'u1',
+  fetchMyProfile: () => Promise.resolve({}),
+}));
 vi.mock('$lib/stores/unlockPath.svelte', () => ({ unlockUnattendedFor: () => unattended.for }));
 // The token never comes: the session refresh is still on the wire.
 vi.mock('$lib/stores/auth', () => ({ getToken: () => new Promise(() => {}) }));

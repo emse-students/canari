@@ -23,6 +23,7 @@ export const HELP_IDS = [
   'prompt-profile-photo',
   'prompt-profile-photo-reminder',
   'prompt-birthday',
+  'prompt-alumni-link',
 ] as const;
 
 /**

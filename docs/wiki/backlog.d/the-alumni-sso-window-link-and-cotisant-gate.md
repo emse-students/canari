@@ -46,7 +46,7 @@ property, so `cotisant` is first read at the next Alumni sign-in; the routing pa
    [reading-owed-miconnect-one-sign-in-per-path](reading-owed-miconnect-one-sign-in-per-path.md));
 3. the `cotisant` READ at a later Alumni sign-in: `attributes.alumni.read_on` today, username and name
    unchanged;
-4. the LINK STEP (D44): the reminder once per session, the block after its date;
+4. the LINK STEP (D44): the reminder (a feed card dismissed once per account, and a settings row that stays), the block after its date;
 5. D49 SIGNED IN: the confirmation page names the account, the tick goes on to Alumnforce, the link
    completes.
 6. a REAL MERGE: the first flagged duplicate verified by an admin (Alumni e-mail, `af_id`, asserted
