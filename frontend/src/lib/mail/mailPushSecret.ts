@@ -19,15 +19,48 @@ import { Log } from '$lib/utils/Log';
  *
  * A no-op everywhere but iOS. Neither function throws: a failure is logged, and the next fact that
  * changes the want writes or erases again.
+ *
+ * SERIALISED: a write and an erase never interleave (one queue), and a write checks, IN ITS TURN,
+ * that it is still wanted - so an erase queued by `forgetMailPassword` while a write was reading the
+ * remembered password is never overtaken by that write.
  */
 
-/** Writes the extension's copy of the password. */
+/** The one queue every write and erase of the item runs on. */
+let queue: Promise<void> = Promise.resolve();
+
+function inTurn(work: () => Promise<void>): Promise<void> {
+  const next = queue.then(work);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
+/**
+ * Writes the extension's copy of the password, in its turn, if `stillWanted` (read in that turn:
+ * "remember" still holds) answers true.
+ */
 export async function storeMailPushSecret(
   userId: string,
   account: string,
-  password: string
+  password: string,
+  stillWanted: () => Promise<boolean>
 ): Promise<void> {
   if (!isIosTauriRuntime()) return;
+  return inTurn(() => storeNow(userId, account, password, stillWanted));
+}
+
+async function storeNow(
+  userId: string,
+  account: string,
+  password: string,
+  stillWanted: () => Promise<boolean>
+): Promise<void> {
+  if (!(await stillWanted())) {
+    Log.i(
+      'MAIL-ALERT',
+      "the extension's copy is no longer wanted when its turn came - not written"
+    );
+    return;
+  }
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('mail_push_secret_store', { userId, account, password });
@@ -43,6 +76,10 @@ export async function storeMailPushSecret(
 /** Erases the extension's copy of the password, whatever account it was for. Idempotent. */
 export async function eraseMailPushSecret(reason: string): Promise<void> {
   if (!isIosTauriRuntime()) return;
+  return inTurn(() => eraseNow(reason));
+}
+
+async function eraseNow(reason: string): Promise<void> {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('mail_push_secret_erase');

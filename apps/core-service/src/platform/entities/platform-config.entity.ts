@@ -249,7 +249,7 @@ export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
 /**
  * How a new school mail reaches a phone that is not watching (D11 of the mail client, lot 5; owner,
  * 2026-11-28). `none`: no server takes part (Android's persistent connection, iOS's background
- * refresh). `cloudflare`: the account's Zimbra new-mail alert goes to Cloudflare Email Routing, and
+ * refresh). `cloudflare`: a filter rule on the account's own mailbox sends a fixed-text notice to Cloudflare Email Routing, and
  * its Worker's post becomes an empty push. Held together with the column's CHECK, chat-delivery and
  * the frontend by `mailPushModesAgree.test.ts`.
  */

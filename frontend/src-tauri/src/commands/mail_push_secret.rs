@@ -128,20 +128,70 @@ pub(crate) fn item_is_for(value: &[u8], user_id: &str) -> bool {
     }
 }
 
+/// The fingerprint of the registration whose RAW push secret this device holds - the server's
+/// `registrationFingerprint` of the stored hash (`mail-forget.ts`): the first 32 hex characters of
+/// `sha256("canari-mail-forget|" + hex(sha256(raw)))`. Kotlin's `registrationFingerprintOf` computes
+/// the same; one vector holds the three (`mailPushSecret.test.ts`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn registration_fingerprint(raw_secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let stored = hex(&Sha256::digest(raw_secret.as_bytes()));
+    let mut out = hex(&Sha256::digest(
+        format!("canari-mail-forget|{stored}").as_bytes(),
+    ));
+    out.truncate(32);
+    out
+}
+
+/// Whether a remote forget erases this device's copy (Kotlin's `forgetApplies`, the same table):
+/// always unless it is for an ENDED SESSION (`scope` `session`); then when this device is signed out
+/// of Canari, or when its CURRENT push secret is the ended registration's. A device that signed in
+/// again holds a new secret and keeps its mailbox; an unreadable secret while signed in proves
+/// nothing, so nothing is erased; '' is a legacy registration with no secret to name.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn forget_applies(
+    scope: Option<&str>,
+    registration: Option<&str>,
+    current_raw_secret: Option<&str>,
+    signed_out: bool,
+) -> bool {
+    if scope != Some("session") {
+        return true;
+    }
+    if signed_out {
+        return true;
+    }
+    match (registration.unwrap_or(""), current_raw_secret) {
+        ("", _) | (_, None) => false,
+        (wanted, Some(raw)) => registration_fingerprint(raw) == wanted,
+    }
+}
+
 /// THE REMOTE FORGET ON iOS (mail lot 5, D6): the server's `mail-forget` push, handled by the app's
 /// silent-frame hook (`canari_push.mm`, `CanariHandleBackgroundFrame`), erases what this install keeps
 /// of `user_id`'s mailbox OUTSIDE the page - the Keychain item the extension reads (when it is that
 /// account's) and the shared cursor in the App Group store. The page's own copy goes at the next
 /// launch, through the sign-out every refused refresh reaches (`forgetMailPassword`).
 ///
-/// Returns 0 when both are gone (or were never there), -1 when something could not be erased
-/// (logged). Idempotent.
+/// A forget for an ENDED SESSION applies only per [`forget_applies`]: the push carries `scope` and
+/// `registration`, compared with this install's current push secret (the extension's copy in the App
+/// Group, `push::EXTENSION_PUSH_SECRET_FILE`) and its sign-out mark.
+///
+/// Returns 0 when both are gone (or were never there), 1 when the forget is for another registration
+/// (nothing erased: this device signed in again), -1 when something could not be erased (logged).
+/// Idempotent.
 ///
 /// # Safety
-/// `user_id` must be a valid NUL-terminated C string, or null (refused).
+/// `user_id` must be a valid NUL-terminated C string, or null (refused); `scope` and `registration`
+/// valid NUL-terminated C strings or null (absent from the push).
 #[cfg(target_os = "ios")]
 #[no_mangle]
-pub unsafe extern "C" fn canari_mail_forget(user_id: *const std::os::raw::c_char) -> i32 {
+pub unsafe extern "C" fn canari_mail_forget(
+    user_id: *const std::os::raw::c_char,
+    scope: *const std::os::raw::c_char,
+    registration: *const std::os::raw::c_char,
+) -> i32 {
     if user_id.is_null() {
         log::warn!("[MailPushSecret] remote forget without an account - refused");
         return -1;
@@ -153,6 +203,37 @@ pub unsafe extern "C" fn canari_mail_forget(user_id: *const std::os::raw::c_char
             return -1;
         }
     };
+    let text = |p: *const std::os::raw::c_char| {
+        (!p.is_null())
+            .then(|| std::ffi::CStr::from_ptr(p).to_str().ok().map(str::to_owned))
+            .flatten()
+    };
+    let (scope, registration) = (text(scope), text(registration));
+    if scope.as_deref() == Some("session") {
+        let signed_out = crate::app_group::app_data_dir().is_some_and(|d| {
+            d.join(crate::commands::push_registration::SIGNED_OUT_FILE)
+                .exists()
+        });
+        let current = if signed_out {
+            None
+        } else {
+            crate::app_group::app_group_dir().ok().and_then(|d| {
+                std::fs::read_to_string(d.join(super::push::EXTENSION_PUSH_SECRET_FILE)).ok()
+            })
+        };
+        if !forget_applies(
+            scope.as_deref(),
+            registration.as_deref(),
+            current.as_deref().map(str::trim),
+            signed_out,
+        ) {
+            log::info!(
+                "[MailPushSecret] remote forget: another registration ended (secretRead={}) - the mailbox stays",
+                current.is_some()
+            );
+            return 1;
+        }
+    }
     let mut status = 0;
     match security_framework::passwords::generic_password(options()) {
         Ok(value) if !item_is_for(&value, &user_id) => {
@@ -195,6 +276,32 @@ pub unsafe extern "C" fn canari_mail_forget(user_id: *const std::os::raw::c_char
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fingerprint_is_the_shared_vector() {
+        // The vector of mailPushSecret.test.ts and MailPushTest.kt.
+        assert_eq!(
+            registration_fingerprint("0123456789abcdef0123456789abcdef"),
+            "57cad23f03e18d65f03c862440581f69"
+        );
+    }
+
+    #[test]
+    fn a_device_that_signed_in_again_keeps_its_mailbox() {
+        let raw = "0123456789abcdef0123456789abcdef";
+        let mine = registration_fingerprint(raw);
+        let other = registration_fingerprint(&"f".repeat(32));
+        let s = Some("session");
+        assert!(forget_applies(s, Some(&mine), Some(raw), false));
+        assert!(!forget_applies(s, Some(&other), Some(raw), false));
+        assert!(forget_applies(s, Some(&other), None, true));
+        assert!(!forget_applies(s, Some(&mine), None, false));
+        assert!(!forget_applies(s, Some(""), Some(raw), false));
+        assert!(!forget_applies(s, None, Some(raw), false));
+        assert!(forget_applies(Some("device"), None, Some(raw), false));
+        assert!(forget_applies(Some("account"), None, None, false));
+        assert!(forget_applies(None, None, None, false));
+    }
 
     #[test]
     fn the_value_names_its_account_and_refuses_an_empty_field() {

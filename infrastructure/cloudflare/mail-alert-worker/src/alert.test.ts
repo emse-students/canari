@@ -1,5 +1,14 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
-import { HOOK_PATH, relayAlert, SECRET_HEADER, tokenOf, type AlertEnv } from './alert';
+import {
+  HOOK_PATH,
+  relayAlert,
+  RETRY_PAUSES_MS,
+  SECRET_HEADER,
+  tokenOf,
+  type AlertEnv,
+} from './alert';
+
+const noPause = async () => {};
 
 const TOKEN = '0123456789abcdef0123456789abcdef';
 const DOMAIN = 'alerte.example.test';
@@ -64,10 +73,39 @@ describe('relayAlert', () => {
   it('a refusal and a transport failure are told apart', async () => {
     const refused = mock(async () => new Response('', { status: 401 }));
     expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, env(), refused as any)).toBe('refused');
+    expect(refused).toHaveBeenCalledTimes(1);
     const down = mock(async () => {
       throw new Error('connect');
     });
-    expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, env(), down as any)).toBe('unreachable');
+    expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, env(), down as any, noPause)).toBe(
+      'unreachable'
+    );
+    expect(down).toHaveBeenCalledTimes(3);
+  });
+
+  it('a 429 or a 5xx is retried, a bounded number of times', async () => {
+    const pauses: number[] = [];
+    const pause = async (ms: number) => void pauses.push(ms);
+    const flaky = mock(async () => new Response('', { status: flaky.mock.calls.length < 2 ? 503 : 200 }));
+    expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, env(), flaky as any, pause)).toBe('posted');
+    expect(flaky).toHaveBeenCalledTimes(2);
+    expect(pauses).toEqual([RETRY_PAUSES_MS[0]]);
+    const busy = mock(async () => new Response('', { status: 429 }));
+    expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, env(), busy as any, noPause)).toBe('unreachable');
+    expect(busy).toHaveBeenCalledTimes(RETRY_PAUSES_MS.length + 1);
+  });
+
+  it('never rejects: a limiter that throws is caught and said', async () => {
+    const e = env({
+      MAIL_ALERT_LIMITER: {
+        limit: async () => {
+          throw new Error('binding down');
+        },
+      },
+    });
+    expect(await relayAlert(`n-${TOKEN}@${DOMAIN}`, e, (async () => new Response('{}')) as any)).toBe(
+      'failed'
+    );
   });
 });
 

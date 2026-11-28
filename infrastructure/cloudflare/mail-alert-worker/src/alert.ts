@@ -32,7 +32,17 @@ export type AlertOutcome =
   | 'rate_limited'
   | 'misconfigured'
   | 'refused'
-  | 'unreachable';
+  | 'unreachable'
+  /** Something threw outside the post (the limiter binding): caught, so the Worker never rejects. */
+  | 'failed';
+
+/**
+ * The pauses before the second and third post when the estate answered 429 or 5xx, or could not be
+ * reached: a BOUNDED retry (three posts at most), so a short overload or a restart does not lose the
+ * alert, and a long one costs three posts, never a loop. A refusal (4xx but 429) is an answer: never
+ * retried.
+ */
+export const RETRY_PAUSES_MS = [250, 1000] as const;
 
 const LOCAL_PART = /^n-([0-9a-f]{32})$/;
 
@@ -49,11 +59,28 @@ export function tokenOf(recipient: string, alertDomain: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Handles one alert addressed to `recipient`: everything but the token is ignored. */
+/** Handles one alert addressed to `recipient`: everything but the token is ignored. NEVER throws. */
 export async function relayAlert(
   recipient: string,
   env: AlertEnv,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
+): Promise<AlertOutcome> {
+  try {
+    return await relay(recipient, env, fetcher, pause);
+  } catch (err) {
+    // A rejected email handler makes Email Routing retry or bounce, and a bounce would land in the
+    // user's mailbox: whatever threw is said here and the message is dropped.
+    console.error(`[mail-alert] failed: ${String(err)}`);
+    return 'failed';
+  }
+}
+
+async function relay(
+  recipient: string,
+  env: AlertEnv,
+  fetcher: typeof fetch,
+  pause: (ms: number) => Promise<void>
 ): Promise<AlertOutcome> {
   if (!env.HOOK_SECRET || !env.TARGET_URL || !env.ALERT_DOMAIN) {
     console.error('[mail-alert] misconfigured: HOOK_SECRET, TARGET_URL or ALERT_DOMAIN is missing');
@@ -69,19 +96,38 @@ export async function relayAlert(
     console.warn('[mail-alert] dropped: this token is over its rate');
     return 'rate_limited';
   }
+  for (let attempt = 0; ; attempt++) {
+    const outcome = await postOnce(token, env, fetcher);
+    if (outcome !== 'retry') return outcome;
+    if (attempt >= RETRY_PAUSES_MS.length) {
+      console.error(`[mail-alert] the hook did not take the alert after ${attempt + 1} posts`);
+      return 'unreachable';
+    }
+    await pause(RETRY_PAUSES_MS[attempt]);
+  }
+}
+
+/** One post: its outcome, or `retry` for a 429, a 5xx or a transport failure. */
+async function postOnce(
+  token: string,
+  env: AlertEnv,
+  fetcher: typeof fetch
+): Promise<AlertOutcome | 'retry'> {
   try {
     const res = await fetcher(`${env.TARGET_URL.replace(/\/+$/, '')}${HOOK_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', [SECRET_HEADER]: env.HOOK_SECRET },
       body: JSON.stringify({ token }),
     });
-    if (!res.ok) {
-      console.error(`[mail-alert] the hook refused the alert: status=${res.status}`);
-      return 'refused';
+    if (res.ok) return 'posted';
+    if (res.status === 429 || res.status >= 500) {
+      console.warn(`[mail-alert] the hook answered ${res.status} - retried`);
+      return 'retry';
     }
-    return 'posted';
+    console.error(`[mail-alert] the hook refused the alert: status=${res.status}`);
+    return 'refused';
   } catch (err) {
-    console.error(`[mail-alert] the hook is unreachable: ${String(err)}`);
-    return 'unreachable';
+    console.warn(`[mail-alert] the hook is unreachable: ${String(err)} - retried`);
+    return 'retry';
   }
 }

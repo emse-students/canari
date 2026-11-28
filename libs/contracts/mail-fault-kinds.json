@@ -1,5 +1,5 @@
 {
-  "description": "The Zimbra fault codes the mail client classifies, and the kind each means (docs/wiki/mail-client-transport.md). `call` is FAULT_KINDS (any call), `auth` is AUTH_FAULT_KINDS (only when the session's own sign-in answered it; it wins over `call`). A code in neither is `server`. Held equal to `frontend/src/lib/mail/mailErrors.ts` by `mailErrors.test.ts` and to the Android native watcher's copy (`mail/NativeMailWatch.kt`) by `NativeMailWatchTest`.",
+  "description": "The Zimbra fault codes the mail client classifies, and the kind each means (docs/wiki/mail-client-transport.md). `call` is FAULT_KINDS (any call), `auth` is AUTH_FAULT_KINDS (only when the session's own sign-in answered it; it wins over `call`). A code in neither is `server`. Held equal to `frontend/src/lib/mail/mailErrors.ts` by `mailErrors.test.ts` and to the Android native watcher's copy (`mail/NativeMailWatch.kt`) by `NativeMailWatchTest`; the iOS notification extension copies `call` (`NotificationService.swift` `MailPushRules.faultKinds`, held by `mailPushSecret.test.ts`).",
   "call": {
     "account.AUTH_FAILED": "bad_credentials",
     "account.CHANGE_PASSWORD": "password_change_required",

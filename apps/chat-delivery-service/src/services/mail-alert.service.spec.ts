@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Logger } from '@nestjs/common';
-import type { Repository } from 'typeorm';
+import { QueryFailedError, type Repository } from 'typeorm';
 import { MailAlertDevice } from '../entities/mail-alert-device.entity';
 import { MailAlertToken } from '../entities/mail-alert-token.entity';
 import type { PushToken } from '../entities/push-token.entity';
@@ -188,7 +188,9 @@ describe('MailAlertService', () => {
       deviceSubscribed: false,
       tokenLive: true,
       devices: 1,
+      accountToken: true,
     });
+    expect((await db.service.state('u2', 'd1', null)).accountToken).toBe(false);
     expect((await db.service.state('u1', 'd1', OTHER)).tokenLive).toBe(false);
     expect((await db.service.state('u1', 'd1', null)).tokenLive).toBe(false);
     expect((await db.service.state('u2', 'd1', TOKEN)).tokenLive).toBe(false);
@@ -225,6 +227,32 @@ describe('MailAlertService', () => {
       return 'ok';
     });
     expect(await db.service.alert(TOKEN)).toEqual({ status: 'pushed', sent: 1, failed: 1 });
+  });
+
+  it('a token hash another account holds is a typed 409, so the client draws a new token', async () => {
+    const db = fakeDb();
+    db.push.push({ id: 'p1', userId: 'u1', deviceId: 'd1' });
+    const manager = (db.service as unknown as { tokenRepo: { manager: { upsert: unknown } } })
+      .tokenRepo.manager;
+    manager.upsert = async () => {
+      throw new QueryFailedError('INSERT', [], { constraint: 'UQ_mail_alert_token_hash' } as never);
+    };
+    await expect(db.service.subscribe('u1', 'd1', TOKEN)).rejects.toMatchObject({
+      error: MAIL_ALERT_REFUSAL.tokenTaken,
+      status: 409,
+    });
+  });
+
+  it('a token with no device left is deleted by its hash: a token rotated in meanwhile stays', async () => {
+    const db = fakeDb();
+    db.push.push({ id: 'p1', userId: 'u1', deviceId: 'd1' });
+    await db.service.subscribe('u1', 'd1', TOKEN);
+    db.push.splice(0, 1);
+    const repo = (db.service as unknown as { tokenRepo: { delete: (w: unknown) => unknown } })
+      .tokenRepo;
+    const del = jest.spyOn(repo, 'delete');
+    await db.service.alert(TOKEN);
+    expect(del).toHaveBeenCalledWith({ userId: 'u1', tokenHash: hashMailAlertToken(TOKEN) });
   });
 
   it('an unknown token, the switch off, and a token with no device left push nothing', async () => {

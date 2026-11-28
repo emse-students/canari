@@ -314,12 +314,13 @@ map $request_method $miconnect_hook_key {\n\
 }\n\
 limit_req_zone $miconnect_hook_key zone=miconnect_hook:1m rate=1r/s;\n\
 # THE MAIL ALERT HOOK (mail lot 5): one POST per new school mail of an account that turned the fast\n\
-# notifications on, from Cloudflare's Email Worker. Every request reaches us through the tunnel, so the\n\
-# key is ONE bucket for the estate: 20 r/s burst 200 is far above the campus's mail rate and bounds a\n\
-# flood of guesses at the shared secret. The per-token limit is chat-delivery's (and the Worker's).\n\
+# notifications on, from Cloudflare's Email Worker. Per CLIENT ADDRESS (real_ip below, as every public\n\
+# location), never one bucket for the estate: a constant key let anyone flooding the route with\n\
+# guesses at the secret starve the Worker. 20 r/s burst 200 is far above the campus's mail rate. The\n\
+# Worker retries a 429 or a 5xx a bounded number of times; the per-token limit is chat-delivery's.\n\
 map $request_method $mail_alert_hook_key {\n\
     default "";\n\
-    POST "mail-alert";\n\
+    POST $binary_remote_addr;\n\
 }\n\
 limit_req_zone $mail_alert_hook_key zone=mail_alert_hook:1m rate=20r/s;\n\
 # THE MAIL RELAY'S OPENS (docs/wiki/mail-client-transport.md#the-relay), per client address: a\n\

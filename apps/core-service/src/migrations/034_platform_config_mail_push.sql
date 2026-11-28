@@ -6,7 +6,7 @@
 --               switch), iOS refreshes when the system allows. The default, so every existing row -
 --               production's and dev's - keeps today's behaviour until a global admin moves it at
 --               `/admin/platform`.
---   cloudflare  the fast path: the account's own Zimbra new-mail alert is pointed at an opaque
+--   cloudflare  the fast path: a filter rule on the account's own mailbox sends a fixed-text notice to an opaque
 --               address on Cloudflare Email Routing, whose Worker posts only the address's token to
 --               chat-delivery-service, which sends an EMPTY push to that account's devices.
 --

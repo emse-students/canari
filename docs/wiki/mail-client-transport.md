@@ -1277,14 +1277,15 @@ external alert domain is the live test (still open, below).
 ### The path, end to end
 
 ```
- Partage (the account's OWN filter rule `canari-alerte`, first, matching every mail)
+ Partage (the account's OWN filter rule `canari-alerte` (`canari-alerte-dev` on dev), LAST,
+   |  matching every mail but a delivery report)
    | actionNotify: a fixed-text notice, from the account itself, no body,
    | to n-<128-bit token>@alerte.canari-emse.fr          (alerte-dev.canari-emse.fr on dev)
-   | actionKeep: the mail is filed as usual; the user's own rules run after it
+   | actionKeep: the mail is filed as usual; a user rule with `stop` before it silences the notice
    v
  Cloudflare Email Routing -> Email Worker (infrastructure/cloudflare/mail-alert-worker/)
-   | reads the envelope RECIPIENT only; drops the message; rate-limits per token
-   | POST /api/hooks/mail-alert {token}   header x-canari-mail-alert-secret
+   | reads the envelope RECIPIENT only; drops the message; rate-limits per token; never rejects
+   | POST /api/hooks/mail-alert {token}   header x-canari-mail-alert-secret  (429/5xx: 2 retries)
    v
  chat-delivery-service (MailAlertController.hook, secret compared in constant time)
    | sha256(token) -> mail_alert_token -> the account's subscribed devices (mail_alert_device)
@@ -1296,49 +1297,91 @@ external alert domain is the live test (still open, below).
 **The client half (`mailAlert.ts`, `mailAlertSync.ts`, `mailWatch.svelte.ts`).** A PHONE whose
 account wants notifications, with `mail_push` READ as `cloudflare`, adds ONE incoming filter rule to
 the account by a READ-MODIFY-WRITE of the whole list (`GetFilterRulesRequest`, then
-`ModifyFilterRulesRequest`, which replaces the list): named `canari-alerte`, put FIRST, an `anyof`
-of two header tests (`From` or `Received` matches `*` - every delivered mail carries one; the
-header-test shape is the measured one), `actionNotify {a: n-<token>@<domain>, su: 'Canari',
-content: [{_content: 'Canari'}], maxBodySize: 0}` (a bare string `content` is a
-`service.PARSE_ERROR`, measured) and `actionKeep`; NO `actionStop`. The token is 128 random bits,
-hex. Every other rule goes back EXACTLY as Zimbra read it, in its order - an allowlist: a rule is
-ours only by our name AND a notice to an address of Canari's shape (`n-<32 hex>@`), so a rule the
-user named the same but pointed elsewhere is theirs and untouched. `parseFilterRules` refuses an
-answer without its `filterRules` element (required by Zimbra's schema) rather than read it as "no
-rules", which written back would erase the user's.
+`ModifyFilterRulesRequest`, which replaces the list): named after the ESTATE (`alertRuleName`:
+`canari-` and the first label of the server's alert domain - `canari-alerte` for production,
+`canari-alerte-dev` for dev, whatever the mode), put LAST, an `allof` of three NEGATED header tests
+that excludes delivery reports (`Auto-Submitted` matches `auto-*`, `From` contains `mailer-daemon`,
+`From` contains `postmaster`), `actionNotify {a: n-<token>@<domain>, su: 'Canari', content:
+[{_content: 'Canari'}], maxBodySize: 0}` (a bare string `content` is a `service.PARSE_ERROR`,
+measured) and `actionKeep`; NO `actionStop`. The token is 128 random bits, hex. Every other rule goes
+back EXACTLY as Zimbra read it, in its order - an allowlist: a rule is ours only by THIS estate's
+name AND a notice to an address of Canari's shape on THIS estate's domain (`n-<32 hex>@<domain>`),
+so the other estate's rule, and a rule the user named the same but pointed elsewhere, are untouched.
+`parseFilterRules` refuses an answer without its `filterRules` element (required by Zimbra's schema)
+rather than read it as "no rules", which written back would erase the user's.
+
+**LAST, and what that costs (D11).** Our rule runs after the user's: a user rule with `stop` that
+matches a mail ends the filtering before ours, so THAT mail is not announced fast (lot 4's paths still
+see it when they run). First would announce every mail, but a rule we put first decides what the
+user's rules see before them; last leaves the user's filtering exactly as they wrote it, which is the
+charter's order (principle 1 before speed). Delivery reports are excluded so a notice that bounces
+can never feed itself (a bounce is a new mail that would fire the rule again); **Cloudflare routing
+must outlive every rule** (a rule whose domain stops accepting mail would bounce at every mail, and
+the exclusion is what keeps that from looping). The negated header-test shape is NOT measured on
+Partage yet: the lead's probe settles it (below).
+
+**The write is guarded.** `ModifyFilterRulesRequest` replaces the whole list, so a rule the user
+added in the webmail between our read and our write would be lost. The client re-reads the list
+right before writing and compares it with the read it decided on; a change throws
+`MailAlertRulesChangedError` and the WHOLE sync starts again from the new list (at most three times,
+then it gives up until the next fact changes). After the write it reads the list back: ours present
+exactly once, every other rule identical in content and order, else `MailAlertRulesMismatchError`
+(`ours` or `others`), logged at error. Zimbra has no compare-and-set, so a write landing in the
+milliseconds between the re-read and the write is the residual window; the read-back is what makes
+it visible.
+
+**A rule the user disabled is an opt-out.** A rule of ours found `active: false` is the user's
+answer in the webmail: it is never re-enabled; the device turns its notification preference for the
+account off (`onOptOut` -> `setMailNotificationsWanted(false)`, logged) and leaves the rule as the
+user set it.
 
 The device registers the token with the server (`POST /api/mls/mail-alert/subscribe`, one live
 token per account, one row per device, the device rows cascading with `push_token`) BEFORE writing
 the rule, and takes the subscription back if the write fails; another device of the account reads
-the token back from our rule's `a` and JOINS it. The last device to leave (the server says nobody
-else listens: `state`) removes our rule, and only it. A rule of ours that nobody listens to (or with
-the switch at `none`) is removed by any device of the account - a repair gated on the server's
-answer, never on a guess. A rule of ours the user disabled in the webmail is replaced by an active
-one while the push is wanted. The device keeps one fact (`ACCOUNT_KEY.mailAlert`, a D8 key:
+the token back from our rule's `a` and JOINS it. The server's `state` answers the account's live
+token too (`accountToken`), so a device that finds no rule but a token knows a rule of ours may
+exist. The last device to leave (the server says nobody else listens: `state`) removes our rule, and
+only it. A rule of ours that nobody listens to (or with the switch at `none`) is removed by any
+device of the account - a repair gated on the server's answer, never on a guess; with the switch at
+`none` and neither a token nor a record, the client does not even read the rules. A token whose hash
+collides (`UQ_mail_alert_token_hash`) is a typed 409 `mail_alert_token_taken`, and the client draws a
+new one (at most three). The device keeps one fact (`ACCOUNT_KEY.mailAlert`, a D8 key:
 `{v:1, subscribed}`); nothing of the user's is saved, because nothing of the user's is overwritten.
+
+**The rule is released at every sign-out the device makes while a mailbox session is open**
+(`releaseMailAlertBeforeSignOut`): the mail sign-out runs the release BEFORE it ends the session,
+and a Canari logout starts it with the access token still in hand (`startMailAlertRelease`, first
+thing in `clearAuthUnderway`) and awaits it before the mailbox signs out. What cannot be released -
+the app uninstalled, the device revoked, the account erased with no mailbox session - stays on the
+member's account (register C34): its notices reach a token the server no longer knows, answered
+`unknown` or `no_device` and COUNTED in the log (`orphanAlerts`), never pushed. Any later device of
+the account that finds nobody listening removes it.
 Every step is decided from durable facts (the rules Zimbra answers, the server's state, the device's
 record), single-flight, and retried at the next change of a fact, never on a timer.
 
-**One estate's rule per account.** Production and dev share the real mailbox and the rule's name: an
-account signed in on BOTH estates with the push wanted on both would have each replace the other's
-rule at its next sync (no loop - a sync runs on a change of a fact - but the other estate's pushes
-stop until it syncs again). Dev testers use dev with production's push off.
-
 **What Cloudflare sees.** The notice's envelope and headers: the sender (the account's own address),
 the fixed subject `Canari`, the fixed body, and the token in the recipient. Never what the mail said
-or who sent it. The Worker reads only the recipient. The privacy policy still names Cloudflare as
-the carrier before the switch is turned on (owner's procedure below, register C34).
+or who sent it - but, per address, the TIMING AND VOLUME of the mails the member receives. The
+Worker reads only the recipient. The privacy policy names Cloudflare Email Routing as the processor
+of the alert (section 4, and the School mail paragraph of section 2; register C34).
 
 **The Worker (`infrastructure/cloudflare/mail-alert-worker/`).** `relayAlert` (pure, `bun test`ed
 from `make test-ci-scripts`) takes the token from the envelope recipient on ITS domain only, asks the
 `MAIL_ALERT_LIMITER` binding (20 per minute per token), posts `{token}` with the shared secret, and
-returns. The message is never forwarded, stored or rejected (a bounce would land in the user's
-mailbox). `wrangler.toml` holds no secret and no account id; the test asserts it.
+returns. A 429, a 5xx or a transport failure is retried twice (after 250 ms and 1 s), then logged
+`failed`. The whole relay, the limiter included, is inside one `try`: the Worker NEVER rejects, so
+the message is never forwarded, stored or bounced (a bounce would land in the user's mailbox).
+`wrangler.toml` holds no secret and no account id; the test asserts it.
 
 **The server (`chat-delivery-service`).** `POST /api/hooks/mail-alert` (nginx: its own location,
-1 KiB body, `limit_req` 20 r/s; Nest: a per-token throttle of 30/min) refuses a wrong or unset
-secret with 401 (an unset one at error), a malformed token with 400, and answers `off`, `unknown`,
-`no_device` (the token row is then deleted) or `pushed {sent, failed}`. The push is EMPTY: on iOS an
+1 KiB body, `limit_req` 20 r/s keyed on the CLIENT address - `$binary_remote_addr` after `real_ip`,
+as every public location - so a flood of guesses at the secret from one address cannot starve the
+Worker; Cloudflare's Workers share egress addresses, so the key bounds a client, not a tenant, and
+the Worker's retry covers a 429 from a neighbour; Nest: a per-token throttle of 30/min) refuses a
+wrong or unset secret with 401 (an unset one at error), a malformed token with 400, and answers
+`off`, `unknown`, `no_device` (the token row is then deleted by account AND hash) or `pushed {sent,
+failed}`. Subscribe and unsubscribe lock the account's token row (`pessimistic_write`), so a count
+and the delete it decides are one transaction. The push is EMPTY: on iOS an
 alert titled `Canari` with a generic "Nouveau mail" body and `mutable-content: 1`, so the extension
 runs; on Android a high-priority data message `{type:'mail'}`. The token is stored HASHED
 (`mail_alert_token.tokenHash`, sha256); the account erasure deletes it.
@@ -1352,17 +1395,31 @@ runs; on Android a high-priority data message `{type:'mail'}`. The token is stor
   erased by ONE erase (`eraseMailPushSecret`) that every forget path reaches (`forgetMailPassword`,
   the switch off, `mail_watch_forget`, the remote forget). It signs in (`AuthRequest`), reads one
   inbox page by id, compares it with the SHARED cursor (lot 4's cursor moved to the App Group:
-  `mail_watch/cursor_<userId>.json`), WRITES the cursor, then shows the sender and the subject (one
-  mail), or "N nouveaux mails" (several), and ends its session. The app in the foreground, or
-  nothing new and unread: a blank passive row the app removes. No item, another account, a failed
-  read: the server's generic "Nouveau mail" stays, logged at error - a stated degraded display.
+  `mail_watch/cursor_<userId>.json`), WRITES the cursor by COMPARE-AND-SET under the lock file the
+  app's writes take too (`mail_watch/cursor.lock`, `flock`; Rust `write_cursor_if`, the page's
+  `mail_watch_cursor_write` with the `highest` it read): if the app's background refresh moved the
+  cursor since the read, it announced the mail and the extension shows a blank row - one mail is
+  never announced twice. Then it shows the sender and the subject (one mail), or "N nouveaux mails"
+  (several), and ends its session. The app in the foreground, or nothing new and unread: a blank
+  passive row the app removes. A sign-in REFUSED (`account.AUTH_FAILED`, `account.CHANGE_PASSWORD`,
+  the kinds of `libs/contracts/mail-fault-kinds.json`, copied as `MailPushRules.faultKinds`) erases
+  the Keychain item from the extension and logs it - Android's `REFUSED`: a refused password retried
+  at every push could lock the school account; the app writes a new copy after its next sign-in. No
+  item, another account, a failed read: the server's generic "Nouveau mail" stays, logged at error -
+  a stated degraded display. The Keychain write and erase are serialised in the page
+  (`mailPushSecret.ts`, one queue), and a write re-checks that "remember" still holds in its turn.
 - **Android** (`CanariFirebaseMessagingService.kt` -> `MailPushHandoff.kt`, routing in
   `mail/MailPush.kt`): the push is ONE `NativeMailWatcher.checkOnce` (lot 4b) - the inbox above the
   cursor, read with the sealed copy, and the same notices as the persistent run - on a worker thread
   under a wake lock (`runWithWakeLock("fcm_mail")`, it blocks on the network). `DONE`, `WATCHING`
   (the page or the persistent run notifies by itself) and `BUSY` post nothing more; `ACCOUNT_CLOSED`
   posts nothing (logged); `NOTHING_SEALED`, `REFUSED`, `UNAVAILABLE` and `FAILED` post ONE generic
-  "Nouveau mail" notice, logged at warn - a stated degraded display.
+  "Nouveau mail" notice, logged at warn - a stated degraded display. A push that finds a check
+  running (`BUSY`) sets a requested-again flag and tries once more; the running push check makes ONE
+  more pass while the flag is set, so a mail that arrived after its read is not dropped. Every `DONE`
+  is COUNTED: a `DONE` that moved no cursor read nothing new, an EMPTY push (`mail push metric:
+  empty=... doneTotal=... emptyTotal=...` in logcat) - the MAIL-N reading's ratio. The push stays
+  high priority.
 - **Web, desktop**: no mail push; lot 4 while open.
 
 ### D6, the remote forget (added 2026-11-28)
@@ -1376,14 +1433,28 @@ whatever `mail_push` says - the push rides on the registration every device has:
 | a session ends - logout, "sign out everywhere else", a refresh-token replay, a restore elsewhere | `DELETE /api/internal/push/users/:userId/sessions/:sessionId`, core-service's push-ending outbox |
 | the account is erased | `DELETE /api/internal/users/:userId` |
 
-The push is `{type:'mail-forget', userId}` (`utils/mail-forget.ts`): data-only, high priority on
-Android, a BACKGROUND push on iOS, both kept 28 days for a phone that is off. It is sent only for the
-push rows THAT delete removed - read, then deleted one by one under the same filter - so a device
-that signed in again meanwhile (its row rewritten with its new session) is never told to forget.
-On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls `canari_mail_forget`: the
-Keychain item goes when it names that account, and the shared cursor goes. On Android it goes to
-`NativeMailWatcher.forget(context, userId)` (lot 4b): that account's sealed copy erased, every native
-run stopped. It is the IMMEDIATE half; the
+The push is `{type:'mail-forget', userId, scope, registration?}` (`utils/mail-forget.ts`): data-only,
+high priority on Android, a BACKGROUND push on iOS, both kept 28 days for a phone that is off. It is
+sent only for the push rows THAT delete removed - read, then deleted one by one under the same
+filter - so a device that signed in again meanwhile (its row rewritten with its new session) is
+never told to forget. The session-end hook answers core-service FIRST and sends the forget after
+(`setImmediate`, failures logged), so FCM never runs inside core's 10 s call; the row list is the
+one its delete removed.
+
+**Exact on arrival too.** A push can arrive after the device signed in again (it was off, or the
+push was slow). The native handlers do not know the Canari session id, but they hold the push
+secret, and every registration draws a new one bound to exactly one session. So a `scope: session`
+forget carries `registration`, the first 32 hex of `sha256("canari-mail-forget|" + stored)` where
+`stored` is the row's hashed secret ('' for a legacy row with none); the device computes the same
+from its RAW secret (`sha256` hex, then the same digest) and forgets only if they match or it is
+signed out (Kotlin `forgetApplies`, Rust `forget_applies`, one vector in `mailPushSecret.test.ts`).
+`scope: device` (an owner's revocation) and `scope: account` (an erasure) forget unconditionally,
+as before. On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls
+`canari_mail_forget(userId, scope, registration)`, which reads the App Group's
+`push_secret.txt` and the sign-out mark: the Keychain item goes when it names that account, and
+the shared cursor goes. On Android it goes to `NativeMailWatcher.forget(context, userId)` (lot 4b)
+after the same check (`PushSecretKeystore.retrieve`, `PushRegistrationEnd.isSignedOut`): that
+account's sealed copy erased, every native run stopped. It is the IMMEDIATE half; the
 durable half is the device's own sign-out at its next refused refresh, which erases the same things.
 iOS delivers a background push at its own discretion (never to an app the user force-quit), which is
 why the durable half stays the guarantee.
@@ -1399,19 +1470,24 @@ why the durable half stays the guarantee.
    `MAIL_ALERT_HOOK_SECRET`; `--env dev` and `DEV_MAIL_ALERT_HOOK_SECRET`.
 4. Email Routing > Routing rules: a **catch-all** on each subdomain, action "Send to a Worker",
    `canari-mail-alert` (production) and `canari-mail-alert-dev` (dev).
-5. Have the privacy policy name Cloudflare as the carrier of the alert notice (register C34).
+5. CHECK (nothing to write): the privacy policy names Cloudflare Email Routing as the processor of
+   the alert notice (`/legal/privacy`, section 4 and section 2's School mail; register C34).
 6. Deploy (the secret reaches the container), then flip `/admin/platform` > "Notifications rapides
    des mails" to Cloudflare - dev first, read on both phones, then production.
 
 ### Tests
 
-`mailAlert.test.ts` (the measured rule shape, our rule FIRST and the user's rules written back
-verbatim and in order, removal of ours only, a rule of our name pointing elsewhere left alone,
-idempotence, join from the rule's address, leave/remove, orphan repair, a disabled rule replaced, a
-failed write taking the subscription back, the typed server refusals), `mailAlertSync.test.ts`,
-`mailPushSecret.test.ts` (the Keychain
-names, the SOAP URL, the inbox id, the cursor path and the forget type held together across Rust,
-Swift, Kotlin and the server)Swift, Kotlin and the server), `mailPushModesAgree.test.ts` (the five copies of `mail_push`),
+`mailAlert.test.ts` (the rule shape, the per-estate names and the other estate's rule untouched, our
+rule LAST and the user's rules written back verbatim and in order, removal of ours only, a rule of
+our name pointing elsewhere left alone, a change between the read and the write kept and retried, a
+read-back mismatch typed, idempotence, join from the rule's address, leave/remove, orphan repair, a
+disabled rule as an opt-out, a token collision redrawn, no read with the switch off and nothing of
+ours, the sign-out release, a failed write taking the subscription back, the typed server
+refusals), `mailAlertSync.test.ts`, `mailPushSecret.test.ts` (the Keychain names, the SOAP URL, the
+inbox id, the cursor path and lock, the fault table, the forget type and the registration
+fingerprint vector held together across Rust, Swift, Kotlin and the server),
+`mailWatcher.test.ts` (a cursor moved by another process is not overwritten),
+`mailPushModesAgree.test.ts` (the five copies of `mail_push`),
 `mailWatch.svelte.test.ts`; chat-delivery `mail-alert.service.spec.ts`,
 `mail-alert.controller.spec.ts`, `mail-forget.spec.ts`, the session-end and revocation specs;
 core-service platform and version specs; the Worker's `alert.test.ts`; Rust `mail_push_secret`
@@ -1421,16 +1497,15 @@ tests).
 ### Still open after lot 5
 
 - **The live alert test** on Partage, once routing exists: the lead's probe saves the WHOLE rule
-  list, installs the rule notifying a given alert address, sends one mail to self, restores the list
-  and checks it reads back identical. It also settles what was not measured: delivery of the notice
-  to the EXTERNAL alert domain, and that `ModifyFilterRulesRequest` accepts the list Zimbra answered
-  verbatim.
+  list, FIRST installs a non-trivial set of sample user rules (fileinto, tag, flag, address, date and
+  size tests, a nested `allof`, a disabled rule, a rule with `stop`), runs the client's exact guarded
+  read-modify-write (our rule LAST, the negated `allof`), checks every sample rule round-trips
+  verbatim, sends one mail to self, then restores the real original list and checks it reads back
+  identical - printing only counts and booleans. It settles what is NOT measured: the negated
+  header-test shape, the verbatim round-trip of rich rules, and delivery of the notice to the
+  EXTERNAL alert domain.
 - **The full path on the Mi 9T and the iPhone**, including the remote forget; the NSE and the iOS
   Rust FFI are not compiled here.
-- **Lot 4b resumes the persistent watch at boot whenever a sealed copy exists**
-  (`MailWatchService.resumeIfArmed`). With `mail_push = cloudflare` and "Connexion permanente" off,
-  the sealed copy is still needed (for `checkOnce`), so after a reboot the persistent watch runs
-  until the page next claims it: more battery, nothing lost. The resume must read the persistent
-  choice too.
-- **Cursors of lot 4 builds on iOS** stay in the app data dir, orphaned: the first read after the
-  update takes a new baseline (no mail announced twice, none of the gap announced).
+- **Cursors of lot 4 builds on iOS** stay in the app data dir until the first `mail_watch_forget`
+  (which erases them too); the first read after the update takes a new baseline (no mail announced
+  twice, none of the gap announced).

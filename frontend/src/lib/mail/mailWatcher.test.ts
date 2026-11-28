@@ -402,12 +402,41 @@ describe('the new-mail watcher', () => {
     expect(zimbra.soapNames).not.toContain('WaitSetRequest');
   });
 
+  it('a cursor another process moved since the read is not overwritten, and nothing is announced twice', async () => {
+    const memory = webCursorStore(localStorage);
+    let moveFirst = false;
+    const racing: MailCursorStore = {
+      read: (u) => memory.read(u),
+      // The iOS extension announces the mail and moves the cursor between this read and this write.
+      write: async (u, raw, e) => {
+        if (moveFirst) {
+          moveFirst = false;
+          const parsed = JSON.parse(raw) as { account: string; highest: number };
+          await memory.write(u, JSON.stringify({ v: 1, ...parsed }), e);
+          return memory.write(u, raw, e);
+        }
+        return memory.write(u, raw, e);
+      },
+      erase: (u) => memory.erase(u),
+    };
+    const { box, watcher, notified } = await setup(racing);
+    box.items = [{ id: 10, unread: true }];
+    const w = watcher();
+    expect(await w.checkOnce()).toBe('done');
+    box.items.push({ id: 11, unread: true });
+    moveFirst = true;
+    expect(await w.checkOnce()).toBe('done');
+    expect(notified).toEqual([]);
+    expect(await w.checkOnce()).toBe('done');
+    expect(notified).toEqual([]);
+  });
+
   it('a cursor that cannot be written notifies nothing: the next read announces the mail, once', async () => {
     let refuse = true;
     const memory = webCursorStore(localStorage);
     const flaky: MailCursorStore = {
       read: (u) => memory.read(u),
-      write: async (u, raw) => (refuse ? false : memory.write(u, raw)),
+      write: async (u, raw, e) => (refuse ? false : memory.write(u, raw, e)),
       erase: (u) => memory.erase(u),
     };
     const { box, watcher, notified } = await setup(flaky);

@@ -291,8 +291,9 @@ export class InternalController {
    * Idempotent: an answer of `removed: 0` is the ordinary second call, and a success. 2xx only when
    * the deletes ran, so the caller's retry stops on the truth; a 400 is an address no retry can fix.
    *
-   * Every row removed is first told to forget the school mailbox (mail lot 5, D6,
-   * `utils/mail-forget.ts`) - only the rows THIS call removed, so a re-sign-in is never reached.
+   * Every row removed is then told to forget the school mailbox (mail lot 5, D6,
+   * `utils/mail-forget.ts`) - only the rows THIS call removed, so a re-sign-in is never reached, and
+   * after the answer, so core-service never waits on Google or Apple.
    */
   @Delete('push/users/:userId/sessions/:sessionId')
   async endSessionPushRegistration(
@@ -330,7 +331,14 @@ export class InternalController {
         `device=${deviceId ?? 'unnamed'} ifBoundTo=${ifBoundToRaw ?? 'n/a'} ` +
         `removedBySession=${bySession.length} removedStale=${stale.length}`
     );
-    await this.forgetMail([...bySession, ...stale], 'session-ended');
+    // AFTER the answer: core-service's call has a 10 s budget, and the forget waits on Google and
+    // Apple. The row list is already exact; the send logs every failure itself (fire and log).
+    const forget = [...bySession, ...stale];
+    setImmediate(() => {
+      void this.forgetMail(forget, 'session-ended').catch((e: unknown) =>
+        this.logger.error(`[MAIL_FORGET] the session-end forget threw: ${String(e)}`)
+      );
+    });
     return { removed };
   }
 

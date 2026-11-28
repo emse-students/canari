@@ -80,6 +80,16 @@ describe('InternalController - a session end ends the device push registration',
     else process.env.INTERNAL_SECRET = previousSecret;
   });
 
+  /** The forget runs after the answer (`setImmediate`): one turn of the loop lets it start. */
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it('answers BEFORE the forget is sent: core-service never waits on Google or Apple', async () => {
+    await controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined);
+    expect(sendMailForget).not.toHaveBeenCalled();
+    await flush();
+    expect(sendMailForget).toHaveBeenCalledTimes(1);
+  });
+
   it('removes the row the ended session registered, by session alone when no device is named', async () => {
     await expect(
       controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
@@ -93,6 +103,7 @@ describe('InternalController - a session end ends the device push registration',
       sessionId: SID,
       id: 'row-1',
     });
+    await flush();
     expect(sendMailForget).toHaveBeenCalledWith([ROW], 'session-ended', expect.anything());
   });
 
@@ -105,6 +116,7 @@ describe('InternalController - a session end ends the device push registration',
     await expect(
       controller.endSessionPushRegistration(SECRET, 'user-1', SID, undefined, undefined)
     ).resolves.toEqual({ removed: 1 });
+    await flush();
     expect(sendMailForget).toHaveBeenCalledWith([ROW], 'session-ended', expect.anything());
   });
 

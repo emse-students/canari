@@ -5409,7 +5409,8 @@ static void CanariHandleWakeBackgroundFrame(NSDictionary *data,
  * - `wake`: a content-free wake-up push - its frame is fetched (`CanariHandleWakeBackgroundFrame`)
  *   and comes back through THIS allowlist, never around it.
  * - `mail-forget` (mail lot 5, D6): erase the extension's copy of the mailbox password and the
- *   shared mail cursor of the account it names (`canari_mail_forget`) - an erasure, never a write.
+ *   shared mail cursor of the account it names (`canari_mail_forget`) - an erasure, never a write;
+ *   an ended session's forget only when its registration is this install's current one.
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
@@ -5439,9 +5440,16 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
       done(UIBackgroundFetchResultNoData);
       return;
     }
-    int32_t status = canari_mail_forget(userId.UTF8String);
+    // An ended session's forget names its registration: a device that signed in again keeps its
+    // mailbox (`forget_applies`, mail_push_secret.rs).
+    NSString *scope = [data[@"scope"] isKindOfClass:[NSString class]] ? data[@"scope"] : nil;
+    NSString *registration =
+        [data[@"registration"] isKindOfClass:[NSString class]] ? data[@"registration"] : nil;
+    int32_t status = canari_mail_forget(userId.UTF8String, scope.UTF8String, registration.UTF8String);
     NSLog(@"[CanariPush] mail-forget status=%d", status);
-    done(status == 0 ? UIBackgroundFetchResultNewData : UIBackgroundFetchResultFailed);
+    done(status == 0   ? UIBackgroundFetchResultNewData
+         : status == 1 ? UIBackgroundFetchResultNoData
+                       : UIBackgroundFetchResultFailed);
     return;
   }
 

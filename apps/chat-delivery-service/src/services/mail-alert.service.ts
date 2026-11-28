@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { MailAlertDevice } from '../entities/mail-alert-device.entity';
 import { MailAlertToken } from '../entities/mail-alert-token.entity';
 import { PushToken } from '../entities/push-token.entity';
@@ -23,7 +23,20 @@ export const MAIL_ALERT_REFUSAL = {
   unconfigured: 'mail_alert_unconfigured',
   /** 409: the device has no push registration, so no push could reach it. */
   notRegistered: 'push_not_registered',
+  /** 409: another account already holds this token's hash (a collision): the client draws again. */
+  tokenTaken: 'mail_alert_token_taken',
 } as const;
+
+/** The unique constraint on `mail_alert_token.tokenHash` (migration 059). */
+const TOKEN_HASH_CONSTRAINT = 'UQ_mail_alert_token_hash';
+
+/** Whether `e` is Postgres refusing a second account the same token hash - read from the driver's typed field. */
+function isTokenHashTaken(e: unknown): boolean {
+  return (
+    e instanceof QueryFailedError &&
+    (e.driverError as { constraint?: unknown } | undefined)?.constraint === TOKEN_HASH_CONSTRAINT
+  );
+}
 
 /** What a subscription refusal carries. */
 export class MailAlertRefusal extends Error {
@@ -56,6 +69,11 @@ export interface MailAlertState {
   tokenLive: boolean;
   /** How many of the account's devices are subscribed. */
   devices: number;
+  /**
+   * Whether the account holds a token at all: a device that never subscribed reads it to know
+   * whether a rule of Canari's MAY exist before it reads the account's filter rules.
+   */
+  accountToken: boolean;
 }
 
 /**
@@ -68,6 +86,8 @@ export interface MailAlertState {
 @Injectable()
 export class MailAlertService {
   private readonly logger = new Logger(MailAlertService.name);
+  /** Alerts for a token nobody listens to (unknown, or no device left), since this process started. */
+  private orphanAlerts = 0;
 
   constructor(
     @InjectRepository(MailAlertToken) private readonly tokenRepo: Repository<MailAlertToken>,
@@ -104,14 +124,25 @@ export class MailAlertService {
       throw new MailAlertRefusal(MAIL_ALERT_REFUSAL.notRegistered, 409);
     }
     const tokenHash = hashMailAlertToken(token);
-    await this.tokenRepo.manager.transaction(async (manager) => {
-      const current = await manager.findOne(MailAlertToken, { where: { userId } });
-      if (current?.tokenHash !== tokenHash) {
-        await manager.upsert(MailAlertToken, { userId, tokenHash }, ['userId']);
-        this.logger.log(`[MAIL_ALERT] token ${current ? 'rotated' : 'set'} ${who}`);
-      }
-      await manager.upsert(MailAlertDevice, { userId, deviceId }, ['userId', 'deviceId']);
-    });
+    try {
+      await this.tokenRepo.manager.transaction(async (manager) => {
+        // The account's token row, LOCKED: a subscribe and an unsubscribe of one account serialise
+        // here, so "the last device left, the token goes" never races a device joining.
+        const current = await manager.findOne(MailAlertToken, {
+          where: { userId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (current?.tokenHash !== tokenHash) {
+          await manager.upsert(MailAlertToken, { userId, tokenHash }, ['userId']);
+          this.logger.log(`[MAIL_ALERT] token ${current ? 'rotated' : 'set'} ${who}`);
+        }
+        await manager.upsert(MailAlertDevice, { userId, deviceId }, ['userId', 'deviceId']);
+      });
+    } catch (e) {
+      if (!isTokenHashTaken(e)) throw e;
+      this.logger.warn(`[MAIL_ALERT] subscribe REFUSED ${who}: the token's hash is taken`);
+      throw new MailAlertRefusal(MAIL_ALERT_REFUSAL.tokenTaken, 409);
+    }
     this.logger.log(`[MAIL_ALERT] subscribed ${who}`);
     return { domain };
   }
@@ -123,6 +154,11 @@ export class MailAlertService {
   async unsubscribe(userId: string, deviceId: string): Promise<{ remaining: number }> {
     const who = `user=${cutUserId(userId)} device=${cutDeviceId(deviceId)}`;
     const remaining = await this.tokenRepo.manager.transaction(async (manager) => {
+      // Locked first, as in `subscribe`: the count below is then the truth when it is acted on.
+      await manager.findOne(MailAlertToken, {
+        where: { userId },
+        lock: { mode: 'pessimistic_write' },
+      });
       await manager.delete(MailAlertDevice, { userId, deviceId });
       const left = await manager.count(MailAlertDevice, { where: { userId } });
       if (left === 0) await manager.delete(MailAlertToken, { userId });
@@ -145,7 +181,14 @@ export class MailAlertService {
     this.logger.debug(
       `[MAIL_ALERT] state user=${cutUserId(userId)} mode=${mode} devices=${devices} mine=${mine} live=${tokenLive}`
     );
-    return { mode, domain: this.alertDomain(), deviceSubscribed: mine, tokenLive, devices };
+    return {
+      mode,
+      domain: this.alertDomain(),
+      deviceSubscribed: mine,
+      tokenLive,
+      devices,
+      accountToken: row !== null,
+    };
   }
 
   /**
@@ -162,10 +205,13 @@ export class MailAlertService {
     if (!row) {
       // A token rotated away or never subscribed: the account's filter rule still names it until a
       // device repairs it (lot 5's reconcile). Said at info - it names nobody.
-      this.logger.log('[MAIL_ALERT] alert for an unknown token - nothing sent');
+      this.orphanAlerts++;
+      this.logger.log(
+        `[MAIL_ALERT] alert for an unknown token - nothing sent (orphan alerts since start=${this.orphanAlerts})`
+      );
       return { status: 'unknown' };
     }
-    const userId = row.userId;
+    const { userId, tokenHash } = row;
     const subscribed = await this.deviceRepo.find({ where: { userId } });
     const tokens =
       subscribed.length === 0
@@ -176,9 +222,11 @@ export class MailAlertService {
     if (tokens.length === 0) {
       // Every subscribed device lost its registration (the cascade took the rows): the token is
       // useless alone, so it goes.
-      await this.tokenRepo.delete({ userId });
+      // By its hash too: a token rotated in since this read is not this one, and stays.
+      await this.tokenRepo.delete({ userId, tokenHash });
+      this.orphanAlerts++;
       this.logger.warn(
-        `[MAIL_ALERT] alert for user=${cutUserId(userId)} with no subscribed device - the token is deleted`
+        `[MAIL_ALERT] alert for user=${cutUserId(userId)} with no subscribed device - the token is deleted (orphan alerts since start=${this.orphanAlerts})`
       );
       return { status: 'no_device' };
     }

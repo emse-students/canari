@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -40,6 +41,27 @@ describe('the mail push secret, across Rust, Swift and the page', () => {
     expect(swift).toContain('"cursor_\\(secret.userId).json"');
   });
 
+  it('takes the one cursor lock the app takes', () => {
+    const lock = /const CURSOR_LOCK_FILE: &str = "([^"]+)"/.exec(watch)?.[1];
+    expect(lock).toBe('cursor.lock');
+    expect(swiftLet('cursorLockFile')).toBe(lock);
+  });
+
+  it('classifies the sign-in faults with the shared table', () => {
+    const shared = JSON.parse(
+      readFileSync(resolve(root, '../../libs/contracts/mail-fault-kinds.json'), 'utf8')
+    ) as { call: Record<string, string> };
+    const table = /static let faultKinds: \[String: String\] = \[([\s\S]*?)\n {2}\]/.exec(
+      swift
+    )?.[1];
+    const copy = Object.fromEntries(
+      [...(table ?? '').matchAll(/"([^"]+)": "([^"]+)"/g)].map((m) => [m[1], m[2]])
+    );
+    expect(copy).toEqual(shared.call);
+    // Only a refused password erases the copy (Android's REFUSED): the two kinds and nothing else.
+    expect(swift).toContain('kind == "bad_credentials" || kind == "password_change_required"');
+  });
+
   it('the remote forget is the type the server sends', () => {
     const server = readFileSync(
       resolve(root, '../../apps/chat-delivery-service/src/utils/mail-forget.ts'),
@@ -54,5 +76,32 @@ describe('the mail push secret, across Rust, Swift and the page', () => {
     );
     expect(kotlin).toContain('const val MAIL_FORGET_TYPE = "mail-forget"');
     expect(kotlin).toContain('const val MAIL_PUSH_TYPE = "mail"');
+  });
+
+  it('the forget of an ended session names its registration the same way on all three sides', () => {
+    // sha256("canari-mail-forget|" + hex(sha256(raw)))[0..32] - the server from the stored hash,
+    // the devices from the raw secret they hold.
+    const raw = '0123456789abcdef0123456789abcdef';
+    const stored = createHash('sha256').update(raw).digest('hex');
+    const vector = createHash('sha256')
+      .update(`canari-mail-forget|${stored}`)
+      .digest('hex')
+      .slice(0, 32);
+    expect(vector).toBe('57cad23f03e18d65f03c862440581f69');
+    const kotlinTest = readFileSync(
+      resolve(root, 'android-tests/src/test/kotlin/fr/emse/canari/MailPushTest.kt'),
+      'utf8'
+    );
+    const serverSpec = readFileSync(
+      resolve(root, '../../apps/chat-delivery-service/src/utils/mail-forget.spec.ts'),
+      'utf8'
+    );
+    for (const source of [rust, kotlinTest, serverSpec]) {
+      expect(source).toContain(raw);
+      expect(source).toContain(vector);
+    }
+    expect(objc).toContain(
+      'canari_mail_forget(userId.UTF8String, scope.UTF8String, registration.UTF8String)'
+    );
   });
 });

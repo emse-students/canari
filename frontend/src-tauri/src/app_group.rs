@@ -99,7 +99,7 @@ pub(crate) fn process_kind() -> crate::backup_exclusion::ProcessKind {
 /// `Library/Application Support/fr.emse.canari` - Tauri's `app_data_dir` on iOS, which holds the
 /// sign-out mark the opening reads (`backup_exclusion::carry_sign_out`). `None` when Foundation
 /// answers no Application Support directory. Never created here: an absent directory holds no mark.
-fn app_data_dir() -> Option<PathBuf> {
+pub(crate) fn app_data_dir() -> Option<PathBuf> {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
     use std::ffi::{c_char, CStr};

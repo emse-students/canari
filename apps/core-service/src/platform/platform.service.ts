@@ -354,7 +354,7 @@ export class PlatformService implements OnModuleInit {
       changes.mailMode = dto.mailMode;
     }
     if (dto.mailPush !== undefined) {
-      // Whether every eligible account's new-mail alert may go through Cloudflare - who moved it,
+      // Whether an account's filter-rule notice may go through Cloudflare - who moved it,
       // and when, is a warn line.
       if (dto.mailPush !== row.mailPush) {
         this.logger.warn(`mailPush ${row.mailPush} -> ${dto.mailPush} by=${by}`);

@@ -131,6 +131,7 @@
           ce mail, pour qu'aucun expéditeur ne sache quand et où vous l'avez lu (principe 3, votre
           attention n'est pas à vendre).
         </dd>
+        <dd>{m.legal_privacy_mail_fast_notifications()}</dd>
       </div>
       <div>
         <dt>Messages privés et de groupe</dt>
@@ -875,6 +876,7 @@
           mais jamais le son, chiffré de bout en bout. Notre serveur obtient pour chaque appel un
           accès temporaire au relais sans transmettre à Cloudflare aucun identifiant de compte.
         </p>
+        <p>{m.legal_privacy_cloudflare_mail_alert()}</p>
       </li>
       <li>
         <p class="legal-block-title">Services de l'écosystème</p>

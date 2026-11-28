@@ -10,8 +10,11 @@ Owed, in order:
    reading back identical after a round trip.
 2. **The readings on both phones** with `mail_push = cloudflare` on dev: a mail arrives, the
    notification names its sender within seconds; a device revoked from another forgets the mailbox
-   (Android: the sealed copy erased by `NativeMailWatcher.forget`).
-3. **Lot 4b's boot resume reads the persistent choice**: `MailWatchService.resumeIfArmed` resumes
-   the persistent watch whenever a sealed copy exists, so with `cloudflare` and "Connexion
-   permanente" off a reboot runs it anyway (battery, nothing lost). Done when a reboot with the
-   choice off leaves no foreground service on the Mi 9T.
+   (Android: the sealed copy erased by `NativeMailWatcher.forget`), and one that signed in again
+   before the forget arrived keeps it; a password changed in the webmail erases the iPhone's copy
+   at the next push (`mail-refused`) instead of being retried.
+3. **MAIL-N, the empty pushes**, on dev with `cloudflare` for a week of real mail: on Android the
+   ratio `emptyTotal / doneTotal` of the `mail push metric` logcat line (a check that moved no cursor),
+   on iOS the count of blank passive rows (`mail-nothing-new`, `mail-foreground`) against the mail
+   notices shown. High priority stays while the ratio is small; a large one names its cause (the
+   page or lot 4 taking the mail first, or a notice for a mail the inbox query does not show).

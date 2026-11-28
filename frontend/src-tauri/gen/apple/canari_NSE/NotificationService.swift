@@ -3920,6 +3920,38 @@ enum MailPushRules {
   static let inboxFolderId = "2"
   /// One page of the inbox, newest id first - as many mails as a notification counts.
   static let pageSize = 20
+  /// The lock file every cursor write takes, here and in the app (`mail_watch.rs` `CURSOR_LOCK_FILE`).
+  static let cursorLockFile = "cursor.lock"
+
+  /// The Zimbra fault codes and their kinds - a copy of `libs/contracts/mail-fault-kinds.json`'s
+  /// `call` table (`mailPushSecret.test.ts` holds the copies equal).
+  static let faultKinds: [String: String] = [
+    "account.AUTH_FAILED": "bad_credentials",
+    "account.CHANGE_PASSWORD": "password_change_required",
+    "account.ACCOUNT_INACTIVE": "account_unavailable",
+    "account.NO_SUCH_ACCOUNT": "not_found",
+    "account.MAINTENANCE_MODE": "maintenance",
+    "service.AUTH_REQUIRED": "session_expired",
+    "service.AUTH_EXPIRED": "session_expired",
+    "mail.NO_SUCH_MSG": "not_found",
+    "mail.NO_SUCH_CONV": "not_found",
+    "mail.NO_SUCH_FOLDER": "not_found",
+    "mail.NO_SUCH_ITEM": "not_found",
+    "mail.NO_SUCH_PART": "not_found",
+    "mail.NO_SUCH_UPLOAD": "not_found",
+    "mail.QUERY_PARSE_ERROR": "invalid_query",
+    "mail.MESSAGE_TOO_BIG": "too_large",
+    "mail.UPLOAD_REJECTED": "too_large",
+    "mail.QUOTA_EXCEEDED": "quota_exceeded",
+    "admin.NO_SUCH_WAITSET": "wait_lost",
+  ]
+
+  /// Whether the sign-in's fault says the password is refused - Android's `REFUSED`: trying it
+  /// again at every push could lock the school account, so the extension erases its copy.
+  static func refusesPassword(faultCode: String?) -> Bool {
+    guard let code = faultCode, let kind = faultKinds[code] else { return false }
+    return kind == "bad_credentials" || kind == "password_change_required"
+  }
 
   static func parseSecret(_ data: Data) -> MailPushSecret? {
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -4018,22 +4050,33 @@ extension NotificationService {
     let cursor = (try? Data(contentsOf: cursorUrl)).flatMap {
       MailPushRules.parseCursor($0, account: secret.account)
     }
-    guard let token = mailAuth(secret) else {
+    let auth = mailAuth(secret)
+    guard let token = auth.token else {
+      if MailPushRules.refusesPassword(faultCode: auth.fault) {
+        // The school refused the password: never tried again from here (a lock-out risk). The app
+        // writes a new copy after its next sign-in.
+        Self.eraseMailPushSecret()
+        return finishMailGeneric(cause: "refused")
+      }
       return finishMailGeneric(cause: "auth")
     }
     defer { mailEndSession(token) }
-    guard let body = mailCall(Self.mailSearchBody(), token: token) else {
+    guard let body = mailCall(Self.mailSearchBody(), token: token).body else {
       return finishMailGeneric(cause: "search")
     }
     let items = MailPushRules.parseItems(body)
     let (highest, fresh) = MailPushRules.decide(items: items, cursor: cursor)
     if highest != cursor {
-      do {
-        try FileManager.default.createDirectory(
-          at: cursorUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try MailPushRules.cursorJson(account: secret.account, highest: highest)
-          .write(to: cursorUrl, options: .atomic)
-      } catch {
+      switch Self.writeCursorIfUnmoved(
+        url: cursorUrl, account: secret.account, highest: highest, expected: cursor)
+      {
+      case .written:
+        break
+      case .moved:
+        // The app's background refresh read and announced this mail first: nothing twice.
+        NseLog.log.notice("[CanariNSE] [MAIL] the cursor moved since the read - announced elsewhere")
+        return finishMailBlank(content: content, outcome: "mail-nothing-new")
+      case .failed:
         // Not written: showing the mail now would announce it twice (the app reads the old cursor).
         return finishMailGeneric(cause: "cursor-not-written")
       }
@@ -4108,6 +4151,51 @@ extension NotificationService {
     return MailPushRules.parseSecret(data)
   }
 
+  /// Deletes the extension's Keychain item (the password was refused). Said either way.
+  private static func eraseMailPushSecret() {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: MailPushRules.keychainService,
+      kSecAttrAccount as String: MailPushRules.keychainAccount,
+      kSecAttrAccessGroup as String: appGroupId,
+    ]
+    let status = SecItemDelete(query as CFDictionary)
+    if status == errSecSuccess || status == errSecItemNotFound {
+      NseLog.log.notice("[CanariNSE] [MAIL] the refused password's copy is erased")
+    } else {
+      NseLog.log.error(
+        "[CanariNSE] [MAIL] ERROR the refused password's copy was NOT erased (status=\(status, privacy: .public))")
+    }
+  }
+
+  enum CursorWrite { case written, moved, failed }
+
+  /// COMPARE-AND-SET of the shared cursor under the lock the app takes too (`mail_watch.rs`
+  /// `write_cursor_if`): written only while the file still holds `expected` (what this run read).
+  private static func writeCursorIfUnmoved(url: URL, account: String, highest: Int, expected: Int?)
+    -> CursorWrite
+  {
+    let dir = url.deletingLastPathComponent()
+    do {
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    } catch {
+      return .failed
+    }
+    let lockFd = open(dir.appendingPathComponent(MailPushRules.cursorLockFile).path, O_WRONLY | O_CREAT, 0o644)
+    guard lockFd >= 0 else { return .failed }
+    defer { close(lockFd) }
+    guard flock(lockFd, LOCK_EX) == 0 else { return .failed }
+    defer { flock(lockFd, LOCK_UN) }
+    let now = (try? Data(contentsOf: url)).flatMap { MailPushRules.parseCursor($0, account: account) }
+    guard now == expected else { return .moved }
+    do {
+      try MailPushRules.cursorJson(account: account, highest: highest).write(to: url, options: .atomic)
+      return .written
+    } catch {
+      return .failed
+    }
+  }
+
   private static func mailSearchBody() -> [String: Any] {
     [
       "SearchRequest": [
@@ -4121,15 +4209,16 @@ extension NotificationService {
     ]
   }
 
-  /// One Zimbra JSON SOAP call; the answer's `Body`, or nil (a fault, a transport failure - logged).
-  private func mailCall(_ body: [String: Any], token: String?) -> [String: Any]? {
+  /// One Zimbra JSON SOAP call: the answer's `Body`, or nil with the fault's code when Zimbra
+  /// answered one (nil and nil: a transport failure) - each logged.
+  private func mailCall(_ body: [String: Any], token: String?) -> (body: [String: Any]?, fault: String?) {
     var envelope: [String: Any] = ["Body": body]
     if let token = token {
       envelope["Header"] = ["context": ["_jsns": "urn:zimbra", "authToken": ["_content": token]]]
     }
     guard let url = URL(string: MailPushRules.soapUrl),
       let payload = try? JSONSerialization.data(withJSONObject: envelope)
-    else { return nil }
+    else { return (nil, nil) }
     var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
     req.httpMethod = "POST"
     req.httpBody = payload
@@ -4144,24 +4233,25 @@ extension NotificationService {
     _ = sem.wait(timeout: .now() + 9.0)
     guard let (data, status) = answer else {
       NseLog.log.error("[CanariNSE] [MAIL] ERROR the mailbox did not answer")
-      return nil
+      return (nil, nil)
     }
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let bodyOut = json["Body"] as? [String: Any]
     else {
       NseLog.log.error("[CanariNSE] [MAIL] ERROR an unreadable answer status=\(status, privacy: .public)")
-      return nil
+      return (nil, nil)
     }
     if let fault = bodyOut["Fault"] as? [String: Any] {
       let detail = (fault["Detail"] as? [String: Any])?["Error"] as? [String: Any]
       let code = detail?["Code"] as? String ?? "?"
       NseLog.log.error("[CanariNSE] [MAIL] ERROR fault \(code, privacy: .public)")
-      return nil
+      return (nil, code)
     }
-    return bodyOut
+    return (bodyOut, nil)
   }
 
-  private func mailAuth(_ secret: MailPushSecret) -> String? {
+  /// Signs in: the token, or nil with the fault code Zimbra answered (nil: a transport failure).
+  private func mailAuth(_ secret: MailPushSecret) -> (token: String?, fault: String?) {
     let body: [String: Any] = [
       "AuthRequest": [
         "_jsns": "urn:zimbraAccount",
@@ -4169,20 +4259,22 @@ extension NotificationService {
         "password": ["_content": secret.password],
       ] as [String: Any]
     ]
-    guard let answer = mailCall(body, token: nil),
-      let auth = answer["AuthResponse"] as? [String: Any]
-    else { return nil }
+    let call = mailCall(body, token: nil)
+    guard let answer = call.body, let auth = answer["AuthResponse"] as? [String: Any]
+    else { return (nil, call.fault) }
     if let many = auth["authToken"] as? [[String: Any]], let t = many.first?["_content"] as? String {
-      return t
+      return (t, nil)
     }
-    if let one = auth["authToken"] as? [String: Any], let t = one["_content"] as? String { return t }
-    return nil
+    if let one = auth["authToken"] as? [String: Any], let t = one["_content"] as? String {
+      return (t, nil)
+    }
+    return (nil, nil)
   }
 
   /// Ends the session this process opened (its token stops working). Best effort, said when it fails.
   private func mailEndSession(_ token: String) {
     let body: [String: Any] = ["EndSessionRequest": ["_jsns": "urn:zimbraAccount", "logoff": "1"]]
-    if mailCall(body, token: token) == nil {
+    if mailCall(body, token: token).body == nil {
       NseLog.log.notice("[CanariNSE] [MAIL] the session was not ended - it expires on its own")
     }
   }

@@ -41,6 +41,7 @@ import {
   forgetMailNotificationsSwitch,
   mailNotificationsWanted,
   mailPersistentWanted,
+  setMailNotificationsWanted,
 } from './mailWatchSwitch.svelte';
 import { readRememberedMailPassword } from './sealedMailPassword';
 import { ZimbraSoapClient } from './soapClient';
@@ -543,6 +544,8 @@ async function runAlertSync(userId: string, want: boolean): Promise<MailAlertOut
         })
       ),
       store: localStorage,
+      // The user disabled Canari's rule in the webmail: an opt-out, so this device stops asking.
+      onOptOut: () => setMailNotificationsWanted(userId, false),
     },
     want
   );
@@ -580,7 +583,11 @@ async function writeExtensionSecret(userId: string): Promise<void> {
     await eraseMailPushSecret('the password is not remembered');
     return;
   }
-  await storeMailPushSecret(userId, read.remembered.account, read.remembered.password);
+  // Re-checked in the write's turn: a forget queued since the read above wins (`mailPushSecret.ts`).
+  await storeMailPushSecret(userId, read.remembered.account, read.remembered.password, async () => {
+    const again = await readRememberedMailPassword(userId, deviceKey);
+    return again.kind === 'opened';
+  });
 }
 
 /**
