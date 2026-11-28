@@ -1,6 +1,8 @@
 ## P3 - Read the usage page's line charts and headline figures on dev
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 `/admin/usage` gained, on 2026-11-26 (owner feedback: *"j'aimais bien les graphiques d'avant aussi, et les ordres de grandeurs journee/semaine/mois"*), the shared line chart and a headline with the last complete period
 ([usage dashboard](../usage-dashboard.md#the-page-adminusage)). It was proved on seeded data at 1280 and 390 px, never on the real figures.

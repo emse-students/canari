@@ -1,6 +1,8 @@
 ## Reading owed - the picked file's copy shows its progress, and a pick over the ceiling is said as too large (2026-11-26)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 

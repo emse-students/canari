@@ -1,6 +1,8 @@
 ## Reading owed - the Minesweeper tutorial path, Le Pic, the miner's lamp and the mode modal read well on a phone (2026-11-27)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 **Built and tested in happy-dom, never seen on a device** ([the path](../frontend/modules/minesweeper.md#the-tutorial-path-owner-2026-11-27), [the modal](../frontend/modules/minesweeper.md#the-game-mode-modal-owner-2026-11-27)). The owner validated the design on a canvas on 2026-11-27 and ruled out any streak, flame, medal or points (charter, principle 3). It replaces items 11 to 14 of [the earlier reading](reading-owed-the-minesweeper-hint.md) that concern the tutorial's list of lessons, the pattern catalogue's route and the bottom sheet; the others (levels, ranked, pages) stay with it.
 

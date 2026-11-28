@@ -1,6 +1,8 @@
 ## P3 - reading owed: a photo sent as a reply has no frame, and its quote shows a thumbnail
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built 2026-11-27 on the owner's two minifixes ([chat](../frontend/modules/chat.md#a-quoted-photo-is-drawn-not-named-2026-11-27)). Owed on a phone, both themes, a DM:
 

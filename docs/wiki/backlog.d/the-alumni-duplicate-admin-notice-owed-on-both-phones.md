@@ -1,6 +1,8 @@
 ## The Alumni duplicate admin notice, owed on both phones (a reading for 1.8.3; owner, 2026-11-26)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built: the Alumni duplicates are the fourth admin queue
 ([admin](../frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)): a push
