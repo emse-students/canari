@@ -1,8 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { X } from '@lucide/svelte';
-  import Button from '$lib/components/ui/Button.svelte';
+  import FeedPromptCard from './FeedPromptCard.svelte';
   import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
   import { profileSectionHref } from '$lib/profile/profileSections';
@@ -40,20 +39,11 @@
 </script>
 
 {#if visible}
-  <div
-    class="border-cn-border bg-cn-surface mb-4 flex items-center gap-2 rounded-2xl border py-2 pr-2 pl-4"
-    data-testid="birthday-feed-card"
-  >
-    <p class="text-text-main min-w-0 flex-1 text-sm font-medium">{m.birthday_card_title()}</p>
-    <Button variant="secondary" size="compact" onclick={add}>{m.birthday_card_action()}</Button>
-    <Button
-      variant="ghost"
-      size="compact"
-      icon
-      aria-label={m.common_close_label()}
-      onclick={() => dismiss('dismissed')}
-    >
-      <X size={16} />
-    </Button>
-  </div>
+  <FeedPromptCard
+    testid="birthday-feed-card"
+    title={m.birthday_card_title()}
+    actionLabel={m.birthday_card_action()}
+    onaction={add}
+    ondismiss={() => dismiss('dismissed')}
+  />
 {/if}
