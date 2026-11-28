@@ -14,6 +14,196 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-11-28
+
+### Fixed - the dashboard's moderation row no longer speaks of the agenda over a count of reports
+
+Its description named the agenda while its badge sums every queue the reader may act on; both descriptions now name no single queue ([admin](docs/wiki/frontend/modules/admin.md)).
+
+### Added - the admission card read on a built state (ADM-11, ADM-12)
+
+The card for a person with no leaf whose seat is not an invitation-link ask was never reached through the product's own revoke path; the rig now builds that state (`archive/admitcard.mjs`) and read it on dev: the card shows, Refuser removes the seat and the person's external commit is then refused, Accepter brings them back ([admission fix-forward](docs/wiki/protocols/admission-fix-forward.md#slice-2s-reading-on-a-built-state-2026-11-26)).
+
+### Added - an Alumni duplicate is an admin queue: a push and a bell row to every admin once, a live count, cleared when one admin marks it for a merge
+
+The Alumni duplicates were the one admin page outside the queue mechanism of 2026-11-18. A duplicate is now flagged when found and told once to every global admin with no name, counted on the Administration entry and on its row, and gone for everyone as soon as one admin marks it or answers "Pas un doublon" (an alumnus nobody on the CAS side matches is listed but never pushed or counted; a notice a failed call lost is told again at the next reading or sign-in, and a duplicate is never told twice, whatever is replayed or run at once) ([admin](docs/wiki/frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)).
+
+### Changed - the Alumni link reminder is a quiet feed card plus a settings row, no longer a top banner
+
+The blue top banner is gone: the reminder is now the same one-line card as "Votre anniversaire ?", with a "Lier" action and a cross that dismisses it for good on every device, and a "Lier mon compte Alumni" row in the security settings that stays under the same rule and never goes away until the link exists; MiConnect's own blocking stage remains the backstop ([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Added - the Alumni merge completes on MiConnect's push, can be done by hand, and follows on the sibling sites
+
+MiConnect now pushes each completed merge to Canari, and its journal line survives the duplicate's deletion. An admin can attach an Alumni account to an account of another name with a written reason. A completed merge queues one job per sibling site, which a later erasure of the person never drops: it erases the duplicate there instead ([profiles-and-access](docs/wiki/profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)).
+
+### Fixed - a campus trend push names its post again, so a post already displayed on the device stays silent and the banner opens the post
+
+The trend push dropped its `postId` (passed beside the fields `pushNotice` reads, never in its push data), so neither phone could recognise a post it had displayed and the banner opened the feed; each end of the device's decision is now logged, a trend naming no post as a warning ([engagement](docs/wiki/engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)).
+
+### Fixed - a Cercle top-up parked for a member not yet signed in there is followed to its end
+
+Canari now re-sends a parked top-up every six hours until Le Cercle answers that it is credited, then records it delivered - and moves it to the failure list if Le Cercle answers an error instead; `/admin/cercle` lists the parked ones with their age, the weekly cleanup keeps them, a daily log line counts those waiting more than 7 days, and no status write can undo a delivery ([cotisations](docs/wiki/cotisations.md#outbound-canari---cercle-balance_topup-webhook)).
+
+### Fixed - a top-up paid for a member who has never signed in to Le Cercle is parked there and credited at first sign-in, instead of waiting for a retry
+
+Le Cercle answered `404` and Canari retried it on a backoff, so the credit landed minutes to hours after the first sign-in. Le Cercle now parks it and answers `202`, which Canari records as `parked`, off the failure ladder and re-sent every six hours until Le Cercle answers it credited; a `404` stays a failure ([cotisations](docs/wiki/cotisations.md#outbound-canari---cercle-balance_topup-webhook)).
+
+### Fixed - the picker's merge-duplicate integration spec now runs in CI
+
+`picker-merging-duplicate.integration.spec.ts` (#4170) was skipped on every pull request because no `ci.yml` step set its database; it now has one beside the other core integration specs ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a group set to "Aucune" no longer rings an iPhone woken by its silent push
+
+The server already sent such a message silent, but iOS woke the app in the background, which decrypted it before the sign-in read of the notification settings answered and raised it as "all". The device now keeps the account's last answered settings, decides on them until the server answers, and drops a decision left over from a signed-out account ([chat-delivery](docs/wiki/services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)).
+
+### Changed - the formation FSSS is now called FISA, and ISTP is no longer mentioned
+
+FSSS and FISA are the same apprentice population (owner, 2026-11-26): the lists, the enrolment
+prompt and every stored value (migration 187, in place, ids kept) say FISA, and the read-access note
+about ISTP is gone ([profiles-and-access, D4](docs/wiki/profiles-and-access.md)).
+
+### Added - "Tester l'envoi" in a form's preview
+
+An organiser can try a form's send from its preview: the answer is judged exactly as the real send judges it and the total it would charge is shown, while nothing is sent, stored or announced, so nobody who pressed the bell is told ([forms](docs/wiki/frontend/modules/forms.md#tester-lenvoi-in-the-preview-owner-2026-11-17-built-2026-11-26)).
+
+### Fixed - a form preview's "Tester l'envoi" says a format fault on the question
+
+A number outside its bounds or an invalid e-mail is now worded on the question's card, as the real send refuses it; the card hid the fault once the question held an answer ([forms](docs/wiki/frontend/modules/forms.md#tester-lenvoi-in-the-preview-owner-2026-11-17-built-2026-11-26)).
+
+### Fixed - the "send history" button can be read on a pre-release estate
+
+The button was gated on a client floor of `1.8.3`, which no pre-release estate can serve (a 1.8.3 alpha orders below it and would be locked out). The gate now names the first alpha that draws the notice (`1.8.3-alpha.1`), the floor setting accepts `x.y.z-alpha.N`, and the server and the version report order pre-releases like the client does ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)).
+
+### Fixed - a verdict earned on one HTTP stack is lifted only by that stack, the touch answer names the server's window, and a leaving page releases its socket at once
+
+On a phone the WebView's reads could lift an "unreachable" verdict that a plugin write had earned and flap it four times in four seconds; the probe now asks through the stack that failed and only its answer lifts it ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#two-stacks-one-verdict-183)). `POST /api/media/touch` now answers the window the server keeps each object for, so the media cache cap compares against it instead of a 30-day guess ([media-service](docs/wiki/services/media-service.md)). The page's `pagehide` sends the socket's disconnect and native release together (the reload's `Couldn't find callback id` lines), the post search's magnifier and clear cross stay inside the field (web and phones), and three comments and one iOS guard of the `@tous` work are corrected.
+
+### Fixed - a rebuild that fails leaves no transaction open, a kept copy never resurrects deleted rows, a close never overlaps an open, a dismissed biometric sheet is not logged as an empty keystore
+
+The v23 rebuild's scripts recycle the connection pool on failure (never leaving it closed), the set-aside copy follows the user's deletions, `closeCachedStore` waits out an open of the same file, and a dismissed sheet carries its own code ([local-store-rebuild](docs/wiki/frontend/local-store-rebuild.md), [auth](docs/wiki/frontend/modules/auth.md)).
+
+### Fixed - the image scan: libxml2 2.13.9-r5 in the two Alpine images we build, PAM deb12u3 in the two Rust runtimes
+
+Alpine fixed `CVE-2026-11979` and five more in `libxml2 2.13.9-r5`, and Debian fixed `CVE-2025-6020` in `libpam-modules 1.5.2-6+deb12u3`. The frontend and adminer images now upgrade `libxml2` to r5, call-service and chat-gateway run `apt-get upgrade`, and adminer's `libpq` upgrade (a no-op since the base carries 18.7) is gone ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - iPhone: a conversation opened from a banner is read without a touch
+
+The iPhone's WebView reports no focus until the first touch, so a conversation landed from a banner tap was neither marked read nor had its other banners removed; on a phone the app's own foreground now decides ([reading](docs/wiki/device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)).
+
+### Fixed - the iPhone share sheet forgets the previous account's senders after a sign-out
+
+The notification extension now erases its own message donations on its next run once their account is no longer signed in, and once on an install from before this change (the app's delete cannot reach another bundle's donations) ([mobile](docs/wiki/frontend/mobile.md#communication-notifications-owner-2026-11-21)).
+
+### Fixed - a message reached by a jump or a search is outlined along its own bubble, not boxed in a rectangle
+
+The accent outline used to wrap the whole row (reply header, quoted chip and bubble); it now sits on the bubble element and follows its rounded and grouped corners ([chat](docs/wiki/frontend/modules/chat.md#the-jump-outline-follows-the-bubble-2026-11-26)).
+
+### Changed - the profile notepad moves into "Mes notes", which states its retention and can be deleted
+
+A device holding a profile notepad posts it into "Mes notes" once, then has the server delete it; the old routes answer `410 NOTEPAD_MOVED`, the notepad section leaves the profile, the conversation says its media follow the 90-day retention, and its header offers its delete ([chat](docs/wiki/frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
+
+### Fixed - the daily drift report no longer goes red on MiConnect's in-app browser gate, which is put in by hand later by design
+
+`gate` (#4103) is pinned in MiConnect's compose file but stands only once every sibling site gates itself; the report now takes a dated `absent` row for a service deliberately not running yet, and turns red again at its date ([authentik](docs/wiki/infrastructure/authentik.md#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)).
+
+### Changed - the MiConnect terms say the truth without asking anyone to accept again, and the sign-in notice is two sentences
+
+`/legal/miconnect` drops the archives, names the wiki among the sites the Alumni contribution rule opens, and names the MDE network console. A minor revision no longer asks every account to accept again: only a change of version does, and this one keeps `2026-11-24`. The notice shown at sign-in is reduced to two sentences and the link ([decisions](docs/wiki/decisions/owner-decisions-of-2026-11-27.md)).
+
+### Fixed - a MiGallery album link shows its card again, private albums included
+
+MiGallery v2.23.1 made `/api/albums/[id]/info` the staff's, so Canari's read key got a 403, silently, and every album link drew the generic MiGallery card. Canari now reads MiGallery's read-scoped `/api/albums/[id]/preview` (title, date, place, wide cover for every visibility) and every fallback branch logs with its status ([chat-delivery](docs/wiki/services/chat-delivery.md#who-carries-the-migallery-key-and-who-does-not)).
+
+### Changed - every Minesweeper tutorial grid is solvable only through its pattern
+
+The grids show their pattern's numbers and nothing else: the other open cells are `?` and the board goes on into
+fog instead of ending on a wall, and the proof checks that every number is needed and that no edge or bystander
+number gives a shortcut
+([catalogue](docs/wiki/frontend/modules/minesweeper.md#the-pattern-catalogue-the-tutorials-annex-owner-2026-11-26)).
+
+### Changed - the Minesweeper pattern grids keep only what speaks
+
+A `?` that touches no hidden cell is shown as the empty open cell it is, border lines that say nothing are
+cropped, and a cell opened in a pattern grid shows "?" instead of a number about the fog
+([catalogue](docs/wiki/frontend/modules/minesweeper.md#the-pattern-catalogue-the-tutorials-annex-owner-2026-11-26)).
+
+### Changed - the Minesweeper tutorial asks the gestures once and plays them as the game does
+
+Before the first lesson the player chooses what a short press (a left click) does, dig or flag, stored where the
+game reads it; the mini-grid plays the game's short and long press, and one quiet line under it replaces the
+Miner / Drapeau buttons
+([tutorial](docs/wiki/frontend/modules/minesweeper.md#the-tutorial-owner-2026-11-25)).
+
+### Changed - the Minesweeper tutorial is a path led by Le Pic, the hint is a miner's lamp, and a new game starts from one "Nouvelle partie" modal
+
+`/games/tutorial` is now a path with two tabs ("Les bases", "Motifs") of tiles you can open in any order, one screen per lesson with Le Pic and a speech bubble, and a per-device record of what you finished - no streak, no points ([tutorial path](docs/wiki/frontend/modules/minesweeper.md#the-tutorial-path-owner-2026-11-27)). The hint button of an unranked game is the same miner's lamp, "Libre" is renamed "Entraînement", and the mode chooser is a centered modal that opens by itself only at the first game on a device ([mode modal](docs/wiki/frontend/modules/minesweeper.md#the-game-mode-modal-owner-2026-11-27)).
+
+### Changed - MinoWiki is gated like MiGallery and Le Cercle, and Archives MINO is retired from MiConnect
+
+MiConnect lets a person into MinoWiki under the same rule as MiGallery and Le Cercle (the free window, a post, an Alumni contribution this year, the group `acces-mino-wiki`, or one of the wiki's own `mino-*` roles), and its provider offers no refresh grant. The Archives MINO application and provider are deleted at the next stable, and signing out of the wiki returns to the wiki instead of the archives ([mino-access](docs/wiki/infrastructure/mino-access.md#archives-mino-is-retired-2026-11-27)).
+
+### Changed - a new device's restore can be measured on both sides
+
+Every accepted commit now logs how long it waited for the MLS mutex and where its hold went (checkpoint, request), every checkpoint names what asked for it, and every profile batch counts the ids asked again - the three lines that decide how to speed up a new device's restore ([the entry](docs/wiki/backlog.d/p2-a-new-device-restore-is-paced-by-one-device-adding-it-group-by-group.md)).
+
+### Fixed - a duplicate waiting for its Alumni merge is in no person picker, and homonyms are told apart
+
+The user search and the directory leave out the account of a duplicate that is waiting for its Alumni merge. The pickers and the mention list show the promo, or the formation, beside two people who have the same name ([profiles-and-access](docs/wiki/profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)).
+
+### Fixed - post display polish: full text on the post page, one date, a viewer titled and downloadable, audio in the voice-note player
+
+A post's own page shows its whole text, the moderation preview opens the reel viewer on the reported post alone, a comment picture's viewer carries the comment's author and date, a grid's viewer offers Download, the reel viewer dates a post by its publication like the card, and an audio file of a post plays in the voice-note player. Decisions: [2026-11-26](docs/wiki/decisions/owner-decisions-of-2026-11-26.md).
+
+### Changed - a photo sent as a reply has no yellow frame, and a quoted photo shows as a small thumbnail
+
+An own image or video answering a message is drawn like a plain one with its quote stacked above, and the quote of a photo or video draws it small and dimmed from what the phone already holds instead of the word "Photo" ([chat](docs/wiki/frontend/modules/chat.md#a-quoted-photo-is-drawn-not-named-2026-11-27)).
+
+### Fixed - a reply never changes how its own message is framed
+
+A lone emoji, a link, a GIF, a voice note, a file or a captioned photo sent as a reply is drawn exactly as it is without the reply, the quote being a separate block above ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a photo sent as a reply keeps its quote after a restart (and for the peer), the reload leaves no callback line, the replay shows the whole grid
+
+A file sent as a reply lost its quote when its upload ended in the same page life: the frame, the stored row and the peer's copy were built without it, and only the sender's screen kept drawing it until the app was killed ([chat](docs/wiki/frontend/modules/chat.md#a-reply-keeps-its-quote-after-a-restart-2026-11-27)); a restored row also lost its quote thumbnail. A leaving page now closes its socket with the "going away" code and the plugin forwards nothing after it, which removes the last `[TAURI] Couldn't find callback id` of a reload ([mobile](docs/wiki/frontend/mobile.md)). The minesweeper replay fitted 14 px cells where the iPhone's room allowed 13, so the bottom row sat under the controls; cells now go down to 8 px with their digit and icon scaled ([minesweeper](docs/wiki/frontend/modules/minesweeper.md)).
+
+### Changed - a salon history load says why it started, and every stale declaration is logged
+
+The iPhone's four requests for one open could not be named from the log; each declaration and each load that does not join the one in flight now leaves a line ([backlog](docs/wiki/backlog.d/p3-ios-opening-a-salon-loads-the-history-page-four-times-within-50-ms.md)).
+
+### Added - a member can send their history to someone newly added to a private group
+
+Under "X a ajouté Y", "Envoyer l'historique des messages" sends the newcomer what the member's own device holds from a chosen date, sealed device to device, and every member sees a notice saying so - offered only once the client floor is a build that draws that notice ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25)).
+
+### Fixed - a reply typed in a notification for a conversation you deleted is shown, not lost
+
+The conversation comes back as a removed one holding the reply as not sent, with its Delete, instead of the reply staying invisible in the background queue ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - the Android copy of a picked file shows its progress and says "too large" when it is
+
+A pick over the 200 MB ceiling is now reported as too large instead of "could not be read", the composer draws the copy's progress, and a provider stating no size or a recorded-size mismatch no longer floods the log ([chat](docs/wiki/frontend/modules/chat.md#what-the-picked-files-copy-tells-the-page-2026-11-26)).
+
+### Fixed - the jump outline shows on a photo that arrived live, and the Alumni banner clears the status bar on a game
+
+A captioned photo reached by a jump now shows its outline even when it arrived during the session (its arrival fade no longer replaces the outline), and a banner on `/games/play` is padded by the status-bar inset instead of being drawn over the clock ([chat](docs/wiki/frontend/modules/chat.md#the-jump-outline-follows-the-bubble-2026-11-26)).
+
+### Added - a push for an unnamed group, app closed, is titled by its members' first names
+
+The phone composes the title itself from the group's tree and the names it already holds, through
+one Rust rule shared with the app by a contract file; nothing about it rides the push
+([chat](docs/wiki/frontend/modules/chat.md#an-unnamed-group-no-name-stored-the-members-first-names-drawn)).
+
+### Fixed - a salon `@tous` the server did not vouch for is drawn as plain text, not as a call
+
+The accent chip promised a notification that never left when the sender held no moderation grant; the history row now carries the server's verdict and the bubble draws the chip only where it is honoured ([backlog](docs/wiki/backlog.d/p3-small-nits-from-the-1-8-2-reviews.md)).
+
+### Changed - /admin/usage gets the line charts back, and day, week and month figures with their last complete period
+
+The earlier admin line charts (a smoothed line per platform and per version, with a dashed total) now also draw people per day by device type and by version on `/admin/usage`, over 7, 30 or 90 days. The three headline tiles are larger, show yesterday, last week and last month beside them, and the page gives the mean people per day over the last 7 and 30 days ([usage dashboard](docs/wiki/usage-dashboard.md#the-page-adminusage)).
+
+### Fixed - a reaction no longer restarts a voice note, and its waveform seeks
+
+A reaction replaced the message object and re-ran the bubble's media download through a tracked `messageId` read, rebuilding the player; and a press on the waveform was read by the bubble as a long press or reply swipe, so it is now a real scrubber ([chat](docs/wiki/frontend/modules/chat.md#a-voice-notes-waveform-is-its-scrubber)).
+
 ## [1.8.2] - 2026-11-26
 
 ### Fixed - a conversation opens at its end without being yanked up and slid back, and the arrow and a stale day pill no longer stay

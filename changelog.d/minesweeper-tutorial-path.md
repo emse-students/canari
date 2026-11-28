@@ -1,3 +1,0 @@
-### Changed - the Minesweeper tutorial is a path led by Le Pic, the hint is a miner's lamp, and a new game starts from one "Nouvelle partie" modal
-
-`/games/tutorial` is now a path with two tabs ("Les bases", "Motifs") of tiles you can open in any order, one screen per lesson with Le Pic and a speech bubble, and a per-device record of what you finished - no streak, no points ([tutorial path](docs/wiki/frontend/modules/minesweeper.md#the-tutorial-path-owner-2026-11-27)). The hint button of an unranked game is the same miner's lamp, "Libre" is renamed "Entraînement", and the mode chooser is a centered modal that opens by itself only at the first game on a device ([mode modal](docs/wiki/frontend/modules/minesweeper.md#the-game-mode-modal-owner-2026-11-27)).
