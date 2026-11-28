@@ -18,4 +18,16 @@ describe('callStatusText', () => {
     expect(callStatusText('reconnecting', '1:02', 'Alice')).toBe(m.call_reconnecting());
     expect(callStatusText('live', '1:02', 'Alice')).toBe('1:02');
   });
+
+  it('says what an answered call waits for while connecting, never a bare "connecting" over it', () => {
+    expect(callStatusText('connecting', '0:00', 'Alice', 'network')).toBe(
+      m.call_connecting_waiting_network()
+    );
+    expect(callStatusText('connecting', '0:00', 'Alice', 'conversation')).toBe(
+      m.call_connecting_waiting_conversation()
+    );
+    expect(callStatusText('connecting', '0:00', 'Alice', null)).toBe(m.call_connecting_label());
+    // The reason belongs to the connecting phase only.
+    expect(callStatusText('live', '1:02', 'Alice', 'network')).toBe('1:02');
+  });
 });

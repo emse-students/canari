@@ -8,6 +8,8 @@ import {
   setSessionCaughtUp,
   SessionCatchUpAbandonedError,
   takePendingCallAccept,
+  clearPendingCallAccept,
+  hasPendingCallAccept,
   whenNextCatchUp,
 } from './pendingCallAccept';
 import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
@@ -102,6 +104,27 @@ describe('whenNextCatchUp - an event the call wait re-reads its facts on, never 
     expect(session).toMatch(
       /onConnectionCaughtUp: \(\) => \{\s*markConnectionCaughtUp\(isWsConnected\);/
     );
+  });
+});
+
+describe('one pending answer, never overwritten, never inherited', () => {
+  it('a second answer of ANOTHER call is refused while the first is fresh', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    setPendingCallAccept({ ...ANSWER, callId: 'call-2', acceptedAt: Date.now() });
+    expect(hasPendingCallAccept('call-1')).toBe(true);
+    expect(hasPendingCallAccept('call-2')).toBe(false);
+  });
+
+  it('the same call answered again replaces it', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 1000 });
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    expect(takePendingCallAccept()?.callId).toBe('call-1');
+  });
+
+  it('a sign-out drops it: the next account never joins it', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    clearPendingCallAccept('signed out');
+    expect(takePendingCallAccept()).toBeNull();
   });
 });
 

@@ -1,4 +1,5 @@
 import type { CallService, CallState, GroupCallTile } from '$lib/services/CallService';
+import type { CallGroupWaitingFor } from '$lib/services/callGroupCurrent';
 import type { CameraFacing } from '$lib/utils/callVideo';
 import { callStatusKind, type CallStatusKind } from '$lib/stores/callView.svelte';
 import { callElapsedMs, formatCallDuration } from '$lib/utils/callClock';
@@ -28,6 +29,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let connectedAt = $state<number | null>(null);
   let endedAt = $state<number | null>(null);
   let isReconnecting = $state(false);
+  let connectingWaitsFor = $state<CallGroupWaitingFor | null>(null);
   let peerLost = $state(false);
   let e2eProven = $state(false);
   let localMicSuspended = $state(false);
@@ -57,6 +59,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.connectedAt.subscribe((v) => (connectedAt = v)),
       service.endedAt.subscribe((v) => (endedAt = v)),
       service.reconnecting.subscribe((v) => (isReconnecting = v)),
+      service.connectingWaitsFor.subscribe((v) => (connectingWaitsFor = v)),
       service.peerLost.subscribe((v) => (peerLost = v)),
       service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
@@ -119,6 +122,10 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     },
     get kind() {
       return kind;
+    },
+    /** What a call answered on the ring waits for while it connects (`callGroupCurrent.ts`). */
+    get connectingWaitsFor() {
+      return connectingWaitsFor;
     },
     get isMuted() {
       return isMuted;

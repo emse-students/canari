@@ -7,6 +7,6 @@ target: 1.8.4
 **The reading, on the Mi 9T and the iPhone 12, on a pre-release carrying this:** with a backlog of other conversations' messages queued (the phone in the background a while, messages sent to it meanwhile), call it and answer on the native ring (app killed, and app in the background). Read in the exported log:
 
 - `[CallAccept] timing: call screen shown as full screen` (or `as banner` behind the PIN) - the screen in about a second, before the conversation's messages finish;
-- `[Call] timing: group ... current (epoch-reached) after N ms` - in well under the drain's `[QUEUE] Drain complete` time, with no `AHEAD of the server` or `could not be read` line, no pull asked by the wait (`a pull is asked for it`), and never `ERROR call=... not joined` (a group proven stuck);
+- `[Call] timing: group ... current (epoch-reached) after N ms` - in well under the drain's `[QUEUE] Drain complete` time, with no `AHEAD of the server` or `could not be read` line, no pull asked by the wait (`a pull is asked for it`), and never `call=... not joined` (an answer of the wait: behind, ahead, not held, epoch unknown);
 - `[CallAccept] timing: joined the room` and the `E2E proven` line's suffix against the 10.7 s + 2.3 s of 1.8.2;
 - a hang-up on the connecting screen before the join: the screen closes at once, `hangup notice of ... held until its group is proven current` then the notice sent, the caller's call ended.

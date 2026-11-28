@@ -25,24 +25,20 @@ import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
-import {
-  handBackPendingCallAccept,
-  takePendingCallAccept,
-  whenNextCatchUp,
-  type PendingCallAccept,
-} from '$lib/stores/pendingCallAccept';
+import { takePendingCallAccept, whenNextCatchUp } from '$lib/stores/pendingCallAccept';
 import {
   MlsSessionEndedError,
   mlsReadyClient,
   whenMlsReady,
 } from '$lib/composables/session/mlsReadiness';
-import { repairStuckCallGroup } from '$lib/composables/session/callGroupRepair';
+import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
-  CallGroupClientReplacedError,
   CallGroupSessionEndedError,
-  CallGroupStuckError,
+  CallGroupUnprovenError,
   waitForCallGroupCurrent,
   type CallGroupWait,
+  type CallGroupWaitingFor,
 } from './callGroupCurrent';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -450,10 +446,6 @@ export class CallService {
     string,
     { wait: CallGroupWait; caller: string | null; group: boolean }
   >();
-  /** The system-surface answer this service is joining ({@link answerFromSystemSurface}), if any. */
-  private systemAnswer: PendingCallAccept | null = null;
-  /** Answers handed back to the session's own call service once (a replaced client), by call id. */
-  private readonly answersHandedBack = new Set<string>();
   /**
    * Every call this service ended, for the session (`endCall`): an invite of one still queued
    * behind its hangup - the ghost ring of an answer from the ring hung up during the wait - is
@@ -659,6 +651,11 @@ export class CallService {
    */
   public reconnecting = writable<boolean>(false);
   /**
+   * What a call answered on the ring waits for while it connects ({@link waitForCallGroupCurrent}):
+   * the network, or the conversation catching up - said on the call screen. `null` otherwise.
+   */
+  public connectingWaitsFor = writable<CallGroupWaitingFor | null>(null);
+  /**
    * THE UI's "<name> a perdu la connexion..." flag (`m.call_peer_lost()`): `true` while the other
    * party of a 1:1 call is AWAY (`PeerAway`: the relay saw its signalling socket die and holds its
    * seat for a resume) BEFORE this call's media ever connected. {@link reconnecting} is the
@@ -755,7 +752,20 @@ export class CallService {
   /** Ends the `callState` subscription that feeds {@link syncPageRingingCall}. */
   private pageRingUnsubscribe: (() => void) | null = null;
 
-  constructor(private mlsService: IMlsService) {
+  /** The session's client, read at each use: a login may replace it after this service was built. */
+  private readonly mlsSource: () => IMlsService;
+
+  /** The session's CURRENT client ({@link mlsSource}). */
+  private get mlsService(): IMlsService {
+    return this.mlsSource();
+  }
+
+  /**
+   * @param mls the session's client, or a getter of it - the session passes its holder's, so an
+   *   answer given before a login replaced the client joins on the live one.
+   */
+  constructor(mls: IMlsService | (() => IMlsService)) {
+    this.mlsSource = typeof mls === 'function' ? mls : () => mls;
     // NO LEAF REFRESH IN A GROUP WHILE ONE OF ITS CALLS RINGS, IS SET UP OR RUNS. Each end derives
     // the media keys from the group's CURRENT epoch (`setupEncryption`), the caller before the
     // ring and the callee after the answer: a refresh in between - a read receipt sent while it
@@ -1046,6 +1056,15 @@ export class CallService {
    */
   public answerFromSystemSurface(why: string): void {
     if (!CALLS_ENABLED) return;
+    // THE NATIVE RING IS THE LEADER'S: the leader holds the socket and the MLS state the join reads.
+    // A follower tab never takes an answer; it stays pending for the leader, said at ERROR since no
+    // follower should ever be handed one.
+    if (getTabLeadership() === 'follower') {
+      appendLog(
+        `[Call] ERROR system-surface answer (${why}) reached a FOLLOWER tab - left pending for the leader`
+      );
+      return;
+    }
     const intent = takePendingCallAccept();
     if (!intent) return;
     const state = get(this.callState);
@@ -1061,7 +1080,6 @@ export class CallService {
     if (state === 'incoming' && this.currentCallId === intent.callId) {
       // The invite did reach this device (it was online when it left): the same call, answered.
       this.nativeTapAt = intent.acceptedAt;
-      this.systemAnswer = intent;
       void this.acceptCall(intent.groupId, intent.callId, undefined, { awaitCallGroup: true });
       return;
     }
@@ -1079,7 +1097,6 @@ export class CallService {
     this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
     this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
     this.nativeTapAt = intent.acceptedAt;
-    this.systemAnswer = intent;
     this.callState.set('incoming');
     this.ringStartAt = performance.now();
     appendLog(
@@ -1578,12 +1595,18 @@ export class CallService {
         // reaches the server or the hardware for a session that is not there (a cold start's PIN).
         const wait = waitForCallGroupCurrent(
           {
-            mls: this.mlsService,
+            // THE SESSION'S CURRENT CLIENT, read when MLS is up: an answer given at the PIN gate,
+            // whose login was retried on a new client, joins on the live one.
+            mls: () => this.mlsService,
             whenMlsReady,
-            // The client MLS came up on must be this service's: a login may have replaced the one
-            // this service was built over at mount.
-            clientIsCurrent: () => mlsReadyClient() === this.mlsService,
+            isReadyClient: (client) => mlsReadyClient() === client,
             whenNextCatchUp,
+            onWaiting: (reason) => {
+              if (this.setupLive(seq)) this.connectingWaitsFor.set(reason);
+            },
+            handToGapLadder: (gid) => {
+              markEpochGap(gid);
+            },
             log: appendLog,
           },
           groupId,
@@ -1653,34 +1676,16 @@ export class CallService {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
       // and a step that failed BECAUSE it ended (its socket closed under it) is no failure to show.
       if (e instanceof CallSetupAbandonedError) return;
-      // THE GROUP CANNOT BE PROVEN CURRENT - an answer, not a wait: the call fails visibly, the
-      // group's repair is asked for, and nothing is sent in a group at an epoch nobody else holds
-      // (the server's ring-end still stops the rings).
-      if (e instanceof CallGroupStuckError) {
-        appendLog(`[Call] ERROR call=${callId} not joined - ${e.message}`);
-        repairStuckCallGroup(e.groupId);
+      // THE GROUP CANNOT BE PROVEN CURRENT - an answer, not a wait: the call fails visibly, and
+      // nothing is sent in a group at an epoch nobody else holds (the server's ring-end still stops
+      // the rings). What happens to the group was decided once, at the wait's settlement.
+      if (e instanceof CallGroupUnprovenError) {
+        appendLog(`[Call] ERROR call=${callId} not joined (${e.kind}) - ${e.message}`);
         if (!this.setupLive(seq)) return;
-        showToast(m.call_group_stuck(), 'error');
+        const unreachable = e.kind === 'epoch-unknown' || e.kind === 'unlisted';
+        showToast(unreachable ? m.call_group_unreachable() : m.call_group_not_current(), 'error');
         void this.endServerRing(groupId, callId, 'ended');
         this.endCall(false, undefined, false, true);
-        return;
-      }
-      // ANSWERED ON A CLIENT THE SESSION NO LONGER USES: the answer is handed back, once, to the
-      // session's own call service (the one built over the client MLS came up on).
-      if (e instanceof CallGroupClientReplacedError) {
-        const answer = this.systemAnswer;
-        if (this.setupLive(seq)) this.cleanup();
-        if (answer && !this.answersHandedBack.has(answer.callId)) {
-          this.answersHandedBack.add(answer.callId);
-          appendLog(
-            `[Call] call=${callId} answered on a replaced client - handed back to the session's call service`
-          );
-          handBackPendingCallAccept(answer, 'answered on a replaced client');
-        } else {
-          appendLog(
-            `[Call] ERROR call=${callId} answered on a replaced client, already handed back once - set aside`
-          );
-        }
         return;
       }
       // THE SESSION ENDED UNDER THE WAIT (a sign-out, an account switch): no failure to show, and
@@ -1831,8 +1836,10 @@ export class CallService {
               () => (stillHeld() ? send() : null),
               (e: unknown) => {
                 if (stillHeld()) {
+                  const ended =
+                    e instanceof CallGroupSessionEndedError || e instanceof MlsSessionEndedError;
                   appendLog(
-                    `[Call] hangup notice of ${callId} not sent - its group was never proven current: ${String(e)}`
+                    `[Call] ${ended ? 'WARN' : 'ERROR'} hangup notice of ${callId} not sent - its group was never proven current: ${String(e)}`
                   );
                 }
                 return null;
@@ -1997,7 +2004,7 @@ export class CallService {
     this.callGroupWait = null;
     this.tapAt = null;
     this.nativeTapAt = null;
-    this.systemAnswer = null;
+    this.connectingWaitsFor.set(null);
     this.screenShapesTimed.clear();
     this.ringStartAt = null;
     this.answeredAt = null;

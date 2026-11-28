@@ -53,7 +53,11 @@ vi.mock('$lib/services/CallService', () => ({
   CallService: class {
     readonly callState = { subscribe: () => () => {} };
     readonly retireFromPageRing = vi.fn();
-    constructor(readonly mls: IMlsService) {}
+    // The service reads the session's CURRENT client through a getter, as the real one does.
+    constructor(private readonly source: IMlsService | (() => IMlsService)) {}
+    get mls(): IMlsService {
+      return typeof this.source === 'function' ? this.source() : this.source;
+    }
     setChatNotifier() {}
   },
 }));

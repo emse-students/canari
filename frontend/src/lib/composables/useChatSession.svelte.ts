@@ -558,7 +558,9 @@ export function useChatSession() {
       // The replaced service (an account switch) withdraws what it told the native ring, so its
       // holder does not outlive it (`CallService.retireFromPageRing`).
       callService?.retireFromPageRing();
-      callService = new CallService(svc);
+      // The session's CURRENT client, read at each use: an answer given at the PIN gate joins on the
+      // client the retried login brings up, never on the one this service was built beside.
+      callService = new CallService(() => ensureMls());
       callService.callState.subscribe((s: any) => (callState = s));
       // An answer given on the ring is handed to this service as soon as both it and the service
       // exist, whichever comes second: the call screen shows at once, and only its keys wait for the

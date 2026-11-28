@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import type { CallStatusKind } from '$lib/stores/callView.svelte';
+import type { CallGroupWaitingFor } from '$lib/services/callGroupCurrent';
 
 /**
  * The status line of a call surface, for one {@link CallStatusKind}: the running duration while the
@@ -9,7 +10,9 @@ import type { CallStatusKind } from '$lib/stores/callView.svelte';
 export function callStatusText(
   kind: CallStatusKind,
   duration: string,
-  peerName: string | undefined
+  peerName: string | undefined,
+  /** What a call answered on the ring waits for while it connects, said instead of the bare word. */
+  waitingFor: CallGroupWaitingFor | null = null
 ): string {
   switch (kind) {
     case 'incoming':
@@ -17,6 +20,8 @@ export function callStatusText(
     case 'ringing':
       return m.call_ringing_label();
     case 'connecting':
+      if (waitingFor === 'network') return m.call_connecting_waiting_network();
+      if (waitingFor === 'conversation') return m.call_connecting_waiting_conversation();
       return m.call_connecting_label();
     case 'peer-lost':
       return peerName ? m.call_peer_lost({ name: peerName }) : m.call_peer_lost_unnamed();

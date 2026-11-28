@@ -146,8 +146,22 @@ export function markConnectionCaughtUp(socketOpen: boolean): void {
   setSessionCaughtUp(socketOpen);
 }
 
-/** Records an accept intent drained from the native handler, and acts on it if the session is ready. */
+/**
+ * Records an accept intent drained from the native handler, and acts on it if the session is ready.
+ * An intent of ANOTHER call still held and fresh is never overwritten: refused, said - two answers
+ * cannot both be honoured, and the first one tapped is the user's.
+ */
 export function setPendingCallAccept(intent: PendingCallAccept): void {
+  if (
+    pending &&
+    pending.callId !== intent.callId &&
+    Date.now() - pending.acceptedAt <= MAX_PENDING_AGE_MS
+  ) {
+    appendLog(
+      `[CallAccept] WARN accept of call=${intent.callId} refused - the answer of call=${pending.callId} is still pending`
+    );
+    return;
+  }
   pending = intent;
   appendLog(
     `[CallAccept] pending accept recorded call=${intent.callId} caller=${intent.callerId ? 'named' : 'unknown'} ${Date.now() - intent.acceptedAt} ms after the native tap`
@@ -155,15 +169,11 @@ export function setPendingCallAccept(intent: PendingCallAccept): void {
   actIfReady('the answer was recorded');
 }
 
-/**
- * Gives back an intent a call service TOOK and cannot join on: it was built over a client the
- * session replaced (`CallGroupClientReplacedError`), so the session's own call service must take it.
- * Not a new answer - the intent is the one the native drain recorded, unchanged, so a link still
- * answers nothing (`a link never answers a call`). Its caller hands an intent back at most once.
- */
-export function handBackPendingCallAccept(intent: PendingCallAccept, why: string): void {
-  appendLog(`[CallAccept] accept of call=${intent.callId} handed back - ${why}`);
-  setPendingCallAccept(intent);
+/** Drops a pending intent: the account that answered signed out, and the next one never joins it. */
+export function clearPendingCallAccept(reason: string): void {
+  if (!pending) return;
+  appendLog(`[CallAccept] pending accept of call=${pending.callId} dropped - ${reason}`);
+  pending = null;
 }
 
 /**

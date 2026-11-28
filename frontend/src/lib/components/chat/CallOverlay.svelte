@@ -142,7 +142,9 @@
   let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
   // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
-  let statusText = $derived(callStatusText(call.kind, call.duration, primary?.displayName));
+  let statusText = $derived(
+    callStatusText(call.kind, call.duration, primary?.displayName, call.connectingWaitsFor)
+  );
   /** A VIDEO call rings: the subtitle says so and Accept carries a camera, as it answers with one. */
   let ringHasVideo = $derived(isIncoming && callService.incomingHasVideo);
   let isEnded = $derived(call.callState === 'ended');
@@ -606,7 +608,7 @@
   let announcement = $derived(
     call.kind === 'live'
       ? (micNotice ?? micRecovery ?? m.call_live_announcement())
-      : callStatusText(call.kind, call.duration, primary?.displayName)
+      : callStatusText(call.kind, call.duration, primary?.displayName, call.connectingWaitsFor)
   );
 
   function hangUp() {

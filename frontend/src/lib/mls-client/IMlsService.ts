@@ -1791,6 +1791,18 @@ export interface IMlsService {
    */
   leadGroup(groupId: string): () => void;
   /**
+   * Pulls the mailbox for `groupId` ({@link fetchPendingMessages}) and says whether that pull LISTED
+   * it whole on this link: `incomplete` when it could not (the socket down, a page refused, a pull
+   * still owed). For a caller that must tell "nothing more is coming" from "nothing was asked".
+   */
+  pullForGroup(groupId: string): Promise<'listed' | 'incomplete'>;
+  /**
+   * Whether a commit of THIS device for `groupId` is staged, in flight or unresolved - the commit
+   * holding the MLS mutex, or one whose outcome the state still keeps. Its settlement moves the
+   * group's epoch and wakes {@link whenGroupFrameApplied}: "something is coming".
+   */
+  ownCommitPending(groupId: string): Promise<boolean>;
+  /**
    * Resolves once the NEXT frame of `groupId` has been applied, or the next commit of it settled
    * (merged or cleared: our own accepted commit is merged outside the queue) - the event at which a
    * fact only that group's frames and commits can change (its epoch) is worth reading again. AN EVENT, NEVER A POLL, and it

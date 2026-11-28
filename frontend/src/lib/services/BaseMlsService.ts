@@ -2870,6 +2870,18 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** @inheritdoc */
+  async pullForGroup(groupId: string): Promise<'listed' | 'incomplete'> {
+    await this.fetchPendingMessages([groupId]);
+    return this.mailboxListedOnThisLink() ? 'listed' : 'incomplete';
+  }
+
+  /** @inheritdoc */
+  async ownCommitPending(groupId: string): Promise<boolean> {
+    if (this.messageScheduler.committingGroupId === groupId) return true;
+    return (await this.knownUnresolvedGroups()).has(groupId);
+  }
+
+  /** @inheritdoc */
   whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void> {
     if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
     return this.messageScheduler.whenGroupFrameApplied(groupId, signal);
