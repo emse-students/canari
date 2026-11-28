@@ -612,6 +612,7 @@ const fakeMls = {
   whenGroupDrained: vi.fn(() => new Promise<void>(() => {})),
   groupDrainedNow: vi.fn(() => false),
   isWsOpen: vi.fn(() => true),
+  mailboxListing: vi.fn(() => 'listed' as const),
   pullForGroup: vi.fn(async (_groupId: string) => 'listed' as const),
   ownCommitState: vi.fn(async (_groupId: string) => 'none' as const),
   settleUnresolvedCommits: vi.fn(async (_groups?: string[]) => {}),

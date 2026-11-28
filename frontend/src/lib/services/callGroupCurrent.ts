@@ -24,21 +24,26 @@
  *
  * OFFLINE IS A WAIT, NEVER A FAILURE. While the gateway socket is down the wait asks nothing - no
  * pull, no settlement - says `network` to the call screen, and waits for the reconnect's catch-up.
+ * A step the link dropped under - a pull, a settlement, a commit-log read - is no answer either: it
+ * is asked again once the reconnect's event comes, whatever that listing changed.
  *
- * WHEN THE FACTS DISAGREE AND NOTHING IS COMING, THE WAIT ASKS: the server's epoch unreadable, the
- * group drained at an epoch other than the server's, or not held at all, ISSUES a pull for the group
- * (`pullForGroup`) and reads everything again at its end. One ask per state of the facts. A pull
- * that could not list the mailbox while the link stayed up (`incomplete`) is said at WARN and may be
- * asked again AFTER THE NEXT EVENT; a second such one in a row ends the wait
- * ({@link CallGroupUnlistedError}). One that came back incomplete because the link went down counts
- * for nothing: offline is a wait.
+ * WHEN THE FACTS DISAGREE AND NOTHING IS COMING, THE WAIT ASKS: the server's epoch unreadable, or
+ * the group at an epoch other than the server's (or not held) with NOTHING MORE COMING FROM THE
+ * MAILBOX - drained on this link, or never listed on it with no pull running or owed
+ * (`mailboxListing`: the boot pull refused, a 502) - ISSUES a pull for the group (`pullForGroup`)
+ * and reads everything again at its end. One ask per state of the facts. A pull that could not list
+ * the mailbox while the link stayed up (`incomplete`) is said at WARN and asked again - after the
+ * end of a pull still running or owed, at once when none is; a second such one in a row ends the
+ * wait ({@link CallGroupUnlistedError}).
  *
  * A GROUP DRAINED BELOW THE SERVER AFTER A COMPLETE PULL IS CAUGHT UP FROM THE COMMIT LOG FIRST -
  * the same first, non-destructive rung a refused commit takes (`catchUpFromCommitLog`: rung 1, its
  * own books marking and un-marking the epoch gap). The post-commit fan-out to this device is best
  * effort, and the server's row can read N+1 before the fan-out row exists: the log has the commit
- * the mailbox lacks. Only a replay that cannot heal ends the wait ({@link CallGroupStuckError}); the
- * call path itself marks nothing and repairs nothing destructively.
+ * the mailbox lacks. Only a replay the log ANSWERED and could not heal ends the wait
+ * ({@link CallGroupStuckError}); a log that could not be read is a wait offline and
+ * {@link CallGroupLogUnreachableError} online, its mark taken back - never `behind`. The call path
+ * itself marks nothing and repairs nothing destructively.
  *
  * ANY OTHER STATE THAT HELD ACROSS A COMPLETE PULL THIS WAIT ASKED FOR, WITH NOTHING OF OURS COMING,
  * IS AN ANSWER, typed ({@link CallGroupUnprovenError}): ahead of the server, not held, or its epoch
@@ -96,7 +101,8 @@ export type CallGroupUnprovenKind =
   | 'not-held'
   | 'epoch-unknown'
   | 'unlisted'
-  | 'commit-unresolved';
+  | 'commit-unresolved'
+  | 'log-unreachable';
 
 /**
  * THE GROUP CANNOT BE PROVEN CURRENT, AND THAT IS AN ANSWER, never a wait: the call fails, visibly.
@@ -157,9 +163,23 @@ export class CallGroupCommitUnresolvedError extends CallGroupUnprovenError {
   override readonly name = 'CallGroupCommitUnresolvedError';
 }
 
+/**
+ * The commit log could not be read, the link up, for a group behind: nothing is known about the
+ * gap, so it is never `behind` - and the mark the catch-up set was taken back.
+ */
+export class CallGroupLogUnreachableError extends CallGroupUnprovenError {
+  readonly kind = 'log-unreachable' as const;
+  override readonly name = 'CallGroupLogUnreachableError';
+}
+
 /** The kinds that say the network or the server could not answer, rather than the group's state. */
 export function callGroupUnreachable(kind: CallGroupUnprovenKind): boolean {
-  return kind === 'epoch-unknown' || kind === 'unlisted' || kind === 'commit-unresolved';
+  return (
+    kind === 'epoch-unknown' ||
+    kind === 'unlisted' ||
+    kind === 'commit-unresolved' ||
+    kind === 'log-unreachable'
+  );
 }
 
 /** The client surface the wait reads. */
@@ -171,6 +191,7 @@ export type CallGroupMls = Pick<
   | 'whenGroupFrameApplied'
   | 'whenGroupDrained'
   | 'groupDrainedNow'
+  | 'mailboxListing'
   | 'isWsOpen'
   | 'leadGroup'
   | 'pullForGroup'
@@ -374,11 +395,17 @@ export function waitForCallGroupCurrent(
         const heldBefore = mls.getLocalGroups().includes(groupId);
         const own = heldBefore ? await mls.ownCommitState(groupId) : 'none';
         throwIfStopped();
+        // An unresolved commit gone, the next one is a new question: its settlement may be asked.
+        if (own !== 'unresolved') settleAskedFor = null;
         // THE FACTS, read after the round's last await.
         const linkUp = mls.isWsOpen();
         const held = mls.getLocalGroups().includes(groupId);
         const local = held ? mls.getEpoch(groupId) : null;
         const drained = mls.groupDrainedNow(groupId);
+        // NOTHING MORE COMES FROM THE MAILBOX: drained on this link, or never listed on it with no
+        // pull running or owed (the boot pull refused, a 502) - carried as a fact, never inferred
+        // from "not drained".
+        const mailboxQuiet = drained || mls.mailboxListing() === 'unlisted';
         const state = `${local}/${target}`;
         const server = typeof target === 'number' ? target : null;
         if (server !== null) {
@@ -420,6 +447,14 @@ export function waitForCallGroupCurrent(
             log(`[Call] WARN group ${short}: the settlement asked for it failed: ${String(e)}`);
           }
           throwIfStopped();
+          if (!mls.isWsOpen()) {
+            // The link dropped under the settlement: offline, a wait - the reconnect asks again.
+            log(
+              `[Call] group ${short}: the link dropped during the settlement - waiting for the reconnect`
+            );
+            settleAskedFor = null;
+            continue;
+          }
           if ((await mls.ownCommitState(groupId)) === 'unresolved') {
             throw new CallGroupCommitUnresolvedError(
               groupId,
@@ -460,6 +495,24 @@ export function waitForCallGroupCurrent(
             );
             const outcome = await mls.catchUpFromCommitLog(groupId);
             throwIfStopped();
+            if (outcome === 'unreachable') {
+              if (!mls.isWsOpen()) {
+                // Offline: a wait. The new link lists the mailbox again before anything is judged.
+                log(
+                  `[Call] group ${short}: the commit log could not be read, the link down - waiting for the reconnect`
+                );
+                askedFor = null;
+                listedFor = null;
+                readTarget = true;
+                continue;
+              }
+              throw new CallGroupLogUnreachableError(
+                groupId,
+                local,
+                server,
+                'the commit log could not be read, the link up - nothing is known about the gap'
+              );
+            }
             if (outcome === 'still-behind') {
               throw new CallGroupStuckError(
                 groupId,
@@ -497,7 +550,7 @@ export function waitForCallGroupCurrent(
         }
 
         const disagrees =
-          target === 'unread' || (drained && (!held || (server !== null && local !== server)));
+          target === 'unread' || (mailboxQuiet && (!held || (server !== null && local !== server)));
         if (linkUp && own === 'none' && askedFor !== state && disagrees) {
           askedFor = state;
           round.disarm();
@@ -517,10 +570,12 @@ export function waitForCallGroupCurrent(
             listedFor = state;
             incompleteAsks = 0;
           } else if (!mls.isWsOpen()) {
-            // The link went down under it: offline, a wait - nothing counted.
+            // The link went down under it: offline, a wait - nothing counted, and the reconnect's
+            // event allows a new ask, whatever its listing changed.
             log(
               `[Call] group ${short}: the pull asked for it could not list the mailbox - the link is down, waiting for the reconnect`
             );
+            reaskAfterEvent = true;
           } else {
             incompleteAsks += 1;
             log(
@@ -534,7 +589,10 @@ export function waitForCallGroupCurrent(
                 'two pulls asked in a row, the link up, could not list the mailbox'
               );
             }
-            reaskAfterEvent = true;
+            // A pull still running or owed will end with an event: the ask waits for it. With none,
+            // nothing will come - asked again now, and counted.
+            if (mls.mailboxListing() === 'pending') reaskAfterEvent = true;
+            else askedFor = null;
           }
           readTarget = true;
           continue;

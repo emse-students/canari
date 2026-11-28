@@ -5,6 +5,7 @@ import {
   CallGroupClientReplacedError,
   CallGroupCommitUnresolvedError,
   CallGroupEpochUnknownError,
+  CallGroupLogUnreachableError,
   CallGroupNotHeldError,
   CallGroupSessionEndedError,
   CallGroupStuckError,
@@ -30,7 +31,8 @@ const flush = async () => {
 type Status = 'error' | 'absent' | { groupId: string; activeEpoch?: number };
 type PullOutcome = 'listed' | 'incomplete';
 type OwnCommit = 'none' | 'in-flight' | 'unresolved';
-type Replay = 'healed' | 'held' | 'still-behind';
+type Replay = 'healed' | 'held' | 'still-behind' | 'unreachable';
+type Listing = 'listed' | 'pending' | 'unlisted';
 
 /** One kind of waiter the test can fire, counting how many are still registered. */
 function eventSource() {
@@ -78,6 +80,8 @@ function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
     ready: false,
     current: true,
     linkUp: true,
+    /** The mailbox's listing on the link: a catch-up running by default. */
+    listing: 'pending' as Listing,
     ownCommit: 'none' as OwnCommit,
     /** Held by a test while the commit-state read is in flight (an IPC). */
     ownCommitGate: null as Promise<void> | null,
@@ -98,6 +102,7 @@ function world(opts: { status?: Status; local?: number; held?: boolean } = {}) {
     whenGroupDrained: vi.fn((_g: string, signal?: AbortSignal) => pull.wait(signal)),
     groupDrainedNow: vi.fn(() => state.drained),
     isWsOpen: vi.fn(() => state.linkUp),
+    mailboxListing: vi.fn(() => state.listing),
     leadGroup: vi.fn(() => release),
     pullForGroup: vi.fn(
       (_groupId: string) => new Promise<PullOutcome>((resolve) => pulls.push(resolve))
@@ -242,18 +247,34 @@ describe('waitForCallGroupCurrent - the proof', () => {
     expect(w.lines.filter((l) => l.includes("the server's is 9"))).toHaveLength(2);
   });
 
-  it('an incomplete listing with the server epoch known keeps waiting for the epoch', async () => {
+  it('a listing that FAILED with nothing after it is nothing coming: the wait asks its own pull', async () => {
+    // The catch-up's pull refused a page: not drained, and no pull running or owed. Waiting for a
+    // frame here would wait until the caller hung up.
     const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
     w.state.ready = true;
     const { outcome } = start(w);
     await flush();
+    expect(w.pullsAsked).toBe(0);
+    w.state.listing = 'unlisted';
     w.pull.fail(new MailboxListingIncompleteError('group-1', new Error('page refused')));
     await flush();
-    expect(outcome.proof).toBeNull();
-    expect(outcome.error).toBeNull();
-    w.applyFrame(2);
+    expect(w.pullsAsked).toBe(1);
+    w.endPull(() => {
+      w.state.listing = 'listed';
+      w.state.local = 2;
+    });
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('never listed on this link with nothing pending, from the start: a pull is asked at once', async () => {
+    const w = world({ local: 1, status: { groupId: 'group-1', activeEpoch: 2 } });
+    w.state.ready = true;
+    w.state.listing = 'unlisted';
+    start(w);
+    await flush();
+    expect(w.pullsAsked).toBe(1);
+    expect(w.waiting).toEqual([]);
   });
 });
 
@@ -502,7 +523,7 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     expect(w.lines.some((l) => l.includes('WARN call=call-1'))).toBe(true);
   });
 
-  it('an incomplete pull, the link up, is said at WARN and asked again only AFTER AN EVENT', async () => {
+  it('an incomplete pull, the link up, a pull still owed: said at WARN, asked again after its end', async () => {
     const w = world({ status: 'error', local: 3 });
     w.state.ready = true;
     const { outcome } = start(w);
@@ -518,6 +539,20 @@ describe('waitForCallGroupCurrent - a pull asked, and the answers', () => {
     w.endPull(() => (w.state.status = { groupId: 'group-1', activeEpoch: 3 }));
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('an incomplete pull with NOTHING pending after it is asked again at once - two end the wait', async () => {
+    const w = world({ status: 'error', local: 3 });
+    w.state.ready = true;
+    w.state.listing = 'unlisted';
+    const { outcome } = start(w);
+    await flush();
+    w.endPull(() => {}, 'incomplete');
+    await flush();
+    expect(w.pullsAsked).toBe(2);
+    w.endPull(() => {}, 'incomplete');
+    await flush();
+    expect(outcome.error).toBeInstanceOf(CallGroupUnlistedError);
   });
 
   it('two incomplete pulls in a row, the link up, end the wait, typed and visible', async () => {
@@ -565,6 +600,105 @@ describe('waitForCallGroupCurrent - offline is a wait, never a failure', () => {
     await flush();
     expect(outcome.proof).toBe('epoch-reached');
     expect(w.waiting).toEqual(['network', null]);
+  });
+
+  it('a pull LOST TO A LINK DROP is asked again after the reconnect, even when the reconnect changed nothing', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    const { outcome } = start(w);
+    await flush();
+    expect(w.pullsAsked).toBe(1);
+    w.endPull(() => {
+      w.state.linkUp = false;
+      w.state.drained = false;
+      w.state.listing = 'unlisted';
+    }, 'incomplete');
+    await flush();
+    expect(w.waiting).toEqual(['network']);
+
+    // The reconnect lists the mailbox and brings nothing: the same state.
+    w.state.linkUp = true;
+    w.state.drained = true;
+    w.state.listing = 'listed';
+    w.catchUp.fire();
+    await flush();
+    expect(w.pullsAsked).toBe(2);
+    w.endPull();
+    await flush();
+    // The listed state is judged: the commit log, then the answer - no frame rescued it.
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledTimes(1);
+    expect(outcome.error).toBeInstanceOf(CallGroupStuckError);
+  });
+
+  it('a settlement the link dropped under is no answer: offline, then asked again', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 3 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.ownCommit = 'unresolved';
+    w.state.onSettle = () => {
+      w.state.linkUp = false;
+    };
+    const { outcome } = start(w);
+    await flush();
+    expect(w.mls.settleUnresolvedCommits).toHaveBeenCalledTimes(1);
+    expect(outcome.error).toBeNull();
+    expect(w.waiting).toEqual(['network']);
+
+    w.state.linkUp = true;
+    w.state.onSettle = () => {
+      w.state.ownCommit = 'none';
+      w.state.local = 3;
+    };
+    w.catchUp.fire();
+    await flush();
+    expect(w.mls.settleUnresolvedCommits).toHaveBeenCalledTimes(2);
+    expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('a commit log that could not be read, the link down: a wait, then the log asked again', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.onReplay = () => {
+      w.state.linkUp = false;
+      w.state.drained = false;
+      return 'unreachable';
+    };
+    const { outcome } = start(w);
+    await flush();
+    w.endPull();
+    await flush();
+    expect(outcome.error).toBeNull();
+    expect(w.waiting).toEqual(['network']);
+
+    w.state.linkUp = true;
+    w.state.drained = true;
+    w.state.onReplay = () => {
+      w.state.local = 4;
+      return 'healed';
+    };
+    w.catchUp.fire();
+    await flush();
+    expect(w.pullsAsked).toBe(2);
+    w.endPull();
+    await flush();
+    expect(w.mls.catchUpFromCommitLog).toHaveBeenCalledTimes(2);
+    expect(outcome.proof).toBe('epoch-reached');
+  });
+
+  it('a commit log that could not be read, the link up: WARN, typed - never behind', async () => {
+    const w = world({ local: 2, status: { groupId: 'group-1', activeEpoch: 4 } });
+    w.state.ready = true;
+    w.state.drained = true;
+    w.state.onReplay = () => 'unreachable';
+    const { outcome } = start(w);
+    await flush();
+    w.endPull();
+    await flush();
+    expect(outcome.error).toBeInstanceOf(CallGroupLogUnreachableError);
+    expect(outcome.error).not.toBeInstanceOf(CallGroupStuckError);
+    expect(w.lines.some((l) => l.includes('WARN call=call-1'))).toBe(true);
   });
 
   it('a pull that came back incomplete because the link went down counts for nothing', async () => {

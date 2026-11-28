@@ -455,7 +455,13 @@ export class LocalStateNotReadyError extends Error {
 export type OwnCommitState = 'none' | 'in-flight' | 'unresolved';
 
 /** What a commit-log catch-up did ({@link IMlsService.catchUpFromCommitLog}). */
-export type CommitLogCatchUp = 'healed' | 'held' | 'still-behind';
+export type CommitLogCatchUp = 'healed' | 'held' | 'still-behind' | 'unreachable';
+
+/**
+ * Where the listing of this device's mailbox stands on the current link
+ * ({@link IMlsService.mailboxListing}).
+ */
+export type MailboxListing = 'listed' | 'pending' | 'unlisted';
 
 /**
  * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
@@ -1780,6 +1786,14 @@ export interface IMlsService {
    */
   groupDrainedNow(groupId: string): boolean;
   /**
+   * Where the listing of the mailbox stands on the CURRENT link, as a fact read now: `listed` - a
+   * pull listed it whole since the socket opened, and none is running or owed; `pending` - a pull
+   * is running or owed, and its end will say; `unlisted` - nothing listed it on this link and
+   * nothing will (the socket down, or a pull that failed - a refused page, a 502 - with none after
+   * it). For a waiter that must tell "something is coming" from "nothing will".
+   */
+  mailboxListing(): MailboxListing;
+  /**
    * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
    *
    * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
@@ -1824,7 +1838,10 @@ export interface IMlsService {
    *
    * `healed`: the group is no longer behind what the log holds; `held`: frames refused for lack of
    * a row are still queued and bring the epochs - their pull is asked, nothing replayed;
-   * `still-behind`: the log could not close the gap, which is left to the sync watchdog (rung 2).
+   * `still-behind`: the log ANSWERED and could not close the gap (holed, pruned below its floor, a
+   * commit that will not apply), which is left to the sync watchdog (rung 2) - the one outcome that
+   * keeps the mark; `unreachable`: the log could not be read (a transport failure) - nothing is
+   * known about the gap, so the mark this call set is taken back.
    */
   catchUpFromCommitLog(groupId: string): Promise<CommitLogCatchUp>;
   /**

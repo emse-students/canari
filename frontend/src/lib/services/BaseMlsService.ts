@@ -116,6 +116,7 @@ import type {
   OneDeviceAddResult,
   OwnCommitState,
   CommitLogCatchUp,
+  MailboxListing,
 } from '$lib/mls-client/IMlsService';
 import type { ExternalJoinStanding } from '$lib/mls-client/externalJoinStanding';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
@@ -2772,6 +2773,12 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** @inheritdoc */
+  mailboxListing(): MailboxListing {
+    if (this.pendingPullInFlight || this.owedPull) return 'pending';
+    return this.mailboxEmptiedByAPull && this.isWsOpen() ? 'listed' : 'unlisted';
+  }
+
+  /** @inheritdoc */
   groupDrainedNow(groupId: string): boolean {
     return this.mailboxListedOnThisLink() && this.messageScheduler.isGroupIdle(groupId);
   }
@@ -2918,9 +2925,15 @@ export abstract class BaseMlsService implements IMlsService {
         );
         return 'still-behind';
       } catch (e) {
-        // Never silent: this is the branch that leaves the group to rung 2.
-        console.warn(`[GAP] replay error for ${short}, left to the sync watchdog:`, e);
-        return 'still-behind';
+        // THE LOG COULD NOT BE READ - a transport failure, not an answer. Nothing is known about
+        // the gap, and a mark left here would have the sync watchdog FORGET the group on a failed
+        // fetch: the mark this call set is taken back, one another path set stays its own.
+        if (!markedBefore) clearEpochGap(groupId);
+        console.warn(
+          `[GAP] ${short} the commit log could not be read - nothing known about the gap${markedBefore ? '' : ', its mark taken back'}:`,
+          e
+        );
+        return 'unreachable';
       }
     });
   }

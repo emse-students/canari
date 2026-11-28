@@ -828,21 +828,35 @@ either. So:
   event, never lost, and no verdict stands on a fact read before an await. None is a clock.
 - **Offline is a wait, never a failure.** While the gateway socket is down (`isWsOpen`) the wait
   asks nothing - no pull, no settlement - says `network` to the screen, and waits for the reconnect's
-  catch-up, which reads the server's epoch again.
+  catch-up, which reads the server's epoch again. A step the link dropped under - a pull, a
+  settlement, a commit-log read - is no answer either: it is asked again once the reconnect's event
+  comes, whatever that listing changed.
 - **When the facts disagree and nothing is coming, the wait ASKS.** The server's epoch unreadable
-  (`error`, `absent`), the group drained at an epoch other than the server's, or not held: the wait
+  (`error`, `absent`), or the group at another epoch than the server's (or not held) with nothing
+  more coming from the mailbox: drained on this link, or never listed on it with no pull running or
+  owed (`IMlsService.mailboxListing() === 'unlisted'`: the boot pull refused a page, a 502). That is
+  carried as a fact, never inferred from "not drained", which a failed pull also leaves. The wait
   asks a pull for the group (`IMlsService.pullForGroup`, which says whether it LISTED the mailbox on
   this link or was `incomplete`) and reads everything again at its end. One ask per state of the
-  facts (`local/server`). A pull incomplete with the link still up is said at WARN and may be asked
-  again only AFTER THE NEXT EVENT; a second such one in a row ends the wait
-  (`CallGroupUnlistedError`). One that came back incomplete because the link went down counts for
-  nothing.
+  facts (`local/server`). A pull incomplete with the link still up is said at WARN and asked again -
+  after the end of a pull still running or owed, at once when none is; a second such one in a row
+  ends the wait (`CallGroupUnlistedError`). One that came back incomplete because the link went down
+  counts for nothing.
+- **A known limit: the pull is the session's.** `pullForGroup` goes through
+  `fetchPendingMessages`, which waits on the other groups' drain before it lists (`owePull`): a
+  behind group's frames are served first by the lead (`leadGroup`) during a long catch-up, but the
+  pull the wait asks still ends with the whole mailbox's drain, not the group's.
 - **A group drained BELOW the server after a complete pull is caught up from the commit log
   first** (`IMlsService.catchUpFromCommitLog`): rung 1, under the MLS lock, the same first step a
   refused commit takes (`replayAndRecord`, held behind a refused backlog), its own books marking the
   epoch gap and un-marking it on a heal. The post-commit fan-out to this device is best effort, and
   `GET /groups/:id` can read N+1 before the fan-out row exists: the log has the commit the mailbox
   lacks. Healed, the facts are read again; held, the wait asks a pull of its own and replays once
+  more; only a replay the log ANSWERED and could not heal (holed, pruned below its floor, a commit
+  that will not apply) is `behind`, and only that one keeps the mark. A log that could not be read
+  (`unreachable`, a transport failure) takes the mark back - a mark left on a failed fetch would
+  have the sync watchdog forget the group 45 s later - and is a wait offline,
+  `CallGroupLogUnreachableError` online.
   more; only a replay that cannot heal is `behind`.
 - **A state that held across a complete pull, with nothing of ours coming, is an ANSWER**, typed
   (`CallGroupUnprovenError`, carrying both epochs), and the call fails visibly - the toast, the
@@ -854,7 +868,9 @@ either. So:
     happen in the middle of a call because of it.
   - **ahead** (`CallGroupAheadError`) and **not held** (`CallGroupNotHeldError`, a numeric epoch or
     none) - ERROR, toast `call_group_not_current`.
-  - **the server's epoch unknown** (`CallGroupEpochUnknownError`), **unlisted**, and **a commit of
+  - **the server's epoch unknown** (`CallGroupEpochUnknownError`), **unlisted**, **a commit of
+    ours still unresolved** (`CallGroupCommitUnresolvedError`) and **the commit log unreadable with
+    the link up** (`CallGroupLogUnreachableError`) - WARN, toast `call_group_unreachable`.
     ours still unresolved** (`CallGroupCommitUnresolvedError`) - WARN, toast `call_group_unreachable`.
     An unreadable epoch is never "stuck" and never reaches any repair.
 - **The ways out, and only these:** the proof; an answer above; the user's hang-up; the caller's
@@ -926,7 +942,9 @@ proves, held it pulls and replays once more, unhealed it is the answer; each ans
 not held with or without a server epoch, epoch unknown, two incomplete pulls with the link up; a
 commit of ours in flight waits, one unresolved is settled once and ends the wait if it stays; arm
 then check - a frame applied during the commit-state read; offline waits and says `network`, the
-socket back proves, a pull cut by the link counts for nothing; stops, unhandled rejections, the
+socket back proves, a pull cut by the link counts for nothing and is asked again after the reconnect
+even when it changed nothing, a settlement or a commit-log read cut by the link waits and is asked
+again, a log unreadable online is never `behind`; a failed listing with nothing pending asks a pull; stops, unhandled rejections, the
 current client read once MLS is up), `mlsPerGroupScheduler.leadGroup.test.ts` (the lead; the frame
 and commit-settle events; removal; the round-robin index), `BaseMlsService.groupDrained.test.ts`,
 `mlsReadiness.test.ts`, `pendingCallAccept*.test.ts` (one pending answer, never overwritten by
