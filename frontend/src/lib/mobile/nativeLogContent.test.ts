@@ -287,7 +287,11 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     "a label, state or outcome the app spells itself (a constant, an enum, a classifier's output)",
     [
       // `OutboxRetry.Prospect` and its Rust token (`SendProspect::token`): an enum's name.
-      'CanariFirebaseMessagingService.kt|prospect',
+      '2x CanariFirebaseMessagingService.kt|prospect',
+      // `BackgroundJoinAnswer.Outcome.Failed`: the cause is a fixed token of Rust's
+      // `BackgroundJoinError::cause`, the prospect an enum - each said at warn or error by level.
+      '2x CanariFirebaseMessagingService.kt|joinAnswer.cause',
+      '2x CanariFirebaseMessagingService.kt|joinAnswer.prospect',
       // `SweepFailureLedger.Outcome.Failed.cause`: a fixed word the worker spells at the failure.
       '2x MlsBackgroundWorker.kt|cause',
       'background.rs|prospect.token()',
@@ -384,7 +388,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'messaging.rs|err_dbg',
       'state.rs|manager.state_composition_summary()',
       '2x CallRingPlayer.kt|message',
-      'CanariFirebaseMessagingService.kt|json.optString("error").take(120)',
+      '2x CanariFirebaseMessagingService.kt|json.optString("error").take(120)',
       'CanariFirebaseMessagingService.kt|r.optString("error").take(80)',
       'canari_push.mm|r["error"]',
       'mls_account_state.rs|message',

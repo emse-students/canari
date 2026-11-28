@@ -5898,3 +5898,18 @@ The bundle needs Chrome 111 or newer: Vite's default build target, Tailwind 4 an
 **Tests.** `webviewGuard.test.ts` reads the script out of the real `app.html`, parses it with acorn as ECMAScript 5 (ES2015 syntax fails the test), and runs it in a `vm` context standing in for a page: the floor decision on a table of user agents, the SyntaxError triggers, "nothing once mounted", "nothing on desktop or iOS".
 
 **Native side: log only.** `CanariApplication.logWebViewVersion` logs the WebView package and version at startup, at info level (`adb logcat -s CanariApplication`, whatever `TAG` holds). It is not sent with the device registration: that payload is being changed in another pull request, and the page already knows the version from its user agent.
+
+## The background join says WHY it failed (owner's log of 2026-11-27, 1.8.4)
+
+`nativeProcessWelcomeBackground` used to answer a bare boolean, so the push service logged
+`processReceivedWelcomeBackground: join failed group=...` at error with no cause, and the Rust line
+that held it is lost in a killed app (no logger yet,
+[entry](../backlog.d/p2-the-rust-half-of-a-push-in-a-killed-android-app-logs-nowhere.md)). It answers
+a token classified where it is thrown (`BackgroundJoinError`): `joined`, or `failed:<cause>:<prospect>`
+with the cause `write-refused` (foreground active, `mls.bin` moved: NOT_YET, warn - the app's own load
+joins the group), `welcome-refused` or `state-unreadable` (never from this state: error).
+`BackgroundJoinAnswer.kt` reads it, JVM-tested. A Welcome for a group the state already holds is a
+success (`process_welcome` answers it `Ok`), so it never reaches the failure branch. The same pass
+moves `encryptQueuedMessages: ok=false, NOT_YET` from error to info: NOT_YET is the foreground guard
+working as designed and the drain's own warn already says the messages stay queued; only BLOCKED is
+an error.

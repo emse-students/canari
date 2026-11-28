@@ -1186,6 +1186,61 @@ fn write_over_loaded_state(files_dir: &Path, loaded: &[u8], data: &[u8]) -> Resu
     })
 }
 
+/// Why a background Welcome did not install, CLASSIFIED WHERE IT IS THROWN. The join used to answer a
+/// bare `false`, so the phone's log read `join failed` with no cause - a refused write (the app is on
+/// screen and will join the group itself) and a Welcome that can never install from this state looked
+/// identical, and the Rust line that told them apart is lost in a killed app (no logger yet).
+/// A group the state ALREADY holds is not an error at all: `process_welcome` answers it with `Ok`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackgroundJoinError {
+    /// The install was refused (the foreground is active, `mls.bin` moved since it was loaded, an I/O
+    /// or lock failure). The Welcome stays for the app's own load: a later attempt may succeed.
+    WriteRefused(String),
+    /// The Welcome was malformed or refused by MLS (stale epoch, join error): from this state it
+    /// never installs.
+    WelcomeRefused(String),
+    /// The saved state or the device key could not be read, or the state could not be re-sealed.
+    StateUnreadable(String),
+}
+
+impl BackgroundJoinError {
+    /// The stable cause token the platform logs read, never prose.
+    pub fn cause(&self) -> &'static str {
+        match self {
+            Self::WriteRefused(_) => "write-refused",
+            Self::WelcomeRefused(_) => "welcome-refused",
+            Self::StateUnreadable(_) => "state-unreadable",
+        }
+    }
+
+    /// Whether a later attempt can succeed: only a refused write can.
+    pub fn prospect(&self) -> SendProspect {
+        match self {
+            Self::WriteRefused(_) => SendProspect::NotYet,
+            Self::WelcomeRefused(_) | Self::StateUnreadable(_) => SendProspect::Never,
+        }
+    }
+
+    /// What crosses the JNI as the join's answer: `failed:<cause>:<prospect>` (the success is the
+    /// literal `joined`, [`JOINED_TOKEN`]).
+    pub fn token(&self) -> String {
+        format!("failed:{}:{}", self.cause(), self.prospect().token())
+    }
+}
+
+impl std::fmt::Display for BackgroundJoinError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WriteRefused(why) | Self::WelcomeRefused(why) | Self::StateUnreadable(why) => {
+                write!(f, "{}: {why}", self.cause())
+            }
+        }
+    }
+}
+
+/// The JNI answer of a background Welcome that installed.
+pub const JOINED_TOKEN: &str = "joined";
+
 /// Applies an MLS Welcome received in the background (receiver side).
 /// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn process_welcome_background_with_key(
@@ -1196,10 +1251,11 @@ pub fn process_welcome_background_with_key(
     device_id: &str,
     welcome_b64: &str,
     ratchet_tree_b64: &str,
-) -> Result<(), String> {
+) -> Result<(), BackgroundJoinError> {
+    use BackgroundJoinError::{StateUnreadable, WelcomeRefused, WriteRefused};
     let welcome_bytes = STANDARD
         .decode(welcome_b64.trim())
-        .map_err(|e| format!("base64 decode welcome: {e}"))?;
+        .map_err(|e| WelcomeRefused(format!("base64 decode welcome: {e}")))?;
 
     let rt_trimmed = ratchet_tree_b64.trim();
     let ratchet_tree_bytes = if rt_trimmed.is_empty() || rt_trimmed == "null" {
@@ -1208,19 +1264,20 @@ pub fn process_welcome_background_with_key(
         Some(
             STANDARD
                 .decode(rt_trimmed)
-                .map_err(|e| format!("base64 decode ratchet tree: {e}"))?,
+                .map_err(|e| WelcomeRefused(format!("base64 decode ratchet tree: {e}")))?,
         )
     };
 
-    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
+    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)
+        .map_err(StateUnreadable)?;
 
     let group_id = manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
-        .map_err(|e| format!("process_welcome: {e:?}"))?;
+        .map_err(|e| WelcomeRefused(format!("process_welcome: {e:?}")))?;
 
     let enc = manager
         .save_encrypted_with_key(&key)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| StateUnreadable(e.to_string()))?;
     // Noted before the install, so no join goes unnoted (see `note_background_join`).
     let inserted = note_background_join(files_dir, &group_id);
     if let Err(e) = write_over_loaded_state(files_dir, state_bytes, &enc) {
@@ -1228,7 +1285,7 @@ pub fn process_welcome_background_with_key(
         if inserted {
             unnote_refused_background_join(files_dir, &group_id);
         }
-        return Err(e);
+        return Err(WriteRefused(e));
     }
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
@@ -2056,8 +2113,31 @@ mod tests {
             &tree,
         );
 
-        assert!(joined.is_err(), "the compare-and-swap refuses the write");
+        assert!(
+            matches!(joined, Err(BackgroundJoinError::WriteRefused(_))),
+            "the compare-and-swap refuses the write, typed as a refused write: {joined:?}"
+        );
         assert!(take_background_joins(&dir).unwrap().is_empty());
+    }
+
+    /// THE CAUSE CROSSES THE JNI AS A TOKEN, never a bare false: a refused write is not-yet (the app
+    /// joins the group itself), the rest never install from this state.
+    #[test]
+    fn a_background_join_failure_carries_its_typed_cause() {
+        use BackgroundJoinError::{StateUnreadable, WelcomeRefused, WriteRefused};
+        assert_eq!(
+            WriteRefused("x".into()).token(),
+            "failed:write-refused:not-yet"
+        );
+        assert_eq!(
+            WelcomeRefused("x".into()).token(),
+            "failed:welcome-refused:never"
+        );
+        assert_eq!(
+            StateUnreadable("x".into()).token(),
+            "failed:state-unreadable:never"
+        );
+        assert_eq!(JOINED_TOKEN, "joined");
     }
 
     /// A NOTE ALREADY THERE is not this call's to take back.
@@ -2088,7 +2168,10 @@ mod tests {
             "",
         );
 
-        assert!(joined.is_err());
+        assert!(
+            matches!(joined, Err(BackgroundJoinError::WelcomeRefused(_))),
+            "a malformed Welcome is a refused Welcome: {joined:?}"
+        );
         assert!(take_background_joins(&dir).unwrap().is_empty());
     }
 

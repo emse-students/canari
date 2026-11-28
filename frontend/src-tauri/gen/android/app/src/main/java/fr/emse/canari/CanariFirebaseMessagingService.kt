@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.AlertedMessage
 import fr.emse.canari.push.AwaitedReplies
+import fr.emse.canari.push.BackgroundJoinAnswer
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
@@ -2917,7 +2918,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // CLASSIFIED WHERE IT WAS THROWN (Rust `SendBatchError`): a key that does not
                     // open the state is BLOCKED, a refused write or a passing failure NOT_YET.
                     val prospect = OutboxRetry.Prospect.of(json.optString("prospect").takeIf { it.isNotEmpty() }, batch = true)
-                    Log.e(TAG, "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})")
+                    // NOT_YET is the foreground guard (or a passing refusal) working as designed: the
+                    // entries stay queued, and the drain says so at warn. Only a batch that can never go
+                    // from this device (BLOCKED) is an error.
+                    val line = "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})"
+                    if (prospect == OutboxRetry.Prospect.NOT_YET) Log.i(TAG, line) else Log.e(TAG, line)
                     return EncryptBatch.Failed(prospect)
                 }
                 val results = json.optJSONArray("results") ?: JSONArray()
@@ -4889,7 +4894,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Applies a received MLS Welcome (RECEIVER side): joins the group and writes
      * {filesDir}/mls.bin. Lets a device join a new group while the app is closed, so the
      * 1st message of a conversation is decryptable by FCM without opening the app.
-     * Returns true on success.
+     * Returns the typed answer [fr.emse.canari.push.BackgroundJoinAnswer] reads: `joined`, or
+     * `failed:<cause>:<prospect>`.
      */
     external fun nativeProcessWelcomeBackground(
         filesDir: String,
@@ -4899,7 +4905,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         welcomeB64: String,
         ratchetTreeB64: String,
-    ): Boolean
+    ): String
 
     /**
      * Encrypts a BATCH of pending outgoing messages (text/reply) against the live epoch, loading
@@ -6891,7 +6897,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "processReceivedWelcomeBackground: MlsStateLock not acquired -> abort")
             return
         }
-        val joined: Boolean
+        val joinAnswer: BackgroundJoinAnswer.Outcome
         try {
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
@@ -6899,14 +6905,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-            joined = nativeProcessWelcomeBackground(
-                filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+            joinAnswer = BackgroundJoinAnswer.parse(
+                nativeProcessWelcomeBackground(
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+                ),
             )
         } finally {
             MlsStateLock.LOCK.unlock()
         }
 
-        if (joined) {
+        if (joinAnswer is BackgroundJoinAnswer.Outcome.Joined) {
             Log.d(TAG, "processReceivedWelcomeBackground: ✓ group joined group=$groupId")
             // FCM1: promote the membership to 'active' server-side. The JNI join does not go through
             // the foreground path (updateInvitationStatus), so without this call the device stays
@@ -6919,8 +6927,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
             enqueueWorkerIfHealthy(workRequest)
-        } else {
-            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)}")
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Failed) {
+            // The cause is CLASSIFIED WHERE IT WAS THROWN (Rust `BackgroundJoinError`). A refused write
+            // is the app's own load taking the join (NOT_YET): said at warn with its cause. Any other
+            // cause means this Welcome never installs from this state: an error.
+            val line = "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)} " +
+                "cause=${joinAnswer.cause} prospect=${joinAnswer.prospect}"
+            if (joinAnswer.prospect == OutboxRetry.Prospect.NOT_YET) Log.w(TAG, line) else Log.e(TAG, line)
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,
