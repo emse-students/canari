@@ -1656,7 +1656,16 @@ export async function handleSystemEvent(
         if (mark) publishReadState(convoKey, senderNorm, mark.at, mark.clock);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
-        await saveConversation?.(convoKey).catch(() => {});
+        if (ctx.catchupWrites?.deferring()) {
+          // INSIDE A CATCH-UP WINDOW the row is saved once, at the window's close (`catchupWrites.ts`),
+          // as memory holds it then - the row the last of these per-frame saves would have written.
+          ctx.catchupWrites.deferConversationSave(convoKey, deliveryMeta?.queuedMessageId);
+          log(`[READ] save of ${convoKey.slice(0, 8)}… held for the window's close`);
+        } else {
+          await saveConversation?.(convoKey).catch((e: unknown) => {
+            log(`[READ] read mark of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`);
+          });
+        }
       }
       // READ ELSEWHERE, LEARNED OVER THE SOCKET: the server pushes only an un-ACKed frame, so the
       // push that used to be the Android cancel's only trigger never comes for a receipt this
@@ -2395,7 +2404,8 @@ export async function handleSystemEvent(
       senderNorm,
       { messageId: String(data.messageId), emoji: String(data.emoji), at, removed: true },
       undefined,
-      deliveryMeta?.queuedCreatedAt
+      deliveryMeta?.queuedCreatedAt,
+      deliveryMeta?.queuedMessageId
     );
     return true;
   }

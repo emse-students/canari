@@ -68,6 +68,7 @@ import { receiveSkipBudgetFromServer } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { applyReactionFrame } from './reactionFrame';
+import { createCatchupWrites } from './catchupWrites';
 import { isLiveDelivery } from '$lib/utils/chat/reactionNotification';
 import type { MessageHandlerDeps } from './deps';
 import {
@@ -186,7 +187,21 @@ function forgetLegacyAdmissionFreeze(log: (msg: string) => void): void {
   }
 }
 
-export function setupMessageHandler(deps: MessageHandlerDeps): void {
+export function setupMessageHandler(handlerDeps: MessageHandlerDeps): void {
+  // THE CATCH-UP'S BATCHED STORE WRITES (`catchupWrites.ts`): registered here, BEFORE the UI render
+  // buffer's observer (sessionAuth), so on a close and on a hold they land first. One handed in
+  // (a test) is registered all the same, never replaced.
+  const catchupWrites =
+    handlerDeps.catchupWrites ??
+    createCatchupWrites({
+      storage: handlerDeps.storage,
+      deviceKey: handlerDeps.deviceKey,
+      conversations: handlerDeps.conversations,
+      saveConversation: handlerDeps.saveConversation,
+      log: handlerDeps.log,
+    });
+  const deps: MessageHandlerDeps = { ...handlerDeps, catchupWrites };
+  deps.mlsService.addBulkIngestObserver(catchupWrites);
   // No `userId` here any more: its only consumer at this scope was the state persister's config, and
   // the platform now owns where a checkpoint lands (`IMlsService.persistCheckpoint`). The handlers
   // further down re-destructure their own from `deps`.
@@ -1539,12 +1554,14 @@ async function handleKnownGroup({
               conversations,
               messageReactions,
               log,
+              catchupWrites: deps.catchupWrites,
             },
             convoKey,
             sender,
             msg.reaction,
             authorship,
-            deliveryMeta?.queuedCreatedAt
+            deliveryMeta?.queuedCreatedAt,
+            deliveryMeta?.queuedMessageId
           );
         } finally {
           // A reaction is what this frame leaves on disk: stored (or kept pending) by now.

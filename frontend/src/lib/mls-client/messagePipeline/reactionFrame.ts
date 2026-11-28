@@ -1,5 +1,7 @@
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import type { StoredMessage } from '$lib/db/types';
 import type { MessageReaction } from '$lib/types';
+import type { CatchupWrites } from './catchupWrites';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   keepPendingMutation,
@@ -7,7 +9,10 @@ import {
 } from '$lib/utils/chat/pendingMutationStore';
 
 /** What applying a reaction frame reads and writes. */
-export type ReactionFrameDeps = PendingMutationDeps;
+export type ReactionFrameDeps = PendingMutationDeps & {
+  /** Where a catch-up's write onto the stored row waits for the window's close, when one is open. */
+  catchupWrites?: CatchupWrites;
+};
 
 /** The reaction a frame carries, as decoded. */
 export interface ReactionFrame {
@@ -43,6 +48,7 @@ export interface ReactionFrameOutcome {
  * held in memory: it is written with the body when the body arrives (`pendingMutations.ts`).
  *
  * @param serverAt the frame's server time - the order a kept entry is evicted in
+ * @param frameId the queued frame, whose ack waits for a write held until the window's close
  * @returns what the frame changed, and whose message it landed on
  */
 export async function applyReactionFrame(
@@ -51,9 +57,10 @@ export async function applyReactionFrame(
   sender: string,
   reaction: ReactionFrame,
   authorship: RecordedAuthorship | undefined,
-  serverAt: number | undefined
+  serverAt: number | undefined,
+  frameId?: string
 ): Promise<ReactionFrameOutcome> {
-  const { storage, deviceKey, conversations, messageReactions, log } = deps;
+  const { storage, deviceKey, conversations, messageReactions, log, catchupWrites } = deps;
   const msgId = reaction.messageId ?? '';
   const emoji = reaction.emoji ?? '';
   if (!msgId || !emoji) {
@@ -148,33 +155,36 @@ export async function applyReactionFrame(
   // flags, so reacting to an edited message resurrected the original body on the next reload.
   // Folded into the row as it stands AT THE WRITE (a compare-and-set): a reaction another frame
   // stored since the read above is kept, never overwritten by the copy read before it.
-  try {
-    await storage.mergeMessages(
+  const fold = (current: StoredMessage): StoredMessage | null => {
+    const folded = applyReaction(current.reactions ?? [], sender, emoji, at, removed, authorship);
+    return folded ? { ...current, reactions: folded } : null;
+  };
+  // KEPT, NEVER ONLY LOGGED (review of #3851): the frame is acknowledged and its generation spent,
+  // so a reaction shown and not written was lost at the next reload. Parked as a pending mutation,
+  // it is written onto its row at the next look; a store that refuses the park too says so at ERROR
+  // (`parkPendingMutation`).
+  const parkUnwritten = () => keep('could not be written onto its stored row');
+  if (catchupWrites?.deferring()) {
+    // INSIDE A CATCH-UP WINDOW the write waits for the window's close, one merge per conversation
+    // (`catchupWrites.ts`); the frame's ack waits with it.
+    log(`[REACTION] ${msgId.slice(0, 8)} is stored - its write is held for the window's close`);
+    catchupWrites.deferReaction({
       convoKey,
-      [msgId],
-      (current) => {
-        const folded = applyReaction(
-          current.reactions ?? [],
-          sender,
-          emoji,
-          at,
-          removed,
-          authorship
-        );
-        return folded ? { ...current, reactions: folded } : null;
-      },
-      deviceKey()
-    );
+      messageId: msgId,
+      fold,
+      ...(frameId ? { frameId } : {}),
+      park: parkUnwritten,
+    });
+    return outcome;
+  }
+  try {
+    await storage.mergeMessages(convoKey, [msgId], fold, deviceKey());
   } catch (e) {
-    // KEPT, NEVER ONLY LOGGED (review of #3851): the frame is acknowledged and its generation spent,
-    // so a reaction shown and not written was lost at the next reload. Parked as a pending mutation,
-    // it is written onto its row at the next look; a store that refuses the park too says so at ERROR
-    // (`parkPendingMutation`).
     console.error(
       `[REACTION] reaction on ${msgId.slice(0, 8)} not written to its row - kept as a pending mutation:`,
       e
     );
-    await keep('could not be written onto its stored row');
+    await parkUnwritten();
   }
   return outcome;
 }
