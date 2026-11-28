@@ -36,6 +36,8 @@ const sites = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => openUrl(url) }));
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
+const showToast = vi.fn();
+vi.mock('$lib/stores/toast.svelte', () => ({ showToast: (...a: unknown[]) => showToast(...a) }));
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://canari.example' }));
 vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn(), i: vi.fn() } }));
 vi.mock('$lib/navigation/ecosystemSites', async (importOriginal) => {
@@ -82,6 +84,7 @@ describe('openEcosystemSite', () => {
     vi.restoreAllMocks();
     openUrl.mockClear();
     apiFetch.mockReset();
+    showToast.mockClear();
   });
 
   describe('on the native shells', () => {
@@ -98,6 +101,54 @@ describe('openEcosystemSite', () => {
       expect(JSON.parse(String(init.body))).toEqual({ aud: 'migallery', dest: '/mes-photos' });
       expect(openUrl).toHaveBeenCalledWith(MINTED);
       expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('opens a link tapped three times while it mints ONCE, and again once it settled', async () => {
+      let resolveMint!: (r: Response) => void;
+      apiFetch.mockReturnValueOnce(new Promise<Response>((r) => (resolveMint = r)));
+      openEcosystemSite('migallery', '/mes-photos');
+      openEcosystemSite('migallery', '/mes-photos');
+      openEcosystemSite('migallery', '/mes-photos');
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      // The tap was taken: ONE pending toast, none for the dropped taps.
+      expect(showToast).toHaveBeenCalledTimes(1);
+      resolveMint(json(200, { url: MINTED }));
+      await settle();
+      expect(openUrl).toHaveBeenCalledTimes(1);
+      apiFetch.mockResolvedValueOnce(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+      expect(openUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the guard until the opener itself has settled', async () => {
+      let finishOpen!: () => void;
+      openUrl.mockReturnValueOnce(new Promise<void>((r) => (finishOpen = r)));
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(openUrl).toHaveBeenCalledTimes(1);
+      // The browser launch is still pending: a tap now is the same open.
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      finishOpen();
+      await settle();
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('releases the guard when the mint fails, so a retry is possible', async () => {
+      apiFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      apiFetch.mockResolvedValueOnce(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
     });
 
     it('says a failed open by its class, never with the URL that carries the token', async () => {
@@ -214,6 +265,15 @@ describe('openEcosystemSite', () => {
       resolveMint(json(200, { url: MINTED }));
       await settle();
       expect(tab.location.href).toBe(MINTED);
+    });
+
+    it('shows no toast: the new tab is already the feedback', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      const tab = { opener: null, closed: false, location: { href: 'about:blank' } };
+      vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(showToast).not.toHaveBeenCalled();
     });
 
     it('points the tab at the plain address when the mint fails', async () => {
