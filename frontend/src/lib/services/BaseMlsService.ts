@@ -114,6 +114,9 @@ import type {
   DeliveredWelcome,
   IncomingDeliveryMeta,
   OneDeviceAddResult,
+  OwnCommitState,
+  CommitLogCatchUp,
+  MailboxListing,
 } from '$lib/mls-client/IMlsService';
 import type { ExternalJoinStanding } from '$lib/mls-client/externalJoinStanding';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
@@ -2769,8 +2772,14 @@ export abstract class BaseMlsService implements IMlsService {
     return drained;
   }
 
-  /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
-  private groupDrainedNow(groupId: string): boolean {
+  /** @inheritdoc */
+  mailboxListing(): MailboxListing {
+    if (this.pendingPullInFlight || this.owedPull) return 'pending';
+    return this.mailboxEmptiedByAPull && this.isWsOpen() ? 'listed' : 'unlisted';
+  }
+
+  /** @inheritdoc */
+  groupDrainedNow(groupId: string): boolean {
     return this.mailboxListedOnThisLink() && this.messageScheduler.isGroupIdle(groupId);
   }
 
@@ -2838,17 +2847,111 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly groupDrainedArmed = new Set<string>();
 
   /** @inheritdoc */
-  whenGroupDrained(groupId: string): Promise<void> {
+  whenGroupDrained(groupId: string, signal?: AbortSignal): Promise<void> {
     // A DESTROYED CLIENT DRAINS NOTHING MORE, so a waiter registered after `destroy` would wait for
     // ever: `abandonGroupDrainedWaiters` ran once, at the destroy, and never again.
     if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
     if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
       const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
-      waiters.push({ resolve, reject });
+      waiters.push(waiter);
       this.groupDrainedWaiters.set(groupId, waiters);
       this.armGroupDrained(groupId);
+      // A WAITER WHOSE CALLER STOPPED IS REMOVED, never left for the next pull to wake.
+      signal?.addEventListener(
+        'abort',
+        () => {
+          const left = (this.groupDrainedWaiters.get(groupId) ?? []).filter((w) => w !== waiter);
+          if (left.length > 0) this.groupDrainedWaiters.set(groupId, left);
+          else this.groupDrainedWaiters.delete(groupId);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
     });
+  }
+
+  /** @inheritdoc */
+  leadGroup(groupId: string): () => void {
+    return this.messageScheduler.leadGroup(groupId);
+  }
+
+  /** @inheritdoc */
+  async pullForGroup(groupId: string): Promise<'listed' | 'incomplete'> {
+    await this.fetchPendingMessages([groupId]);
+    return this.mailboxListedOnThisLink() ? 'listed' : 'incomplete';
+  }
+
+  /** @inheritdoc */
+  async ownCommitState(groupId: string): Promise<OwnCommitState> {
+    if (this.messageScheduler.committingGroupId === groupId) return 'in-flight';
+    return (await this.knownUnresolvedGroups()).has(groupId) ? 'unresolved' : 'none';
+  }
+
+  /** @inheritdoc */
+  catchUpFromCommitLog(groupId: string): Promise<CommitLogCatchUp> {
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    return this.runUnderMlsLock(async () => {
+      // THE SAME FIRST STEP AS A REFUSED COMMIT (`catchUpOnRefusedCommit`): the gap is marked, then
+      // rung 1 runs with its books - persisted on any applied commit, un-marked on a heal, held
+      // behind a refused backlog.
+      const markedBefore = isInEpochGap(groupId);
+      log(`[GAP] ${short} behind the server with its mailbox listed - rung 1 (commit-log replay)`);
+      markEpochGap(groupId);
+      try {
+        const replay = await replayAndRecord(this, groupId, this.userId, log, {
+          persist: scheduleOutboundMlsPersist,
+          refusedBacklog: 'hold',
+        });
+        if (replay.healed) return 'healed';
+        if (replay.heldBehindRefusedBacklog) {
+          log(
+            `[GAP] ${short} not replayed: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked`
+          );
+          return 'held';
+        }
+        // Read under the lock: a frame applied before it took the lock left nothing to replay.
+        // The mark this call set answered a gap that is not there - taken back, never left to
+        // freeze the outbox; one another path set stays its own.
+        if (replay.activeEpoch !== undefined && this.getEpoch(groupId) >= replay.activeEpoch) {
+          if (!markedBefore) clearEpochGap(groupId);
+          return 'healed';
+        }
+        log(
+          `[GAP] ${short} still behind after rung 1${replay.belowFloor ? ' - the commits are pruned below the log floor' : replay.gapAt !== undefined ? ` - the commit log is HOLED at epoch ${replay.gapAt}` : ''} - left to the sync watchdog for rung 2`
+        );
+        return 'still-behind';
+      } catch (e) {
+        // CLASSIFIED AT THE THROW, BY TYPE. Only a request that got NO ANSWER says nothing about
+        // the gap: the mark this call set is taken back - left on a failed fetch, it would have the
+        // sync watchdog FORGET the group - and one another path set stays its own.
+        if (isTransportFailure(e)) {
+          if (!markedBefore) clearEpochGap(groupId);
+          console.warn(
+            `[GAP] ${short} the commit log got no answer - nothing known about the gap${markedBefore ? '' : ', its mark taken back'}:`,
+            e
+          );
+          return 'unreachable';
+        }
+        // Anything else is an ANSWER or a LOCAL fault - the server refused the log (a 403), a
+        // commit could not be settled, merged or persisted, the log could not be parsed: the
+        // group is really not caught up, and the mark stays for rung 2.
+        console.error(
+          `[GAP] ${short} rung 1 failed (${e instanceof Error ? e.name : typeof e}) - the mark stays, left to the sync watchdog for rung 2:`,
+          e
+        );
+        return 'still-behind';
+      }
+    });
+  }
+
+  /** @inheritdoc */
+  whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void> {
+    if (this.isDestroyed()) return Promise.reject(new GroupDrainAbandonedError(groupId));
+    return this.messageScheduler.whenGroupFrameApplied(groupId, signal);
   }
 
   /**
@@ -3976,6 +4079,10 @@ export abstract class BaseMlsService implements IMlsService {
       // there, so that row is never listed again before it is acknowledged.
       if (!this.messageScheduler.draining) this.issueOwedPull('pull ended');
     }
+    // THE LISTING LANDING IS AN EVENT FOR `whenGroupDrained` TOO: a group with nothing queued reads
+    // drained from here, not from the end of the whole drain below - which is every OTHER group's
+    // work (a call answered on the ring waits for its own group only, calls.md).
+    this.wakeGroupDrainedWaiters('mailbox listed');
     await this.settleMailbox();
     // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
     // was listed whole reads drained only now (the start-up sync runs before the first full pull).

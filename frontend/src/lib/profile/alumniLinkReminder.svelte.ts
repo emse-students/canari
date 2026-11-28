@@ -14,18 +14,23 @@ import { Log } from '$lib/utils/Log';
  * does, so the way back to the link outlives the card's cross.
  */
 export function followAlumniLinkReminder(): { readonly due: boolean; open: () => void } {
-  let profile = $state<UserProfile | null>(null);
+  /**
+   * Whether the profile, at the instant it was read, makes the link due. The date is read with the
+   * profile, never inside a `$derived`: nothing re-runs a derivation when the clock moves, so a date
+   * read there was only ever the instant of the profile's arrival anyway - said here, not implied.
+   */
+  let dueByProfile = $state(false);
   /** Read when needed, never at mount: most screens that mount a reminder never get a due profile. */
   const target = () => miconnectSourcesSettingsUrl(authentikUrl());
 
   $effect(() => {
     const id = currentUserId();
-    profile = null;
+    dueByProfile = false;
     if (!id) return;
     let live = true;
     fetchMyProfile()
       .then((p) => {
-        if (live) profile = p;
+        if (live) dueByProfile = profileMakesLinkDue(p);
       })
       .catch((err) => Log.d('alumniLink', 'own profile not read, no reminder', err));
     return () => {
@@ -33,7 +38,7 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
     };
   });
 
-  const due = $derived(!!profile && alumniLinkReminderDue(profile, new Date()) && !!target());
+  const due = $derived(dueByProfile && !!target());
 
   return {
     get due() {
@@ -45,4 +50,9 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
       if (url) void openExternal(url);
     },
   };
+}
+
+/** {@link alumniLinkReminderDue} for `profile` at this instant. */
+function profileMakesLinkDue(profile: UserProfile | null): boolean {
+  return !!profile && alumniLinkReminderDue(profile, new Date());
 }

@@ -56,6 +56,7 @@ function fakeService() {
     reconnecting: writable(false),
     peerLost: writable(false),
     e2eProven: writable(false),
+    connectingWaitsFor: writable(null),
     localMicSuspended: writable(false),
     audioFocusHeld: writable(false),
     peerMicSuspended: writable(false),

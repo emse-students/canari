@@ -14,7 +14,7 @@
  */
 
 /** Thrown to whoever was waiting for MLS when the session they waited for ended instead. */
-class MlsSessionEndedError extends Error {
+export class MlsSessionEndedError extends Error {
   constructor(reason: string) {
     super(`[MLS-READY] the session ended before MLS was ready: ${reason}`);
     this.name = 'MlsSessionEndedError';
@@ -22,21 +22,53 @@ class MlsSessionEndedError extends Error {
 }
 
 let ready = false;
+/** The client MLS was made ready ON ({@link setMlsReady}), or `null` while it is not ready. */
+let readyClient: unknown = null;
 let waiters: { resolve: () => void; reject: (error: Error) => void }[] = [];
 
-/** Resolves once MLS is initialised for the current session (at once if it already is). */
-export function whenMlsReady(): Promise<void> {
+/**
+ * Resolves once MLS is initialised for the current session (at once if it already is).
+ *
+ * @param signal aborting it REMOVES the waiter and rejects with the signal's reason: a caller that
+ *   stopped waiting (a call that ended) leaves nothing parked for the next session to wake.
+ */
+export function whenMlsReady(signal?: AbortSignal): Promise<void> {
   if (ready) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise<void>((resolve, reject) => {
+    const waiter = { resolve, reject };
+    waiters.push(waiter);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        waiters = waiters.filter((w) => w !== waiter);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
 }
 
-/** Records whether MLS is up for the session. Called by the one writer of `isLoggedIn`. */
-export function setMlsReady(isReady: boolean): void {
+/**
+ * Records whether MLS is up for the session, and on which client. Called by the one writer of
+ * `isLoggedIn`, with the session's client when it flips to ready.
+ */
+export function setMlsReady(isReady: boolean, client: unknown = null): void {
   ready = isReady;
+  readyClient = isReady ? client : null;
   if (!isReady) return;
   const released = waiters;
   waiters = [];
   for (const waiter of released) waiter.resolve();
+}
+
+/**
+ * The client MLS is ready on, or `null`. A caller that captured a client BEFORE readiness (a call
+ * service built at mount, a login since replaced the client) compares it with this one: holding
+ * another is holding a client the session no longer uses.
+ */
+export function mlsReadyClient(): unknown {
+  return readyClient;
 }
 
 /**

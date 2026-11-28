@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  abandonCatchUpWaiters,
   markConnectionCaughtUp,
   parsePendingCallAccept,
   setPendingCallAccept,
   setPendingCallAcceptHandler,
   setSessionCaughtUp,
+  SessionCatchUpAbandonedError,
   takePendingCallAccept,
+  clearPendingCallAccept,
+  hasPendingCallAccept,
+  whenNextCatchUp,
 } from './pendingCallAccept';
 import { readSource, relativeTo, sourceFiles } from '../../test/sourceTree';
 
@@ -24,57 +29,74 @@ afterEach(() => {
   setPendingCallAcceptHandler(null);
 });
 
-describe('a native answer is acted on once the session has caught up', () => {
-  it('held until the catch-up, then handed over once', () => {
+describe('a native answer is handed to the session at once - the catch-up is not its gate', () => {
+  it('handed over as soon as it is recorded, before any catch-up', () => {
     const handler = vi.fn();
     setPendingCallAcceptHandler(handler);
     setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
-
-    setSessionCaughtUp(true);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith('the session caught up');
-  });
-
-  it('acted on at once when the session is already caught up', () => {
-    const handler = vi.fn();
-    setPendingCallAcceptHandler(handler);
-    setSessionCaughtUp(true);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
     expect(handler).toHaveBeenCalledWith('the answer was recorded');
   });
 
-  it('a socket that closed waits for the next catch-up', () => {
+  it('an answer drained before the session registered is handed over at the registration', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
     const handler = vi.fn();
     setPendingCallAcceptHandler(handler);
-    setSessionCaughtUp(true);
-    setSessionCaughtUp(false);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledWith('the session registered its handler');
   });
 
-  it('a catch-up that ended on a dropped socket is no catch-up, nor a stale one', () => {
-    const handler = vi.fn();
+  it('a catch-up hands nothing over a second time', () => {
+    const handler = vi.fn((_why: string) => takePendingCallAccept());
     setPendingCallAcceptHandler(handler);
     setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-
-    // The socket dropped during the fetch: the catch-up's end must not act, nor leave the flag
-    // true for the reconnect to inherit.
-    markConnectionCaughtUp(false);
-    expect(handler).not.toHaveBeenCalled();
-
-    // The reconnect's own catch-up decides.
-    markConnectionCaughtUp(true);
+    setSessionCaughtUp(true);
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('a stale true flag is cleared by a catch-up on a dropped socket', () => {
-    const handler = vi.fn();
-    setPendingCallAcceptHandler(handler);
+  it('drops an answer recorded too long ago', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 10 * 60_000 });
+    expect(takePendingCallAccept()).toBeNull();
+  });
+});
+
+describe('whenNextCatchUp - an event the call wait re-reads its facts on, never a proof', () => {
+  it('a session already caught up does not resolve it: only the NEXT catch-up does', async () => {
     setSessionCaughtUp(true);
+    let done = false;
+    void whenNextCatchUp().then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    setSessionCaughtUp(false);
+    setSessionCaughtUp(true);
+    await Promise.resolve();
+    expect(done).toBe(true);
+  });
+
+  it('a catch-up that ended on a dropped socket wakes nothing, the reconnect one does', async () => {
+    let done = false;
+    void whenNextCatchUp().then(() => (done = true));
     markConnectionCaughtUp(false);
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
-    expect(handler).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(done).toBe(false);
+    markConnectionCaughtUp(true);
+    await Promise.resolve();
+    expect(done).toBe(true);
+  });
+
+  it('an aborted waiter is removed and rejected with the reason', async () => {
+    const stop = new AbortController();
+    const wait = whenNextCatchUp(stop.signal);
+    stop.abort(new Error('the call ended'));
+    await expect(wait).rejects.toThrow('the call ended');
+    expect(abandonCatchUpWaiters('nothing left')).toBe(0);
+  });
+
+  it('a sign-out rejects every waiter, so the catch-up of the next account wakes none of them', async () => {
+    const wait = whenNextCatchUp();
+    expect(abandonCatchUpWaiters('signed out')).toBe(1);
+    await expect(wait).rejects.toBeInstanceOf(SessionCatchUpAbandonedError);
+    setSessionCaughtUp(true);
+    expect(abandonCatchUpWaiters('again')).toBe(0);
   });
 
   it('the session reports the socket state at the end of the catch-up, not a constant', () => {
@@ -83,9 +105,25 @@ describe('a native answer is acted on once the session has caught up', () => {
       /onConnectionCaughtUp: \(\) => \{\s*markConnectionCaughtUp\(isWsConnected\);/
     );
   });
+});
 
-  it('drops an answer recorded too long ago', () => {
-    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 10 * 60_000 });
+describe('one pending answer, never overwritten, never inherited', () => {
+  it('a second answer of ANOTHER call is refused while the first is fresh', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    setPendingCallAccept({ ...ANSWER, callId: 'call-2', acceptedAt: Date.now() });
+    expect(hasPendingCallAccept('call-1')).toBe(true);
+    expect(hasPendingCallAccept('call-2')).toBe(false);
+  });
+
+  it('the same call answered again replaces it', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() - 1000 });
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    expect(takePendingCallAccept()?.callId).toBe('call-1');
+  });
+
+  it('a sign-out drops it: the next account never joins it', () => {
+    setPendingCallAccept({ ...ANSWER, acceptedAt: Date.now() });
+    clearPendingCallAccept('signed out');
     expect(takePendingCallAccept()).toBeNull();
   });
 });

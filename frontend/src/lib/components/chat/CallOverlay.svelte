@@ -82,7 +82,18 @@
   } = $props();
 
   const call = useCallModel(() => callService);
+
   const fullScreen = $derived(callView.showsFullScreen);
+
+  // AN ANSWER FROM THE RING TIMES ITS SCREEN: the first moment the user sees the call in each shape -
+  // the full screen, or the banner the PIN lock leaves - measured from the native tap
+  // (`CallService.noteCallScreenShown`, once per shape; silent for a call that did not come from it).
+  // Re-read on every state change, so an invite that put the screen up first is timed at the answer.
+  $effect(() => {
+    const shape = fullScreen ? 'full screen' : 'banner';
+    if (call.callState === 'idle' || call.callState === 'ended') return;
+    untrack(() => callService.noteCallScreenShown(shape));
+  });
 
   // Back minimises; the call is never ended by a navigation gesture. The chevron and Escape go
   // through `dismissFromUi` too, so every way out of the full screen leaves the stack the same way
@@ -131,7 +142,9 @@
   let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
   // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
-  let statusText = $derived(callStatusText(call.kind, call.duration, primary?.displayName));
+  let statusText = $derived(
+    callStatusText(call.kind, call.duration, primary?.displayName, call.connectingWaitsFor)
+  );
   /** A VIDEO call rings: the subtitle says so and Accept carries a camera, as it answers with one. */
   let ringHasVideo = $derived(isIncoming && callService.incomingHasVideo);
   let isEnded = $derived(call.callState === 'ended');
@@ -595,7 +608,7 @@
   let announcement = $derived(
     call.kind === 'live'
       ? (micNotice ?? micRecovery ?? m.call_live_announcement())
-      : callStatusText(call.kind, call.duration, primary?.displayName)
+      : callStatusText(call.kind, call.duration, primary?.displayName, call.connectingWaitsFor)
   );
 
   function hangUp() {

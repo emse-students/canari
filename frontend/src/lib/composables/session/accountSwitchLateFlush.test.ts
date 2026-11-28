@@ -52,8 +52,12 @@ vi.mock('$lib/mlsService', () => ({
 vi.mock('$lib/services/CallService', () => ({
   CallService: class {
     readonly callState = { subscribe: () => () => {} };
-    readonly retireFromPageRing = vi.fn();
-    constructor(readonly mls: IMlsService) {}
+    readonly retire = vi.fn();
+    // The service reads the session's CURRENT client through a getter, as the real one does.
+    constructor(private readonly source: IMlsService | (() => IMlsService)) {}
+    get mls(): IMlsService {
+      return typeof this.source === 'function' ? this.source() : this.source;
+    }
     setChatNotifier() {}
   },
 }));
@@ -167,7 +171,7 @@ describe("A signs out with its final write held, B signs in, A's write lands lat
     const callServiceA = session.callService;
     session.initServices(() => {});
     // A's call service withdraws what it told the native ring before it is replaced.
-    expect(callServiceA.retireFromPageRing).toHaveBeenCalledTimes(1);
+    expect(callServiceA.retire).toHaveBeenCalledTimes(1);
     const clientB = made[1];
     expect(clientB).toBeDefined();
     expect(session.ensureMls()).toBe(clientB);

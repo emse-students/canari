@@ -32,6 +32,14 @@ export function createMlsServiceStub(
     // Default: every group drained - a test about a held commit overrides it.
     isGroupDrained: vi.fn().mockReturnValue(true),
     whenGroupDrained: vi.fn().mockResolvedValue(undefined),
+    leadGroup: vi.fn(() => () => {}),
+    pullForGroup: vi.fn(async () => 'listed' as const),
+    ownCommitState: vi.fn(async () => 'none' as const),
+    catchUpFromCommitLog: vi.fn(async () => 'healed' as const),
+    groupDrainedNow: vi.fn().mockReturnValue(true),
+    mailboxListing: vi.fn(() => 'listed' as const),
+    // Never resolves by default: nothing of the group arrives in a test that does not say so.
+    whenGroupFrameApplied: vi.fn(() => new Promise<void>(() => {})),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],

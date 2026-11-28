@@ -230,7 +230,7 @@ export function useChatSession() {
     setIsLoggedIn: (v) => {
       isLoggedIn = v;
       // The one writer of the flag is the one writer of the awaitable form (`mlsReadiness.ts`).
-      setMlsReady(v);
+      setMlsReady(v, v ? mlsHolder.current() : null);
       publishDelegationReadiness();
     },
     isWsConnected: () => isWsConnected,
@@ -555,14 +555,21 @@ export function useChatSession() {
       if (callServiceMls === svc) return;
       callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
-      // The replaced service (an account switch) withdraws what it told the native ring, so its
-      // holder does not outlive it (`CallService.retireFromPageRing`).
-      callService?.retireFromPageRing();
-      callService = new CallService(svc);
+      // The replaced service (an account switch) ends its call locally and withdraws what it told
+      // the native ring, so neither outlives it, and it sends nothing more (`CallService.retire`).
+      callService?.retire('the session built a new call service over a new client');
+      // The session's CURRENT client, read at each use: an answer given at the PIN gate joins on the
+      // client the retried login brings up, never on the one this service was built beside - and
+      // only while the session holds the account it was built for (`CallServiceRetiredError`).
+      callService = new CallService(
+        () => ensureMls(),
+        () => userId || null
+      );
       callService.callState.subscribe((s: any) => (callState = s));
-      // An answer given on the ring joins once the socket's catch-up is done, whichever of the two
-      // comes second (`pendingCallAccept.ts`; calls.md, "An answer from the ring joins on the
-      // ring's facts").
+      // An answer given on the ring is handed to this service as soon as both it and the service
+      // exist, whichever comes second: the call screen shows at once, and only its keys wait for the
+      // call's own group to be proven current (`pendingCallAccept.ts`, `callGroupCurrent.ts`;
+      // calls.md, "The answer joins on its own group").
       setPendingCallAcceptHandler((why) => callService?.answerFromSystemSurface(why));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */

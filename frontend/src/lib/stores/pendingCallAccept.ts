@@ -17,11 +17,20 @@
  * waits for the caller's MLS `call_invite`, a transport frame the server delivers only to a device
  * ONLINE when it was sent (calls.md, "An answer from the ring joins on the ring's facts").
  *
- * WHEN IT IS ACTED ON: once the session's socket is up AND its post-connect catch-up is done
- * ({@link setSessionCaughtUp}), whichever of that and the intent comes second.
+ * WHEN IT IS ACTED ON: AT ONCE - as soon as an intent is held and the session has registered its
+ * handler, whichever comes second. The handler shows the call screen straight away and holds only
+ * the JOIN until the call's own group is proven current (`services/callGroupCurrent.ts`); it no
+ * longer waits for the catch-up of every conversation (owner, 2026-11-28: 10.7 s of a 1.8.2 answer
+ * were other conversations' frames - calls.md, "The answer joins on its own group").
+ * {@link whenNextCatchUp} is one of the EVENTS that wait re-reads its facts on - never a proof.
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import {
+  getTabLeadership,
+  onLeaderTabChanged,
+  whenTabLeadershipDecided,
+} from '$lib/mls-client/tabLeader';
 
 export interface PendingCallAccept {
   groupId: string;
@@ -43,34 +52,89 @@ const MAX_PENDING_AGE_MS = 2 * 60_000;
 let pending: PendingCallAccept | null = null;
 let handler: ((why: string) => void) | null = null;
 let caughtUp = false;
+/** Waiters of {@link whenNextCatchUp}, released the next time the session reads caught up. */
+let caughtUpWaiters: Array<{ resolve: () => void; reject: (e: unknown) => void }> = [];
+
+/** The session the catch-up waiters belonged to ended: they are rejected with it. */
+export class SessionCatchUpAbandonedError extends Error {
+  constructor(reason: string) {
+    super(`[CallAccept] the session ended before its next catch-up: ${reason}`);
+    this.name = 'SessionCatchUpAbandonedError';
+  }
+}
 
 /**
  * Registers THE one handler that acts on an intent (`useChatSession`: `answerFromSystemSurface`).
- * A later registration replaces the earlier: there is one session.
+ * A later registration replaces the earlier: there is one session. An intent drained before the
+ * handler existed is handed to it now.
  */
 export function setPendingCallAcceptHandler(fn: ((why: string) => void) | null): void {
   handler = fn;
+  if (fn) actIfReady('the session registered its handler');
 }
 
-/** Hands a held intent to the handler when the session is caught up. */
+/** Hands a held intent to the handler, if the session has registered one. */
 function actIfReady(why: string): void {
-  if (!pending || !caughtUp) return;
+  if (!pending) return;
   if (!handler) {
-    appendLog(`[CallAccept] WARN call=${pending.callId} ready (${why}) but no session handles it`);
+    // The ordinary order of a cold start that drains before the session exists: the registration
+    // hands it over (`setPendingCallAcceptHandler`).
+    appendLog(`[CallAccept] call=${pending.callId} held (${why}) until the session registers`);
     return;
   }
+  appendLog(
+    `[CallAccept] timing: answer handed to the session ${Date.now() - pending.acceptedAt} ms after the native tap (${why})`
+  );
   handler(why);
 }
 
 /**
  * Records whether the session's socket is up and caught up (`ConnectionDeps.onCaughtUp` sets it,
- * a closed socket clears it). Becoming caught up acts on a held intent.
+ * a closed socket clears it). Becoming caught up releases {@link whenNextCatchUp}.
  */
 export function setSessionCaughtUp(value: boolean): void {
   if (caughtUp === value) return;
   caughtUp = value;
   appendLog(`[CallAccept] session caught up=${value}`);
-  if (value) actIfReady('the session caught up');
+  if (!value) return;
+  const released = caughtUpWaiters;
+  caughtUpWaiters = [];
+  for (const { resolve } of released) resolve();
+}
+
+/**
+ * Resolves at the NEXT time the session reads caught up - never at once, even when it already is:
+ * it is an EVENT a wait re-reads its facts on (a connection's catch-up just ended), never a proof
+ * of anything (`callGroupCurrent.ts`).
+ *
+ * @param signal aborting it removes the waiter and rejects with the signal's reason.
+ * @throws {SessionCatchUpAbandonedError} (as a rejection) when the session ends first.
+ */
+export function whenNextCatchUp(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject };
+    caughtUpWaiters.push(waiter);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        caughtUpWaiters = caughtUpWaiters.filter((w) => w !== waiter);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
+}
+
+/**
+ * Rejects every {@link whenNextCatchUp} waiter: the session they belong to was signed out, and the
+ * next account's catch-up must not wake them. Returns how many there were, for the caller's log.
+ */
+export function abandonCatchUpWaiters(reason: string): number {
+  const abandoned = caughtUpWaiters;
+  caughtUpWaiters = [];
+  for (const { reject } of abandoned) reject(new SessionCatchUpAbandonedError(reason));
+  return abandoned.length;
 }
 
 /**
@@ -87,13 +151,34 @@ export function markConnectionCaughtUp(socketOpen: boolean): void {
   setSessionCaughtUp(socketOpen);
 }
 
-/** Records an accept intent drained from the native handler, and acts on it if the session is ready. */
+/**
+ * Records an accept intent drained from the native handler, and acts on it if the session is ready.
+ * An intent of ANOTHER call still held and fresh is never overwritten: refused, said - two answers
+ * cannot both be honoured, and the first one tapped is the user's.
+ */
 export function setPendingCallAccept(intent: PendingCallAccept): void {
+  if (
+    pending &&
+    pending.callId !== intent.callId &&
+    Date.now() - pending.acceptedAt <= MAX_PENDING_AGE_MS
+  ) {
+    appendLog(
+      `[CallAccept] WARN accept of call=${intent.callId} refused - the answer of call=${pending.callId} is still pending`
+    );
+    return;
+  }
   pending = intent;
   appendLog(
-    `[CallAccept] pending accept recorded call=${intent.callId} caller=${intent.callerId ? 'named' : 'unknown'}`
+    `[CallAccept] pending accept recorded call=${intent.callId} caller=${intent.callerId ? 'named' : 'unknown'} ${Date.now() - intent.acceptedAt} ms after the native tap`
   );
   actIfReady('the answer was recorded');
+}
+
+/** Drops a pending intent: the account that answered signed out, and the next one never joins it. */
+export function clearPendingCallAccept(reason: string): void {
+  if (!pending) return;
+  appendLog(`[CallAccept] pending accept of call=${pending.callId} dropped - ${reason}`);
+  pending = null;
 }
 
 /**
@@ -153,12 +238,23 @@ export function parsePendingCallAccept(raw: string): PendingCallAccept | null {
 
 /**
  * Drains the native accept file (written by the Android or iOS answer handler while the webview may
- * not even be running) into the in-memory intent. Called at startup and on resume; nothing to do
- * outside Tauri or when nothing is pending.
+ * not even be running) into the in-memory intent. Called at startup, on resume, on the native
+ * event and when this tab takes the lead; nothing to do outside Tauri or when nothing is pending.
+ *
+ * ONLY THE LEADER TAB DRAINS IT: the join reads the leader's socket and MLS state, and the drain
+ * EMPTIES the file - a follower that read it would hold an answer it can never serve. A follower
+ * leaves it where it is; the leader reads it on its next drain, or when it takes the lead. An
+ * election still undecided is waited for, never guessed (`whenTabLeadershipDecided` always ends).
  */
 export async function drainNativePendingCallAccept(): Promise<void> {
   // Not a Tauri runtime: no native ring, nothing to drain.
   if (!isTauriRuntime()) return;
+  const known = getTabLeadership();
+  const side = known === 'undecided' ? await whenTabLeadershipDecided() : known;
+  if (side === 'follower') {
+    console.debug('[CallAccept] a follower tab leaves the native answer file for the leader');
+    return;
+  }
   let raw: string | null;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -191,5 +287,13 @@ export function listenForNativeCallAccept(): () => void {
     void drainNativePendingCallAccept();
   };
   window.addEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
-  return () => window.removeEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+  // A tab that TAKES the lead reads what a follower left in the file.
+  const stopFollowingTheLead = onLeaderTabChanged(() => {
+    if (getTabLeadership() !== 'leader') return;
+    void drainNativePendingCallAccept();
+  });
+  return () => {
+    window.removeEventListener(NATIVE_CALL_ACCEPT_EVENT, onAccept);
+    stopFollowingTheLead();
+  };
 }

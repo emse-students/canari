@@ -198,6 +198,20 @@ export class MlsPerGroupScheduler {
   >();
 
   /**
+   * Groups whose frames the drain applies AHEAD of every other group's, with how many holders ask
+   * for it ({@link leadGroup}). A call answered on the native ring needs ONE group at its current
+   * epoch - its media keys are that group's `exportSecret` - and the round-robin otherwise serves it
+   * one frame in N while a resume's catch-up applies hundreds of other conversations' frames.
+   */
+  private readonly leadGroups = new Map<string, number>();
+
+  /** Waiters for the NEXT frame of one group to be applied, by bucket key. See {@link whenGroupFrameApplied}. */
+  private readonly groupFrameWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
+
+  /**
    * Set by {@link abandonGroupIdleWaiters} when the client that owns this scheduler ends: what a
    * group-idle wait is rejected with from then on, since no frame will ever be applied here again.
    */
@@ -400,6 +414,79 @@ export class MlsPerGroupScheduler {
   }
 
   /**
+   * Applies `groupId`'s frames ahead of every other group's until the returned release is called.
+   *
+   * ORDER WITHIN THE GROUP IS UNCHANGED - only which group the drain serves next. Across groups the
+   * scheduler promises nothing but round-robin fairness, and no frame of one conversation waits on a
+   * frame of another, so moving one group to the front reorders nothing a frame depends on. A frame
+   * the commit holding the mutex holds back stays held back ({@link isHeldBackByCommit}). Holders
+   * are counted, so two leads of the same group end only when both are released; the release is
+   * idempotent.
+   */
+  leadGroup(groupId: string): () => void {
+    this.leadGroups.set(groupId, (this.leadGroups.get(groupId) ?? 0) + 1);
+    console.log(
+      `[QUEUE] group ${groupId.slice(0, 8)} leads the drain (${this.leadGroups.get(groupId)} holder(s))`
+    );
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const n = (this.leadGroups.get(groupId) ?? 1) - 1;
+      if (n > 0) this.leadGroups.set(groupId, n);
+      else this.leadGroups.delete(groupId);
+      console.log(`[QUEUE] group ${groupId.slice(0, 8)} lead released (${n} holder(s) left)`);
+    };
+  }
+
+  /**
+   * Resolves once the NEXT frame of `groupId` has been applied (its handler returned), or the next
+   * commit of it run under the mutex has settled ({@link runCommitUnderMlsLock}) - an EVENT for a
+   * caller re-reading a fact that only that group's frames and commits can change, such as its
+   * epoch. Never resolves on its own while nothing of the group arrives: pair it with a wait that
+   * does ({@link waitUntilGroupIdle}, or the service's drained proof). Rejected with the abandon
+   * reason once the owning client ended ({@link abandonGroupIdleWaiters}).
+   *
+   * @param signal aborting it REMOVES the waiter and rejects with the signal's reason, so a caller
+   *   that stopped waiting leaves nothing registered.
+   */
+  whenGroupFrameApplied(groupId: string, signal?: AbortSignal): Promise<void> {
+    if (this.groupIdleAbandonedWith) return Promise.reject(this.groupIdleAbandonedWith(groupId));
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
+      const waiters = this.groupFrameWaiters.get(groupId) ?? [];
+      waiters.push(waiter);
+      this.groupFrameWaiters.set(groupId, waiters);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          const left = (this.groupFrameWaiters.get(groupId) ?? []).filter((w) => w !== waiter);
+          if (left.length > 0) this.groupFrameWaiters.set(groupId, left);
+          else this.groupFrameWaiters.delete(groupId);
+          reject(signal.reason);
+        },
+        { once: true }
+      );
+    });
+  }
+
+  /** How many {@link whenGroupFrameApplied} waiters are registered, across groups (tests, logs). */
+  get groupFrameWaiterCount(): number {
+    let n = 0;
+    for (const waiters of this.groupFrameWaiters.values()) n += waiters.length;
+    return n;
+  }
+
+  /** Wakes the {@link whenGroupFrameApplied} waiters of the bucket whose frame was just applied. */
+  private notifyGroupFrameApplied(key: string): void {
+    const waiters = this.groupFrameWaiters.get(key);
+    if (!waiters) return;
+    this.groupFrameWaiters.delete(key);
+    for (const { resolve } of waiters) resolve();
+  }
+
+  /**
    * Rejects every pending {@link waitUntilGroupIdle} with `reason(groupId)`, and every later one at
    * once: the client that owns this scheduler is ending and will apply nothing more. Without it a
    * wait on a group with frames still queued hung until a reload - a deferred answer and everything
@@ -409,9 +496,11 @@ export class MlsPerGroupScheduler {
     this.groupIdleAbandonedWith = reason;
     let pending = 0;
     for (const waiters of this.groupIdleWaiters.values()) pending += waiters.length;
+    for (const waiters of this.groupFrameWaiters.values()) pending += waiters.length;
     if (pending > 0) console.info(`[QUEUE] destroy - ${pending} group-idle waiter(s) abandoned`);
-    const waiting = [...this.groupIdleWaiters];
+    const waiting = [...this.groupIdleWaiters, ...this.groupFrameWaiters];
     this.groupIdleWaiters.clear();
+    this.groupFrameWaiters.clear();
     for (const [groupId, waiters] of waiting) {
       for (const { reject } of waiters) reject(reason(groupId));
     }
@@ -481,6 +570,9 @@ export class MlsPerGroupScheduler {
       return await fn();
     } finally {
       release();
+      // The commit SETTLED (merged or cleared): the group's state may have moved without a frame -
+      // our own accepted commit is merged here, never through the queue.
+      this.notifyGroupFrameApplied(groupId);
     }
   }
 
@@ -870,6 +962,7 @@ export class MlsPerGroupScheduler {
         }
 
         this.currentGroupKey = null;
+        this.notifyGroupFrameApplied(picked.key);
         // AFTER EVERY FRAME, not only at the end of the drain: a group's own work is usually
         // finished long before the account's is, and that difference was three minutes on a device
         // rejoining twenty-nine conversations.
@@ -944,6 +1037,12 @@ export class MlsPerGroupScheduler {
     return bucket;
   }
 
+  /**
+   * Drops the emptied buckets from the rotation. THE ROUND-ROBIN INDEX FOLLOWS ITS BUCKET: each key
+   * removed below it shifts it down by one, so the bucket whose turn is next keeps it. Without that,
+   * a bucket emptied before the index - a leading group's above all ({@link leadGroup}), drained out
+   * of turn - made the rotation skip the next group's turn.
+   */
   private pruneEmptyKeys(): void {
     for (let i = this.rrKeys.length - 1; i >= 0; i--) {
       const key = this.rrKeys[i];
@@ -952,6 +1051,7 @@ export class MlsPerGroupScheduler {
         this.rrKeys.splice(i, 1);
         this.rrKeySet.delete(key);
         this.buckets.delete(key);
+        if (i < this.rrIndex) this.rrIndex -= 1;
       }
     }
     if (this.rrIndex >= this.rrKeys.length) {
@@ -965,6 +1065,20 @@ export class MlsPerGroupScheduler {
 
     const tiers: Array<keyof GroupBuckets> =
       this.mode === 'tauri' ? ['control', 'welcome', 'messages'] : ['messages'];
+
+    // A LEADING GROUP FIRST ({@link leadGroup}), in its own tier order. The round-robin index is not
+    // advanced by it, and `pruneEmptyKeys` keeps it on the same bucket when the lead's bucket empties
+    // ahead of it, so the other groups resume their turns where they were.
+    for (const key of this.leadGroups.keys()) {
+      const bucket = this.buckets.get(key);
+      if (!bucket) continue;
+      for (const tier of tiers) {
+        if (bucket[tier].length === 0 || this.isHeldBackByCommit(key, bucket, tier)) continue;
+        const msg = bucket[tier].shift()!;
+        this.pruneEmptyKeys();
+        return { key, tier, msg };
+      }
+    }
 
     for (const tier of tiers) {
       const picked = this.pickFromTier(tier);

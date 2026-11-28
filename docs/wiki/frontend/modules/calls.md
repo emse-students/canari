@@ -746,13 +746,13 @@ when the native handover says an answer waits, `canari:call-accept` -
 - **A link navigates and never answers**: `hooks.client.ts` reads no answer from a URL, whoever
   opened it (a parameter that looks like one is logged and ignored).
 
-`pendingCallAccept.ts` then HOLDS the intent until the session has caught up and acts on it once.
-"Caught up" is a named signal, `ConnectionDeps.onCaughtUp`, fired by `openGatewayConnection` after
-the post-connect catch-up (`settleUnresolvedCommits` then `fetchPendingMessages`), never on the
-socket merely opening - so the join derives its keys from a group that has absorbed what was queued.
-A closed socket clears it, and the next catch-up acts on what is held. The file carries the native
-instant of the tap (`acceptedAt`); an entry without one is no answer, so a replayed intent is never
-stamped fresh on drain.
+`pendingCallAccept.ts` then hands the intent to the session AT ONCE - as soon as it is held and
+`CallService` has registered, whichever comes second - and the call screen shows, connecting. Until
+1.8.4 it held the intent until the session's WHOLE catch-up (`ConnectionDeps.onCaughtUp`); the join
+now waits only for the call's own group to be proven current
+([below](#the-answer-joins-on-its-own-group-184-2026-11-28)). The file carries the native instant
+of the tap (`acceptedAt`); an entry without one is no answer, so a replayed intent is never stamped
+fresh on drain.
 
 `CallService.answerFromSystemSurface` takes the intent and joins: the same call already past
 `incoming` (a duplicate answer) - nothing, logged at debug; already ringing the same call (the invite
@@ -762,8 +762,8 @@ and `acceptCall` runs. An invite that does arrive afterwards meets the call it a
 (`yieldToOrAnswerBusy`: same callId, ignored).
 
 **One clock exists, and it decides nothing the server decides.** `MAX_PENDING_AGE_MS` (2 min from
-the native tap) bounds how long a held tap may wait for a session that never catches up; whether the
-call can still be joined is the room token's answer alone. A sibling device answering after this one
+the native tap) bounds how long a drained tap may wait for a session to register; whether the call
+can still be joined is the room token's answer alone. A sibling device answering after this one
 gets the `410`: the answering device asks for its token BEFORE it ends the ring as `answered`.
 
 **Two shapes rejected.**
@@ -776,12 +776,189 @@ gets the `410`: the answering device asks for its token BEFORE it ends the ring 
   already said.
 
 **Covered by** `CallService.p2p.test.ts` ("an answer on the native ring, no invite ever delivered":
-the real gate and the real `acceptCall` - room token first, then the answered frame and the socket;
-a `410` toasts and starts nothing; a duplicate starts nothing), `CallService.answerFromRing.test.ts`,
-`pendingCallAccept.test.ts` (held until the catch-up; no instant, no answer; a link never answers -
-only the native drain records one), `initializeConnection.test.ts` (the catch-up signal fires after
-the settle and the fetch), `calls.service.spec.ts` (the `410` once the ring ended, the sibling case)
-and the text pins in `incomingCallScreen.test.ts` (the nonce, the private file, no answer in a link).
+the real gate and the real `acceptCall` - the screen at once, then the room token once the group is
+current, then the answered frame and the socket; a `410` toasts and starts nothing; a duplicate
+starts nothing; a hang-up during the wait asks nothing), `CallService.answerFromRing.test.ts`,
+`pendingCallAccept.test.ts` (handed over at once; no instant, no answer; a link never answers - only
+the native drain records one), `initializeConnection.test.ts` (the catch-up signal fires after the
+settle and the fetch), `calls.service.spec.ts` (the `410` once the ring ended, the sibling case) and
+the text pins in `incomingCallScreen.test.ts` (the nonce, the private file, no answer in a link).
+
+### The answer joins on its own group (1.8.4, 2026-11-28)
+
+**The reading (owner's Android, 1.8.2, 2026-11-27).** Answer tapped on the ring of a phone resumed
+from the background: the answer reached the page about 0.8 s after the tap, then waited **10.7 s**
+for `onCaughtUp` - a pull of 180 frames of other conversations and a 7.8 s drain, then a second,
+empty pull owed behind it (the first had been listed on a link the reconnect replaced) - before the
+setup's own 2.3 s. The call screen appeared only then, after the conversation the link opened.
+
+**What the join needs.** The media keys are the call conversation's `exportSecret` at its current
+epoch, and the "answered" notice is sent in that group. No frame of another conversation changes
+either. So:
+
+- **The screen at once (A1).** `pendingCallAccept.ts` hands the intent over as soon as the session
+  registered its handler; `answerFromSystemSurface` sets the ring's facts (caller from the push,
+  name and avatar from the local cache, `resolveCallPeers`) and `acceptCall(..., { awaitCallGroup:
+  true })` goes to `incall` - the full screen, `connecting` - before anything is awaited. A hang-up
+  from that screen ends the wait.
+- **The join on its own group (B1).** `services/callGroupCurrent.ts` waits for ONE proof: once MLS
+  is up (`whenMlsReady`), the delivery service's `activeEpoch` for the group is read
+  (`getGroupServerStatus`), and the proof is `epoch-reached` - this device HOLDS the group
+  (`getLocalGroups()`) at exactly that epoch. Nothing else proves it:
+  - **A caught-up session is no proof.** In a steady state the session is already caught up while
+    the call group can still be behind (a commit the push woke the app for, not yet pulled).
+  - **Drained is not current.** "Applied everything listed on this link" says nothing of a commit
+    the listing did not carry. The one exception is a server that answers WITHOUT an epoch (a build
+    predating the field): a held group drained on this link is accepted as `drained-no-server-epoch`.
+  - **A commit of OURS is "something coming"** (`IMlsService.ownCommitState`). One `in-flight` (the
+    scheduler's `committingGroupId`: staged, sent, being merged) settles by itself and wakes the
+    wait. One `unresolved` (kept, its outcome unknown) is settled by nothing before the next send or
+    reconnect, so the wait ASKS its settlement (`settleUnresolvedCommits([group])`) once per state of
+    the facts; still unresolved after it, the wait ends (`CallGroupCommitUnresolvedError`). While one
+    stands, no pull and no verdict. Our own staged commit leaves the local epoch BELOW the server's
+    once the server accepted it, until `mergeAccepted`; a local epoch ABOVE the server's is a commit
+    of ours not accepted yet, or an external rejoin in flight.
+  - **The epoch line is logged only when the pair `local/server` changes**, not at every frame.
+- **Arm, then check.** Each round REGISTERS its waiters first - a frame of the group applied, or a
+  commit of it settled (merged or cleared: `runCommitUnderMlsLock` wakes the same waiters, since our
+  own accepted commit is merged outside the queue, `whenGroupFrameApplied`); a pull's end
+  (`whenGroupDrained`, armed only on a group not drained now, read silently through
+  `groupDrainedNow`); a connection's catch-up (`whenNextCatchUp`) - THEN reads the facts, every one
+  after the round's last await. A frame applied while the commit state is read is the round's first
+  event, never lost, and no verdict stands on a fact read before an await. None is a clock.
+- **Offline is a wait, never a failure.** While the gateway socket is down (`isWsOpen`) the wait
+  asks nothing - no pull, no settlement - says `network` to the screen, and waits for the reconnect's
+  catch-up, which reads the server's epoch again. A step the link dropped under - a pull, a
+  settlement, a commit-log read - is no answer either: it is asked again once the reconnect's event
+  comes, whatever that listing changed.
+- **When the facts disagree and nothing is coming, the wait ASKS.** The server's epoch unreadable
+  (`error`, `absent`), or the group at another epoch than the server's (or not held) with nothing
+  more coming from the mailbox: drained on this link, or never listed on it with no pull running or
+  owed (`IMlsService.mailboxListing() === 'unlisted'`: the boot pull refused a page, a 502). That is
+  carried as a fact, never inferred from "not drained", which a failed pull also leaves. The wait
+  asks a pull for the group (`IMlsService.pullForGroup`, which says whether it LISTED the mailbox on
+  this link or was `incomplete`) and reads everything again at its end. One ask per state of the
+  facts (`local/server`). A pull that ended before the listing while another is running or owed
+  was SUPERSEDED, not failed: nothing is counted, and the ask waits for that pull's end. One that
+  could not list the mailbox with the link up and nothing pending FAILED: said at WARN, asked again
+  at once, and a second such one in a row ends the wait (`CallGroupUnlistedError`). One that came
+  back incomplete because the link went down counts for nothing.
+- **A known limit: the pull is the session's.** `pullForGroup` goes through
+  `fetchPendingMessages`, which waits on the other groups' drain before it lists (`owePull`): a
+  behind group's frames are served first by the lead (`leadGroup`) during a long catch-up, but the
+  pull the wait asks still ends with the whole mailbox's drain, not the group's.
+- **A group drained BELOW the server after a complete pull is caught up from the commit log
+  first** (`IMlsService.catchUpFromCommitLog`): rung 1, under the MLS lock, the same first step a
+  refused commit takes (`replayAndRecord`, held behind a refused backlog), its own books marking the
+  epoch gap and un-marking it on a heal. The post-commit fan-out to this device is best effort, and
+  `GET /groups/:id` can read N+1 before the fan-out row exists: the log has the commit the mailbox
+  lacks. Healed, the facts are read again; held, the wait asks a pull of its own and replays once
+  more; only a replay the log ANSWERED and could not heal (holed, pruned below its floor, a commit
+  that will not apply) is `behind`, and only that one keeps the mark. The failure is classified AT THE THROW, by type: only a
+  request that got no answer (`isTransportFailure`) is `unreachable`, which takes the mark back - a mark left on a failed fetch would
+  have the sync watchdog forget the group 45 s later - and is a wait offline,
+  `CallGroupLogUnreachableError` online. A server's refusal of the log (a 403) or a local fault (a
+  commit that would not settle, merge or persist, a log that would not parse) is an answer:
+  `still-behind`, said at ERROR, the mark kept for rung 2
+  (`BaseMlsService.commitLogCatchUp.test.ts`).
+  more; only a replay that cannot heal is `behind`.
+- **A state that held across a complete pull, with nothing of ours coming, is an ANSWER**, typed
+  (`CallGroupUnprovenError`, carrying both epochs), and the call fails visibly - the toast, the
+  server's ring-end, the call ended with no MLS frame:
+  - **behind** (`CallGroupStuckError`: numeric epochs, local < server, held, and the commit log
+    could not close the gap) - ERROR, toast `call_group_not_current`. The gap stays where rung 1's
+    books put it, for the sync watchdog's ladder. **The call path never marks a gap by hand and never
+    repairs destructively**: nothing is forgotten, re-added or rejoined from here, so no rekey can
+    happen in the middle of a call because of it.
+  - **ahead** (`CallGroupAheadError`) and **not held** (`CallGroupNotHeldError`, a numeric epoch or
+    none) - ERROR, toast `call_group_not_current`.
+  - **the server's epoch unknown** (`CallGroupEpochUnknownError`), **unlisted**, **a commit of
+    ours still unresolved** (`CallGroupCommitUnresolvedError`) and **the commit log unreadable with
+    the link up** (`CallGroupLogUnreachableError`) - WARN, toast `call_group_unreachable`.
+    ours still unresolved** (`CallGroupCommitUnresolvedError`) - WARN, toast `call_group_unreachable`.
+    An unreadable epoch is never "stuck" and never reaches any repair.
+- **The ways out, and only these:** the proof; an answer above; the user's hang-up; the caller's
+  hangup frame ending the call (`handleCallSignal`); the session ending (sign-out, account switch,
+  client destroyed, or not the one MLS came up on). No timer, and no room-token `410`: the token is
+  asked once, at MLS ready, and its refusal ends the call through the setup's ordinary failure.
+- **What the screen says while it waits.** The connecting line names the wait
+  (`CallService.connectingWaitsFor`, `callStatusText`), from the LINK's state:
+  `call_connecting_waiting_network` while the socket is down, `call_connecting_waiting_conversation`
+  while the group catches up - never a bare "connecting" over a silent wait.
+- **The invite carries no epoch**, nor does the ring's push. So the callee cannot know which epoch
+  the caller derived its keys at; the server's `activeEpoch` is the only statement of "current" there
+  is, and a commit landing between the caller's derivation and the callee's read is the race every
+  join had before, unchanged (the keys are re-derived at the next epoch by both sides).
+- **A group behind is served first.** Once MLS is up the group LEADS the drain
+  (`MlsPerGroupScheduler.leadGroup`): its frames, in their own order and tier order, are picked
+  before any other bucket's. A frame a commit holds back stays held back. The round-robin index
+  FOLLOWS ITS BUCKET: `pruneEmptyKeys` shifts it down for each emptied bucket below it. The lead ends
+  with the wait, or earlier (below).
+- **The answer joins on the session's CURRENT client, and only its own account's.** `CallService`
+  reads its client at each use from the session's holder (`new CallService(() => ensureMls(), () =>
+  userId || null)`), and the wait reads it only once MLS is up, checked against the one
+  `setMlsReady` recorded (`mlsReadyClient`). An answer given at the PIN gate whose login is retried
+  on a new client joins on the live one. The client is returned ONLY while the session holds the
+  account the service was built for, and until the service is retired: otherwise the read throws
+  `CallServiceRetiredError`, so a hangup or a key derivation of account A's call never leaves as
+  account B. `initServices` RETIRES the replaced service (`CallService.retire`): its call ends
+  locally - no notice, no record, no presence - and its held hangup notices are dropped.
+- **The native ring is the leader's.** Only the leader tab drains the native answer file
+  (`drainNativePendingCallAccept`; an undecided election is waited for): a follower leaves it for the
+  leader, which reads it on its next drain, on the native event, or when it takes the lead
+  (`onLeaderTabChanged`). A follower that holds an answer anyway drops it at ERROR, toasts
+  `call_answer_not_joinable_here` and ends the call's ring. The pending gate holds ONE answer: one of
+  another call is refused while the first is fresh, and a sign-out drops it
+  (`clearPendingCallAccept` in `forgetAccount`).
+- **Only the keys and the "answered" notice wait for the proof.** The room token, the ICE servers
+  and the microphone start once MLS is up (`wait.mlsReady`), in parallel with the group wait. The
+  notice leaves once the token is in hand AND the group is current.
+- **A hang-up during the wait.** The screen and the record are immediate. The MLS hangup notice is
+  HELD behind the same proof (`held until its group is proven current`), and the group gives up its
+  LEAD on the drain at once (`CallGroupWait.releaseLead`). The notice leaves at the proof, or is
+  DROPPED (`dropHeldHangupOnEnd`) when a hangup frame that ENDED the call for everyone reaches this
+  page - the 1:1 caller's, or in a group call the caller's that ends the ring for all
+  (`groupHangupEndsRecord`); another member leaving ends nothing and our notice stays. A notice whose
+  proof failed is said `not sent` at ERROR (WARN for a session end). The server's `call_ring_end` is
+  a native push that never reaches a page, so it is not a drop signal.
+- **No ghost ring.** Every call this service ended is remembered for the session (`endedCallIds`):
+  the invite of such a call, still queued behind the answer, is refused.
+- **Nothing outlives the wait.** Every waiter it registers is removable through an `AbortSignal`, one
+  controller per round (never `AbortSignal.any`, absent from the WKWebView of iOS before 17.4). Its
+  `proof` and `mlsReady` carry a handler from birth: a wait stopped before MLS is up leaves no
+  unhandled rejection. A sign-out rejects the parked catch-up and MLS-ready waiters.
+- **A session that ends under the wait is no call failure**: `CallGroupSessionEndedError`, the call
+  set aside with no toast and nothing sent through a client that is gone.
+
+**Why the epoch is a proof.** Every accepted commit advances the server's `activeEpoch` under its
+lock (`baseEpoch == activeEpoch`), so a local epoch equal to it has no commit left to apply, and
+`exportSecret` there is what every member at that epoch derives.
+
+**Measured where.** The `[CallAccept] timing:` lines, each in ms after the native tap: the intent
+recorded, handed to the session, the call screen asked for, the call screen shown - once per shape,
+`full screen` or `banner` (the PIN lock) - the setup started (MLS ready), the keys allowed, the room
+joined; `[Call] timing: group ... current (<proof>) after N ms`; and the `E2E proven` line carries
+the same suffix. `connect_ms` now includes the wait.
+
+**Covered by** `callGroupCurrent.test.ts` (the proof; a caught-up session no proof; a pull asked when
+drained below, ahead, unread or not held; the commit log replayed before any `behind` - healed it
+proves, held it pulls and replays once more, unhealed it is the answer; each answer typed - ahead,
+not held with or without a server epoch, epoch unknown, two incomplete pulls with the link up; a
+commit of ours in flight waits, one unresolved is settled once and ends the wait if it stays; arm
+then check - a frame applied during the commit-state read; offline waits and says `network`, the
+socket back proves, a pull cut by the link counts for nothing and is asked again after the reconnect
+even when it changed nothing, a settlement or a commit-log read cut by the link waits and is asked
+again, a log unreadable online is never `behind`; a failed listing with nothing pending asks a pull; stops, unhandled rejections, the
+current client read once MLS is up), `mlsPerGroupScheduler.leadGroup.test.ts` (the lead; the frame
+and commit-settle events; removal; the round-robin index), `BaseMlsService.groupDrained.test.ts`,
+`mlsReadiness.test.ts`, `pendingCallAccept*.test.ts` (one pending answer, never overwritten by
+another call, dropped at sign-out; a follower leaves the native file, the tab taking the lead reads
+it) and `CallService.p2p.test.ts` (the setup before the proof and the keys after; held, dropped and
+kept hangup notices; no ghost ring; the stuck failure after the commit log, no frame sent; the
+PIN-gate answer joining on the retried login's client; a follower dropping its answer and ending the
+ring; a service retired mid-call, or under another account, sending nothing as it; a session end
+with no toast; the screen timed per shape). **Owed:** the reading in
+[backlog](../../backlog.d/p2-an-answer-on-the-call-ring-waits-for-every-conversation-before-the-screen-and-the-join.md).
 
 ### A decline on the ring reaches the caller (2026-10-30)
 
@@ -1019,8 +1196,8 @@ written in; a change is reported, a repeat is not. The handover ends an unanswer
 `canari_ios_page_rings_call(callId)` says the page rings THAT call; the socket fact still decides
 whether the native ring stands back when a push arrives, before any invite exists. Each
 `CallService` instance states under its own holder, like each `TauriMlsService`, and one replaced at
-an account switch withdraws its call and stops reporting (`retireFromPageRing`, called by
-`useChatSession.initServices`).
+an account switch withdraws its call and stops reporting (`retireFromPageRing`, run by
+`CallService.retire`, which `useChatSession.initServices` calls).
 
 **A ring the active page takes over ends its CallKit twin.** The handover runs on an activation, and
 an app already active sees none: a call rung by CallKit while the page had no socket, then by the
