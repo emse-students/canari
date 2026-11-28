@@ -15,3 +15,5 @@ target: 1.8.3
 7. **The mode modal**: at the very first game on a device it opens by itself, centered, with its two cards and the levels under Entraînement; "Jouer" starts the game in that mode; afterwards the bottom pastille opens the same modal and it never opens by itself again; it clears the notch and the home bar and closes on the scrim, the cross and the Android Back gesture without leaving the game; "Libre" appears nowhere.
 
 **What closes it**: items 1, 2, 4 (the bottom bar clears the tab bar and the home bar, never under it), 5, 6 and 7 pass on both phones, and item 3 on at least one. A failure names the item.
+
+**2026-11-28, `1.8.3-alpha.3`, Mi 9T, light:** item 1 (the path fits the width, no horizontal scroll) and the layout half of item 4 (a 5x4 grid whole above the bar, the bar clear of the tab bar, the bubble not overflowing) PASS; the lamp is drawn. Owed: items 2, 3, 5 (pulse, reduced motion, the unranked lamp), 6, 7, the dark theme, and the iPhone 12 for items 2, 3, 5 to 7 and the dark theme (its items 1 and 4 PASS in light, `1.8.3-alpha.3`, build `100800303`).
