@@ -4,7 +4,7 @@
  */
 
 /** Seconds a left/right arrow moves the playhead by. */
-export const SCRUB_KEY_STEP_SECONDS = 5;
+const SCRUB_KEY_STEP_SECONDS = 5;
 
 /**
  * The time a horizontal press position stands for on a strip: its fraction of the strip's width,
