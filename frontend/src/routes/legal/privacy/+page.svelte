@@ -628,12 +628,13 @@
         <dt>Aides déjà vues</dt>
         <dd>
           Les aides déjà vues (la visite guidée de bienvenue, les aides au premier usage, la carte
-          qui invite à ajouter une photo de profil et celle qui invite à indiquer son anniversaire),
-          chacune avec son identifiant et la date, enregistrées sur votre compte pour qu'elles ne
-          réapparaissent pas sur un autre appareil. La date de la première carte « photo de profil »
-          sert aussi à ne vous la rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez
-          toujours pas de photo. Une copie est gardée sur l'appareil jusqu'à la suppression du
-          compte ou la réinitialisation de l'appareil.
+          qui invite à ajouter une photo de profil, celle qui invite à indiquer son anniversaire et
+          celle qui invite à lier son compte Alumni à MiConnect), chacune avec son identifiant et la
+          date, enregistrées sur votre compte pour qu'elles ne réapparaissent pas sur un autre
+          appareil. La date de la première carte « photo de profil » sert aussi à ne vous la
+          rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez toujours pas de photo. Une
+          copie est gardée sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de
+          l'appareil.
         </dd>
       </div>
       <div>
@@ -917,8 +918,8 @@
           </tr>
           <tr>
             <td>
-              Aides déjà vues (visite guidée, aides au premier usage, cartes photo de profil et
-              anniversaire)
+              Aides déjà vues (visite guidée, aides au premier usage, cartes photo de profil,
+              anniversaire et lien Alumni)
             </td>
             <td>
               Tant que le compte existe ; supprimée à la suppression du compte. La copie sur

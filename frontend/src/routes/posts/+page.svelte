@@ -71,6 +71,7 @@
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import BirthdayFeedCard from '$lib/components/posts/BirthdayFeedCard.svelte';
+  import AlumniLinkCard from '$lib/components/posts/AlumniLinkCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
@@ -1090,6 +1091,7 @@
   <!-- THE BIRTHDAY CARD: quiet, dismissed once for good, only while the own birthday is empty. -->
   {#if userId && !searchActive}
     <BirthdayFeedCard />
+    <AlumniLinkCard />
   {/if}
   <!-- THE SCHEDULED POSTS, above the first post of EVERY tab (owner, 2026-11-13), only for those who may
        edit them (the server hands nobody else one): the same cards, dimmed and dashed like a proposed

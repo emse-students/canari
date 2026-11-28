@@ -85,11 +85,20 @@ describe('a switched-off category raises no local notification', () => {
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
   it('notifies a conversation message by default', async () => {
+    // The account default as the SERVER answers it - never the failure path.
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm1' });
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
@@ -139,7 +148,10 @@ describe("a private conversation's level gates the notification this client rais
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
@@ -217,6 +229,178 @@ describe("a private conversation's level gates the notification this client rais
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
+  // THE iPHONE OF 1.8.3-alpha.1: woken in the background by the server's SILENT push (its answer to
+  // "none"), the app decrypted the frame 140 ms before the sign-in read of the levels answered, and
+  // raised the group as "all". The frame now waits for that one read.
+  describe('a frame that lands before the levels are read', () => {
+    function deferredPreferences() {
+      let answer!: (snapshot: unknown) => void;
+      api.fetchNotificationPreferences.mockReturnValue(
+        new Promise((resolve) => {
+          answer = resolve;
+        })
+      );
+      return (groupLevels: Record<string, string>) =>
+        answer({ disabled: [], groupLevels, groupCalls: {} });
+    }
+
+    it('waits for the read, and raises nothing at none', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      (ctx as { userId: string }).userId = ME64;
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w1' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      answer({ 'conv-1': 'none' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('raises it once the read answers "all"', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w2' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      answer({});
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    });
+
+    it('joins a read already in flight rather than asking again', async () => {
+      const answer = deferredPreferences();
+      const signIn = notificationPreferences.load();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w3' });
+      answer({ 'conv-1': 'none' });
+      await signIn;
+      await flushMacrotask();
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+
+    it('decides under the account default, said at WARN, when the read fails and no copy exists', async () => {
+      api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('offline'));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w4' });
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+      expect(
+        log.mock.calls.some(
+          (c) => String(c[0]).includes('WARN') && String(c[0]).includes('default')
+        )
+      ).toBe(true);
+    });
+
+    it('drops a frame parked across a sign-out, even when the stale read answers', async () => {
+      const answer = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w5' });
+      await flushMacrotask();
+      notificationPreferences.reset();
+      answer({});
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      expect(notificationPreferences.loaded).toBe(false);
+    });
+
+    it('still decides the frame when the SAME account signs out and in again meanwhile', async () => {
+      let staleAnswer!: (snapshot: unknown) => void;
+      api.fetchNotificationPreferences.mockReturnValueOnce(
+        new Promise((resolve) => {
+          staleAnswer = resolve;
+        })
+      );
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w7' });
+      await flushMacrotask();
+      notificationPreferences.reset();
+      notificationPreferences.bind('account-a', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        groupLevels: {},
+        groupCalls: {},
+      });
+      staleAnswer({ disabled: [], groupLevels: {}, groupCalls: {} });
+      // Its recipient is still the one signed in: answered by the new session's read, then raised.
+      await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(2);
+    });
+
+    it("never decides account A's frame under account B's settings", async () => {
+      const answerA = deferredPreferences();
+      const { ctx, sendSystemNotification } = makeContext('conv-1');
+      await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'w6' });
+      await flushMacrotask();
+      // A signs out, B signs in and B's read answers first ("all" everywhere).
+      notificationPreferences.reset();
+      notificationPreferences.bind('account-b', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        groupLevels: {},
+        groupCalls: {},
+      });
+      await notificationPreferences.load();
+      answerA({});
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the device copy of the account's last answer", () => {
+    const GROUP = '0b9f3d7e-1111-4222-8333-444455556666';
+
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    async function answeredOnce(levels: Record<string, string>) {
+      notificationPreferences.bind('account-a', { offline: false });
+      api.fetchNotificationPreferences.mockResolvedValueOnce({
+        disabled: [],
+        unknownDisabled: [],
+        pushEnabled: [],
+        groupLevels: levels,
+        groupCalls: {},
+      });
+      await notificationPreferences.load();
+      // The app is killed: a fresh process has nothing in memory, only the copy on the device.
+      notificationPreferences.bind('account-a', { offline: false });
+    }
+
+    it('decides "none" from the copy when the read fails, and reads once, not per frame', async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      expect(notificationPreferences.source).toBe('persisted');
+      api.fetchNotificationPreferences.mockClear();
+      api.fetchNotificationPreferences.mockRejectedValue(new Error('offline'));
+      const { ctx, sendSystemNotification } = makeContext(GROUP);
+      await useMessaging().addMessageToChat(PEER, 'one', GROUP, ctx, { messageId: 'p1' });
+      await useMessaging().addMessageToChat(PEER, 'two', GROUP, ctx, { messageId: 'p2' });
+      await flushMacrotask();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+      // The failed read is latched: the second frame asked for no read of its own.
+      expect(api.fetchNotificationPreferences).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts no read in an offline session, and decides on the copy at once', async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      notificationPreferences.bind('account-a', { offline: true });
+      api.fetchNotificationPreferences.mockClear();
+      const { ctx, sendSystemNotification } = makeContext(GROUP);
+      await useMessaging().addMessageToChat(PEER, 'hello', GROUP, ctx, { messageId: 'p3' });
+      await flushMacrotask();
+      expect(api.fetchNotificationPreferences).not.toHaveBeenCalled();
+      expect(sendSystemNotification).not.toHaveBeenCalled();
+    });
+
+    it("is erased at that account's sign-out", async () => {
+      await answeredOnce({ [GROUP]: 'none' });
+      notificationPreferences.reset();
+      notificationPreferences.bind('account-a', { offline: true });
+      expect(notificationPreferences.source).toBe('default');
+    });
+  });
+
   it('looks the level up by the GROUP id, so a DM keyed me::peer obeys it', async () => {
     const GROUP = '0b9f3d7e-1111-4222-8333-444455556666';
     api.fetchNotificationPreferences.mockResolvedValue({
@@ -248,7 +432,10 @@ describe("a salon's own level gates the notification this client raises", () => 
       groupLevels: {},
       groupCalls: {},
     });
+    localStorage.clear();
     notificationPreferences.reset();
+    // A frame is decided only for a bound account: the sign-in binds before any frame can land.
+    notificationPreferences.bind('account-a', { offline: false });
     hideTheTab();
   });
 
@@ -328,6 +515,54 @@ describe("a salon's own level gates the notification this client raises", () => 
     await messaging.addMessageToChat(PEER, 'three', 'channel_abc', ctx, { messageId: 's7' });
     await flushMacrotask();
     expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1);
+  });
+
+  // THE SALON'S READ IS A SECOND WAIT, and the account is captured BEFORE it: captured after, it was
+  // whoever had signed in meanwhile, and A's frame was decided on B's set (review of #4207).
+  it("never decides A's salon frame under B, nor writes A's salon level into B's", async () => {
+    await notificationPreferences.load();
+    let answerSalon!: (level: string) => void;
+    api.fetchChannelNotificationLevel.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answerSalon = resolve;
+      })
+    );
+    const { ctx, sendSystemNotification } = makeContext('channel_abc');
+    await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 's10' });
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1));
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-b', { offline: false });
+    await notificationPreferences.load();
+    answerSalon('all');
+    await flushMacrotask();
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+    expect(notificationPreferences.channelLevel('channel_abc')).toBeUndefined();
+  });
+
+  // The same account signing out and in while the salon's level is read: the dropped answer is no
+  // "unreadable" level - the frame reads it again under the new session and obeys it.
+  it('reads the salon level again after a same-account re-login, and obeys it', async () => {
+    await notificationPreferences.load();
+    let staleSalon!: (level: string) => void;
+    api.fetchChannelNotificationLevel.mockReturnValueOnce(
+      new Promise((resolve) => {
+        staleSalon = resolve;
+      })
+    );
+    api.fetchChannelNotificationLevel.mockResolvedValueOnce('none');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, sendSystemNotification } = makeContext('channel_abc');
+    await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 's11' });
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1));
+    notificationPreferences.reset();
+    notificationPreferences.bind('account-a', { offline: false });
+    await notificationPreferences.load();
+    staleSalon('all');
+    await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(2));
+    await flushMacrotask();
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+    expect(notificationPreferences.channelLevel('channel_abc')).toBe('none');
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('raised as "all"'))).toBe(false);
   });
 
   it('raises as all when the level cannot be read, and reads again on the next frame', async () => {

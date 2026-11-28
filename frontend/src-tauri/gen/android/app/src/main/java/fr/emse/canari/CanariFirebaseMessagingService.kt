@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.AlertedMessage
 import fr.emse.canari.push.AwaitedReplies
+import fr.emse.canari.push.BackgroundJoinAnswer
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
@@ -2666,7 +2667,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ) : EncryptBatch
 
             /** The whole batch failed; [prospect] says whether a later drain can do better. */
-            data class Failed(val prospect: OutboxRetry.Prospect) : EncryptBatch
+            data class Failed(val prospect: OutboxRetry.Prospect, val why: String = "") : EncryptBatch
         }
 
         /**
@@ -2775,7 +2776,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ciphertextsOf = when (val batch = encryptQueuedMessages(context, service, ctx, entries)) {
                 is EncryptBatch.Encrypted -> batch
                 is EncryptBatch.Failed -> {
-                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
+                    // THE ONE LINE of a failed batch: the prospect and the native cause ride here (at warn,
+                    // which the exported log keeps; an info line reaches logcat only), so a NOT_YET that
+                    // hides an untyped OpenMls fault still names it.
+                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed (${batch.prospect}${if (batch.why.isEmpty()) "" else ": ${batch.why}"}) -> ${entries.size} message(s) stay queued")
                     return List(entries.size) { batch.prospect }
                 }
             }
@@ -2917,8 +2921,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // CLASSIFIED WHERE IT WAS THROWN (Rust `SendBatchError`): a key that does not
                     // open the state is BLOCKED, a refused write or a passing failure NOT_YET.
                     val prospect = OutboxRetry.Prospect.of(json.optString("prospect").takeIf { it.isNotEmpty() }, batch = true)
-                    Log.e(TAG, "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})")
-                    return EncryptBatch.Failed(prospect)
+                    // No line here: the drain's single warn line carries the prospect AND this cause.
+                    return EncryptBatch.Failed(prospect, json.optString("error").take(120))
                 }
                 val results = json.optJSONArray("results") ?: JSONArray()
                 val out = mutableMapOf<String, String>()
@@ -4889,7 +4893,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Applies a received MLS Welcome (RECEIVER side): joins the group and writes
      * {filesDir}/mls.bin. Lets a device join a new group while the app is closed, so the
      * 1st message of a conversation is decryptable by FCM without opening the app.
-     * Returns true on success.
+     * Returns the typed answer [fr.emse.canari.push.BackgroundJoinAnswer] reads: `joined`, or
+     * `failed:<cause>:<prospect>`.
      */
     external fun nativeProcessWelcomeBackground(
         filesDir: String,
@@ -4899,7 +4904,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         welcomeB64: String,
         ratchetTreeB64: String,
-    ): Boolean
+    ): String?
 
     /**
      * Encrypts a BATCH of pending outgoing messages (text/reply) against the live epoch, loading
@@ -6891,7 +6896,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "processReceivedWelcomeBackground: MlsStateLock not acquired -> abort")
             return
         }
-        val joined: Boolean
+        val joinAnswer: BackgroundJoinAnswer.Outcome
         try {
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
@@ -6899,14 +6904,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-            joined = nativeProcessWelcomeBackground(
-                filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+            joinAnswer = BackgroundJoinAnswer.parse(
+                nativeProcessWelcomeBackground(
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+                ),
             )
         } finally {
             MlsStateLock.LOCK.unlock()
         }
 
-        if (joined) {
+        if (joinAnswer is BackgroundJoinAnswer.Outcome.Joined) {
             Log.d(TAG, "processReceivedWelcomeBackground: ✓ group joined group=$groupId")
             // FCM1: promote the membership to 'active' server-side. The JNI join does not go through
             // the foreground path (updateInvitationStatus), so without this call the device stays
@@ -6919,8 +6926,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
             enqueueWorkerIfHealthy(workRequest)
-        } else {
-            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)}")
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Failed) {
+            // The cause is CLASSIFIED WHERE IT WAS THROWN, from the typed MlsError (Rust
+            // `BackgroundJoinError`). SAME LEVELS AS THE SEND PATH: NOT_YET is warn (the app's own
+            // load takes the join, the entries stay queued), anything that never installs is error.
+            val line = "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)} " +
+                "cause=${joinAnswer.cause} prospect=${joinAnswer.prospect}"
+            if (joinAnswer.prospect == OutboxRetry.Prospect.NOT_YET) Log.w(TAG, line) else Log.e(TAG, line)
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Unreadable) {
+            // An answer outside the contract (a newer native build, a null): never guessed at.
+            Log.e(TAG, "processReceivedWelcomeBackground: join answer unreadable group=${ConversationRef.of(groupId)} raw=${joinAnswer.raw?.take(60)}")
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,

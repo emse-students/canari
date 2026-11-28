@@ -22,6 +22,30 @@ here and nothing else.**
 
 **A reading that needs a human hand on the phone and is not a regression is DEFERRED, not blocking** (owner, 2026-11-18, [decisions](decisions/owner-decisions-of-2026-11-18.md)): rotating the device, lighting a scene, a physical button - what WebDriverAgent and adb cannot do and no hand is at the bench for. The lead moves it to the next version's alpha alone, here and in its entry's `target:` line. A regression since the last stable stays blocking whatever it needs.
 
+## The readings of 2026-11-28 (`1.8.3-alpha.2` on the web, `1.8.3-alpha.3` on both phones): replies, the grant, the replay, the voice note, the preferences
+
+Dev's floor was set to `1.8.3-alpha.1` (the history button needs it) and `/api/version` read it back. The web was read on dev at `1.8.3-alpha.2` with test accounts alpha, beta, gamma and delta (a private group, a 360 px viewport for the layout items); the Mi 9T was read on the `app-universal-release.apk` of the `1.8.3-alpha.3` release (version code `100800303`, sideloaded over the existing install, data kept). The iPhone 12 took the TestFlight build `100800303` (`1.8.3-alpha.3`, listed about 25 minutes after the release run's iOS job ended; the Update button needed a tap by label, a tap by id did nothing). Evidence (screenshots) stays outside the repository.
+
+| Item | Surface | Verdict |
+| --- | --- | --- |
+| A photo sent as a reply: no yellow edge, quote above it, thumbnail in the quote | web (sender, and the receiver after a reload), Mi 9T, light | PASS |
+| An emoji, a link and a GIF sent as a reply: no bubble outline (#4210) | web, Mi 9T, light | PASS |
+| The quote survives a cold start (kill and relaunch with a NEW reply photo) | phones | NOT READ (the web reload held it; the cold start is a phone reading, owed with the dark pass) |
+| The Alumni card | web, Mi 9T | PASS |
+| The tutorial path: two tabs, the zigzag fits 360 px (web) and 436 px (Mi) with no horizontal scroll | web, Mi 9T | PASS |
+| A lesson (reveal one cell): the bubble does not overflow, the 5x4 grid is whole above the lamp bar after one scroll, the bar clears the tab bar, the lamp "Indice" is drawn | Mi 9T | PASS (the solved state, the pulse, reduced motion, the mode modal and the unranked game's lamp are NOT READ) |
+| The replay grid (18x30, 271 moves) fits the width, the controls clear the home bar | web at 360 px, Mi 9T | PASS |
+| Send history, steps 1 to 3 (default holds, the button shows for the adder only, the grant arrives with its notice and "En savoir plus") | web, two contexts | PASS |
+| Send history, step 4 (a date) and step 5 (a Remove still holds), step 6 (the phone as newcomer) | | NOT READ |
+| The Alumni card (English UI) | iPhone 12 | PASS |
+| The tutorial path, and lesson 1 (bubble, 5x4 grid whole above the bar, the bar clear of the home bar, the lamp drawn and glowing) | iPhone 12, light | PASS (digging the green cell was not driven: the hold gesture did nothing, so the solved state is NOT READ) |
+| The replay grid (271 moves) fits, controls clear the home bar | iPhone 12 | PASS |
+| Replies, the voice note, notification preferences, send history, the trend | iPhone 12 | NOT READ (the build landed late in the sitting; a sender seat for the phone was not arranged) |
+| A voice note: a reaction while it plays does not restart it (#4214) | web, Mi 9T | PASS |
+| The waveform seeks by tap, by drag (right and left) and by arrow keys (about 0:05 reached) | web (tap, arrows), Mi 9T (tap, drag) | PASS |
+| Notification preferences (#4207): a conversation at "Aucune" stays silent, a control at "Tous" rings | Mi 9T, push | PASS |
+| A campus trend for a displayed post | | NOT READ: it still needs a dev trend fixture (a post over the threshold, followed likers, a reader under the caps, a control post) |
+
 ## Readings closed on 2026-11-23 - no hand can take them
 
 Owner, 2026-11-23 ([decisions](decisions/owner-decisions-of-2026-11-23.md)): a reading the bench cannot take is closed with its reason and never queued for the owner.

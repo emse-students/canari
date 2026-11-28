@@ -1,6 +1,8 @@
 ## P2 - a new device's restore is paced by one member device adding it group by group
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped. 2026-11-26: moved to 1.8.3 - the instruments below are built, the levers wait on the log they produce._
 

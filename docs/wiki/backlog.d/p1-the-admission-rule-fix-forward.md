@@ -1,6 +1,8 @@
 ## P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped. Step 3's rig reading was TAKEN on 2026-11-26 on a built state
 ([slice 2's reading](../protocols/admission-fix-forward.md#slice-2s-reading-on-a-built-state-2026-11-26));

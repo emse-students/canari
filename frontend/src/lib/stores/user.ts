@@ -6,6 +6,7 @@ import { coreUrl } from '$lib/utils/apiUrl';
 import { refusalOrigin, type ResponseOrigin } from '$lib/utils/apiJson';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
+import { eraseNotificationPreferenceCopies } from '$lib/notifications/preferencesSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { endPeerNames } from '$lib/utils/users/peerNameDirectory';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
@@ -97,6 +98,9 @@ export function saveUserLocally(user: { id: string; displayName?: string; admin?
     forgetReaderCaches();
     // The previous account's community list is not drawn under this one's name (F1).
     clearWorkspaceSnapshots();
+    // Nor are its notification settings left on the device (`notificationPreferences`); the new
+    // account's own copy, if it signed in here before, is the one kept.
+    eraseNotificationPreferenceCopies(user.id);
     // Nor is any stored feed page written before the switch (`$lib/posts/feedStoreEpoch`).
     forgetStoredFeeds('change of account');
     // Nor the names the previous account's device had resolved (`peerNameDirectory.ts`).
@@ -121,6 +125,9 @@ export function clearUserLocally(): void {
   // device key, which costs a PIN to rebuild, while this list costs nothing but the first listing
   // after the next sign-in - a moment that needs the network anyway (wiki: community-open-budget).
   clearWorkspaceSnapshots();
+  // And the device copies of the notification settings, every account's - by prefix, so a sign-out
+  // the store never saw bound (during a sign-in, behind the PIN gate) still erases them.
+  eraseNotificationPreferenceCopies();
   // The stored feed pages end with it, by the same rule and in the same call: their epoch goes now,
   // their sealed bytes at the next read or write of the account's store (`feedStoreEpoch.ts`).
   forgetStoredFeeds('sign-out');

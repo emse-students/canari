@@ -1,6 +1,8 @@
 ## Reading owed - the Minesweeper tutorial path, Le Pic, the miner's lamp and the mode modal read well on a phone (2026-11-27)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 **Built and tested in happy-dom, never seen on a device** ([the path](../frontend/modules/minesweeper.md#the-tutorial-path-owner-2026-11-27), [the modal](../frontend/modules/minesweeper.md#the-game-mode-modal-owner-2026-11-27)). The owner validated the design on a canvas on 2026-11-27 and ruled out any streak, flame, medal or points (charter, principle 3). It replaces items 11 to 14 of [the earlier reading](reading-owed-the-minesweeper-hint.md) that concern the tutorial's list of lessons, the pattern catalogue's route and the bottom sheet; the others (levels, ranked, pages) stay with it.
 
@@ -15,3 +17,5 @@ target: 1.8.3
 7. **The mode modal**: at the very first game on a device it opens by itself, centered, with its two cards and the levels under Entraînement; "Jouer" starts the game in that mode; afterwards the bottom pastille opens the same modal and it never opens by itself again; it clears the notch and the home bar and closes on the scrim, the cross and the Android Back gesture without leaving the game; "Libre" appears nowhere.
 
 **What closes it**: items 1, 2, 4 (the bottom bar clears the tab bar and the home bar, never under it), 5, 6 and 7 pass on both phones, and item 3 on at least one. A failure names the item.
+
+**2026-11-28, `1.8.3-alpha.3`, Mi 9T, light:** item 1 (the path fits the width, no horizontal scroll) and the layout half of item 4 (a 5x4 grid whole above the bar, the bar clear of the tab bar, the bubble not overflowing) PASS; the lamp is drawn. Owed: items 2, 3, 5 (pulse, reduced motion, the unranked lamp), 6, 7, the dark theme, and the iPhone 12 for items 2, 3, 5 to 7 and the dark theme (its items 1 and 4 PASS in light, `1.8.3-alpha.3`, build `100800303`).

@@ -68,6 +68,12 @@ export const ACCOUNT_KEY = {
    * Called with `''` it is the prefix every sign-out erases.
    */
   workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
+  /**
+   * `notificationPreferences.svelte.ts`: the last notification settings the server ANSWERED for the
+   * account, in the read's wire shape - decided on when a later read fails or the session is offline.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  notificationPreferences: (userId: string) => `canari_notification_preferences:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -235,6 +241,8 @@ export const ACCOUNT_KEY = {
     `history_last_connected:${userId}:${deviceId}`,
   /** `historyReconcile.ts`: the history audit generation of this device. */
   historyAudit: (userId: string, deviceId: string) => `history_audit:${userId}:${deviceId}`,
+  /** `historyReconcile.ts`: the groups asked within a sweep that was cut short. */
+  openSweep: (userId: string, deviceId: string) => `history_open_sweep:${userId}:${deviceId}`,
   /** `notReadyRegistry.ts`: since when one group has been not-ready-and-recoverable. */
   notReadySince: (userId: string, groupId: string) => `mls_not_ready_since:${userId}:${groupId}`,
   /** `WebMlsService` / `TauriMlsService`: the name this device announces for the account. */
@@ -286,6 +294,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.agendaSpaceFilter(userId),
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),
+    ACCOUNT_KEY.notificationPreferences(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.registerOwed(userId),
@@ -325,6 +334,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),
     ACCOUNT_KEY.historyAudit(userId, ''),
+    ACCOUNT_KEY.openSweep(userId, ''),
     ACCOUNT_KEY.notReadySince(userId, ''),
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),

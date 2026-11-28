@@ -89,8 +89,12 @@ export type CaptureState =
   | { kind: 'pressing'; pressedAt: number }
   /** A tap was released: the frame is being kept as a photo. */
   | { kind: 'photo' }
-  /** Recording, from the moment the press became a hold; the release ends it. */
-  | { kind: 'recording'; pressedAt: number }
+  /**
+   * Recording, from the moment the press became a hold; the release ends it - unless the member slid
+   * the finger onto the padlock (`locked`): then a lift decides nothing and ONE tap on the stop
+   * shutter ends it (owner, 2026-11-27, the Snapchat/Instagram convention).
+   */
+  | { kind: 'recording'; pressedAt: number; locked?: boolean }
   /** Stop asked for; the recorder's last chunk has not arrived yet. */
   | { kind: 'finishing' }
   | { kind: 'review'; clip: ReelClip };
@@ -100,6 +104,10 @@ export type CaptureEvent =
   /** The press stayed down for {@link SHUTTER_HOLD_THRESHOLD_MS}: it is a video. */
   | { type: 'hold' }
   | { type: 'release'; at: number }
+  /** The held finger was lifted ON the padlock: the take carries on hands-free. */
+  | { type: 'lock' }
+  /** A tap on the stop shutter of a locked take. */
+  | { type: 'stop' }
   /** The pointer was cancelled (a system gesture took the touch): nothing was decided by the member. */
   | { type: 'cancel' }
   /** The 90 s cap (C4) - the ring is full. */
@@ -134,6 +142,13 @@ export function captureReducer(state: CaptureState, event: CaptureEvent): Captur
       return state;
     case 'recording':
       if (event.type === 'failed') return { kind: 'ready' };
+      if (event.type === 'lock') return state.locked ? state : { ...state, locked: true };
+      // A locked take ends by the cap, a failure or a TAP ON STOP: the lift of the finger that
+      // locked it, and a touch the system takes away afterwards, decide nothing.
+      if (state.locked) {
+        return event.type === 'limit' || event.type === 'stop' ? { kind: 'finishing' } : state;
+      }
+      if (event.type === 'stop') return { kind: 'finishing' };
       // The cap, the release and a cancelled touch all END the take and KEEP it: the member filmed.
       if (event.type === 'limit' || event.type === 'release' || event.type === 'cancel') {
         return { kind: 'finishing' };
@@ -147,6 +162,30 @@ export function captureReducer(state: CaptureState, event: CaptureEvent): Captur
       if (event.type === 'discard') return { kind: 'ready' };
       return state;
   }
+}
+
+/** A rectangle in viewport px (a `DOMRect` reduced to what the padlock test reads). */
+export interface PadlockRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Whether the held finger is over the padlock, with `slopPx` of margin on every side so a thumb
+ * sliding left need not land on the icon's exact pixels. Pure: the shutter feeds it the pointer and
+ * the padlock's own rectangle, so the rule is tested without a DOM.
+ */
+export function overPadlock(x: number, y: number, rect: PadlockRect, slopPx = 0): boolean {
+  // A padlock with no area has not been laid out (or is hidden): there is nothing to be over.
+  if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+  return (
+    x >= rect.left - slopPx &&
+    x <= rect.right + slopPx &&
+    y >= rect.top - slopPx &&
+    y <= rect.bottom + slopPx
+  );
 }
 
 /** How full the ring is, 0 to 1, after `elapsedMs` of a take capped at `maxMs`. */

@@ -9,15 +9,21 @@ Related: [nginx](nginx.md) (the origin behind it), [docker](docker.md).
 
 ## Topology
 
-Every hostname on the zone is a **proxied CNAME to a Cloudflare Tunnel** (`*.cfargotunnel.com`), so
-there is no public IP and no inbound port on the origin. `cloudflared` forwards to
-`http://localhost:8080` -> nginx:80.
+**Since 2026-11-28 the four public names (`canari-emse.fr`, `dev.canari-emse.fr`, `auth.canari-emse.fr`,
+`cercle.canari-emse.fr`) are Cloudflare-proxied A records straight to the school host**, no longer
+CNAMEs to a home Cloudflare Tunnel. The edge opens an ordinary TLS connection to the host's nginx,
+which holds its own certificate. The home tunnel survives only for unrelated routes (administrative
+interfaces and the like, [below](#administrative-hostnames-are-gated-by-cloudflare-access)); no
+Canari, dev, authentication or Cercle traffic crosses it. The host's address is in the private
+operations notes, never here.
 
-One consequence worth stating, because it is the opposite of the usual advice: the zone's **SSL/TLS
-mode is not a meaningful control here**. There is no classic edge-to-origin TLS connection to make
-strict - the tunnel is its own authenticated transport, and what `cloudflared` does on the far end is
-decided by the tunnel's ingress rules, not by the zone setting. Raising it from Full to Full (strict)
-buys nothing and can break the tunnel.
+The zone's **SSL/TLS mode is therefore a real control again**: `Full` makes the edge speak TLS to
+the origin and accept the school host's own certificate without validating its chain. It is
+terminated by that certificate, not by a tunnel. Moving to Full (strict) is possible only if that
+certificate chains to a public authority and names these hostnames; it is not required today.
+
+What follows about tunnels (ingress, run token, rotation, drops) still describes the surviving
+tunnel, and the history of the period when every name crossed it.
 
 ## Who owns a response header
 
@@ -254,7 +260,7 @@ Read the live values with `GET /zones/{zone}/settings`; these are the ones with 
 | `websockets` | `on` | Required by `/api/ws` |
 | `rocket_loader` | `off` | It defers and re-orders scripts, which breaks SvelteKit hydration |
 | `browser_cache_ttl` | `14400` | **Left alone on purpose.** It looks like it should override the origin's `max-age=31536000, immutable` on `/_app/immutable/`, and it does not - measured through the edge, the origin's value arrives intact. The theory was refuted, so the setting stays |
-| `ssl` | `full` | See the tunnel note above - not a meaningful control on this zone |
+| `ssl` | `full` | The edge reaches the school host over TLS and accepts its own certificate ([topology](#topology)); it was not a meaningful control while every name crossed a tunnel |
 | `0rtt` | `off` | 0-RTT permits replay of early data |
 
 ## Zone rulesets
@@ -423,6 +429,8 @@ binary in place and drifts it from what `dpkg` believes. Upgrade the package wit
 that no package owns the unit file carrying the token and comparing the token's fingerprint across
 the upgrade.
 ## The tunnel drops in the 22h band, and nothing on this page can fix it
+
+_History: measured while every public name crossed the home tunnel. Since 2026-11-28 the four public names no longer do, so this band no longer takes them down ([topology](#topology))._
 
 **Measured 2026-09-11.** Every hostname returned HTTP 530 / Cloudflare error **1033** for about six
 minutes, on two different zones and machines. 1033 means the edge has **no connector registered** for

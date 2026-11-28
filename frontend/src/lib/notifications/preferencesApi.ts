@@ -4,79 +4,23 @@ import { deliveryUrl } from '$lib/utils/apiUrl';
 import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
 import { withClientVersionHeader } from '$lib/utils/appVersion';
-import { isNotificationCategory, OPT_IN_CATEGORIES, type NotificationCategory } from './categories';
+import type { NotificationCategory } from './categories';
+import type { ConversationNotificationLevel } from './conversationLevel';
 import {
-  isConversationNotificationLevel,
-  type ConversationNotificationLevel,
-} from './conversationLevel';
+  parseNotificationPreferences,
+  type NotificationPreferencesSnapshot,
+} from './preferencesSnapshot';
+
+export type { NotificationPreferencesSnapshot } from './preferencesSnapshot';
 
 const PATH = '/api/mls/notification-preferences';
-const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** The shape of a category id: what an id this build does not know must look like to be kept. */
-const CATEGORY_ID_RE = /^[a-z][a-z_]{0,63}$/;
-
-/** What the account's notification preferences read answers. */
-export interface NotificationPreferencesSnapshot {
-  /** The categories switched off. */
-  disabled: NotificationCategory[];
-  /**
-   * Switched-off ids THIS BUILD DOES NOT KNOW - a category added after it (a newer server). It draws
-   * no switch for them, so it has no choice to make about them: they are kept as read and sent back
-   * on every save, so a save from here never switches back on what another device switched off.
-   */
-  unknownDisabled: string[];
-  /** The opt-in categories (`OPT_IN_CATEGORIES`) whose PUSH the account turned on. */
-  pushEnabled: NotificationCategory[];
-  /** Every private conversation made quieter than `all`, keyed by group id (absent = `all`). */
-  groupLevels: Record<string, ConversationNotificationLevel>;
-  /**
-   * Every private conversation where the account CHOSE whether calls may ring it, keyed by group id.
-   * Absent = never chose, resolved against the level by `callsAllowedFor`.
-   */
-  groupCalls: Record<string, boolean>;
-}
 
 /** The account's categories and conversation levels, in one read. Throws on any non-2xx answer. */
 export async function fetchNotificationPreferences(): Promise<NotificationPreferencesSnapshot> {
   Log.d('notificationPreferences.fetch');
   const res = await apiFetch(`${deliveryUrl()}${PATH}`);
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
-  const body = (await res.json()) as {
-    disabled?: unknown;
-    enabled?: unknown;
-    groupLevels?: unknown;
-    groupCalls?: unknown;
-  };
-  const disabledIds: unknown[] = Array.isArray(body.disabled) ? body.disabled : [];
-  const disabled = disabledIds.filter(isNotificationCategory);
-  const unknownDisabled = disabledIds.filter(
-    (id): id is string =>
-      typeof id === 'string' && !isNotificationCategory(id) && CATEGORY_ID_RE.test(id)
-  );
-  if (unknownDisabled.length) {
-    Log.d(`notificationPreferences.fetch keeps ids this build does not know: ${unknownDisabled}`);
-  }
-  const groupLevels: Record<string, ConversationNotificationLevel> = {};
-  if (body.groupLevels && typeof body.groupLevels === 'object') {
-    for (const [groupId, level] of Object.entries(body.groupLevels)) {
-      // Only a uuid becomes a key: a remote string must never name an object property.
-      if (GROUP_ID_RE.test(groupId) && isConversationNotificationLevel(level)) {
-        groupLevels[groupId] = level;
-      }
-    }
-  }
-  // Absent on a server older than migration 032: nobody has chosen anything there yet.
-  const groupCalls: Record<string, boolean> = {};
-  if (body.groupCalls && typeof body.groupCalls === 'object') {
-    for (const [groupId, allowed] of Object.entries(body.groupCalls)) {
-      if (GROUP_ID_RE.test(groupId) && typeof allowed === 'boolean') groupCalls[groupId] = allowed;
-    }
-  }
-  const enabledIds: unknown[] = Array.isArray(body.enabled) ? body.enabled : [];
-  const pushEnabled = enabledIds
-    .filter(isNotificationCategory)
-    .filter((c) => OPT_IN_CATEGORIES.includes(c));
-  return { disabled, unknownDisabled, pushEnabled, groupLevels, groupCalls };
+  return parseNotificationPreferences(await res.json(), 'the server answer');
 }
 
 /**

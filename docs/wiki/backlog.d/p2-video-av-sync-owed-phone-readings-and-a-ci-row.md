@@ -1,6 +1,8 @@
 ## P2 - a video's sound ran ahead of its picture: fixed (holes restored, a constant 30 fps), owed the phones' own readings and a CI row
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 The owner's report of 2026-11-06 is explained and fixed: Chrome's audio decoder closed the holes of
 the source's audio track, so an encoded output's sound ran early by the sum of the holes, 0.845 s by

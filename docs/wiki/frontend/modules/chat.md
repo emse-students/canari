@@ -3139,6 +3139,28 @@ type MessageEnvelope =
 `appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
 MessageEnvelope).
 
+### A voice note's waveform is its scrubber
+
+`VoiceMessagePlayer`'s waveform is a `role="slider"` on pointer events (touch and mouse), with arrow
+keys, Home and End, and `aria-valuenow`/`aria-valuetext`; the arithmetic is in
+`utils/audio/scrub.ts`. It replaced a transparent `input[type=range]` that could not work in a
+bubble: **the bubble reads every press as its own** - held 420 ms it opens the actions sheet, dragged
+sideways it is a reply swipe that claims the `touchmove` - so the finger moved the message, not the
+playhead (owner, 1.8.2). The scrubber is marked `data-scrub`, and `MessageBubble.pressOwnedByScrub`
+arms neither gesture for a press that starts on it (the same contract as `[data-video-player]`).
+
+**A reaction does not restart a note (the 1.8.2 report).** `handleAddReaction` replaces the message
+OBJECT (`{ ...msg, reactions }`) in a new conversation. The thread hands each bubble
+`messageId={msg.id}` as a getter over its `msg` derived, and the bubble's media-download effect read
+`messageId` for a log line - a TRACKED read - so the replaced object re-ran the effect for an
+attachment that had not changed: its cleanup nulled `blobUrl`, the renderer fell to its skeleton, the
+player was destroyed and rebuilt, and the note began at 0:00. The effect now reads `messageId`
+untracked and is keyed on the attachment alone. `ChatMessageGroups.voiceReaction.svelte.test.ts`
+pins it at the level where it happened (a new message object under the same key keeps the same
+`<audio>` and position); a bubble-level test with a constant `messageId` prop could not see it.
+Rule: **an effect in a row component must not read a prop that the list passes as a getter over the
+message object, unless it means to re-run on every replacement of that object.**
+
 ### A voice note declares itself, because nothing downstream can tell
 
 **A recording and an imported `.m4a` are the same bytes with the same mime type.** By the time a
@@ -4026,8 +4048,52 @@ the same prefix.
 conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes from ~10 s to
 ~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
 mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
-the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
+batched since 2026-11-28 ([below](#the-reactions-and-read-marks-of-a-catch-up-are-written-once-2026-11-28)); the
 reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
+
+#### The reactions and read marks of a catch-up are written once (2026-11-28)
+
+**The cost** (owner's Android `1.7.3` log, [above](#a-catch-up-lands-in-one-render-2026-11-24)): 34 reactions at ~75 ms
+(`applyReactionFrame` merged each onto its stored row before its handler returned) and the peer's read
+marks at ~65 ms (one `saveConversation` each): ~4 s of the 10 s drain that the texts' batching did not touch.
+A later `1.8.2` log showed the same shape, so the owner decided (2026-11-28) to batch them.
+
+**The mechanism is the texts' own, in one place** (`mls-client/messagePipeline/catchupWrites.ts`, registered by
+`setupMessageHandler` as a bulk-ingest observer, BEFORE the UI render buffer's):
+
+- while a UI-buffering window is open and no checkpoint hold stands (`deferring()`; every drain opens one, so every drain batches), the reaction handler
+  hands its compare-and-set fold to the ledger (`deferReaction`) and the read-mark handler hands the
+  conversation key (`deferConversationSave`) instead of awaiting the store - a mark of THIS account read on its other device is deferred like a peer's, both go through the same branch. Nothing else changes in the
+  handler: memory, the notification trigger and the pending-mutation parking are as before;
+- the window's CLOSE (`onBulkIngestEnd`, the drain's own completion - no timer, no debounce) writes them: ONE
+  `mergeMessages` per conversation (the folds of a row run in frame order inside the one merge) and ONE
+  `saveConversation` per conversation. A checkpoint's hold writes them first, as it does the texts
+  (`holdRowsForCheckpoint`, [rows before ratchet](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19));
+- **the ack never runs ahead of the disk**: a held write's frame is in `framesLeftUnstored` until it lands,
+  the same ledger the texts' frames sit in.
+
+**Why the result is today's.** A reaction is already a compare-and-set fold of the row AS THE STORE HOLDS IT, and
+`applyReaction` is idempotent per (reactor, emoji) rank, so folding N frames in frame order inside one merge
+ends on the row N merges ended on, and a replay folds to nothing. A conversation save writes the row as memory
+holds it, and every handler updates memory before handing the save over, so the one save writes what the last
+per-frame save wrote (`saveConversation` writes the conversation's metadata only, never message rows, so a
+save and a reaction merge do not order against each other). Because the ledger is registered before the render
+buffer's observer, its writes land before the buffered rows' store on every close and hold, as the per-frame
+writes landed before it. Deletions and edits are compare-and-set merges of other fields, so they commute with
+a held reaction. Pinned by `catchupWrites.test.ts` (the same rows, the same reactions in memory, one merge per
+conversation, nothing on disk before the close, a replay changing nothing, a throwing merge parked per frame) and
+`systemMessageHandler.readState.test.ts` (two marks, one save of the last row).
+
+**A checkpoint is refused while a held write stands** (`CatchupWritesNotStoredError`, as the texts' `BufferedRowsNotStoredError`): a landed checkpoint lets the frames it covers be acknowledged without reading `framesLeftUnstored` (`idsDurableEnoughToAck`), so a hold that could not write everything throws and the next hold writes it again. **A thread opened mid-drain shows memory first**: `renderStoredPage` merges the stored reactions into the ones memory holds (`mergeReactions`, the later state per pair wins) instead of replacing them, because the stored row can be behind a frame already applied. **Rows are written where they ARE**: each key (the thread's key now, then the key the frame named) is asked which rows it holds, so a re-key whose row move failed never routes a fold to an empty key; a fold that changed more rows than were written is said at ERROR.
+
+**Failures are kept, never swallowed.** A merge that throws parks each of its reactions as a pending mutation (the
+per-frame path's answer, said at ERROR); a reaction that cannot even be parked stays held, and an unexpected throw of a flush puts back everything it had not written. A save that throws stays in the ledger with its frames withheld and is
+written at the next close or hold - the per-frame path swallowed it and lost the mark - and its blocking cause is said ONCE until every held write has landed. **A save the store can never take** (`DataCloneError`, or a `RowRefusedError`, by type, as `classifyRowWriteFailure` decides for rows; a bare `DataError` stays transient because `importKey` raises one for an empty device key) is dropped and accused once, never kept to refuse every checkpoint for good. **Every caller checks `deferring()` and hands the write over with no await between** (a hold beginning in between would flush before it is held): the ledger says at ERROR when a write arrives outside a window or during a hold. The legacy `remove_reaction` event owes its row through its dispatch (`SYSTEM_EVENTS_OWING_THEIR_ROW`), so a checkpoint cannot land inside its store read. A thread that left the map
+during the window is dropped and said; one a Welcome re-keyed is written under its new key (`movedKeyOf`).
+Logs: `[CATCHUP_WRITES]` at each flush, each drop and each failure.
+
+**What is NOT batched**: the per-reaction READ (`getMessagesByIds`) that decides shown / stored / pending, which
+is a point read by primary key and the frame's own question.
 
 #### An open lands once: a change above the reader never glides (2026-11-25)
 
@@ -8590,3 +8656,37 @@ keeps the quote read from the full row (`UploadTask.replyTo`) and gives it back 
 same sight: `ChatMessageGroups` looked the quoted photo up by `msg.replyTo` only, so a row read back from
 the store lost its thumbnail even when its envelope kept the quote; `quotedIdOf` reads the envelope too.
 A reply sent from a build before this fix stays a plain photo on both sides: the quote was never written.
+
+### The connection pass stops on a fact, and counts instead of listing (owner's log of 2026-11-27, 1.8.4)
+
+- **A pass does not outlive its connection.** `reconcileAllGroups` takes a `stopReason` read before
+  each group is asked; `initializeConnection` hands it "the app left the screen" and "the server is
+  unreachable". A pass of 157 groups used to go on for 12 s after the app was paused, and its
+  elections then failed in transport and were reported as the server being unreachable
+  ([the suspension entry](../../backlog.d/p3-a-suspension-is-logged-as-the-server-being-unreachable.md)).
+  A group not asked is owed (the audit discharges only what was asked). `reconcileGroupOutcome`
+  answers `asked` / `no-peer` / `unreachable` / `skipped`, and the pass counts those (never a
+  stale deferral); `complete` is false when it stopped, or when an election never left the device.
+  ONE pass line, "stopped, <why>" or "complete", never both. The stop reasons read "the app went to
+  the background" and "offline or server unreachable".
+  A SWEEP cut short does not write the connection record, so the next connection sweeps again - and
+  RESTARTS WHERE IT STOPPED: the groups it asked are kept per store (`history_open_sweep`, a sweep
+  generation closed by a completed sweep), so the tail of a long list cannot starve behind a head
+  asked first and cut again. The record is STAMPED with the generation it was owed for (the
+  last-connected value it set out to cover) and ignored once another connection was recorded, or
+  once it is older than the server's frame retention. A group that is unreachable on its own, pass
+  after pass (3, counted only from a pass nobody cut), stops holding the sweep open: it is named at
+  warn and stays owed by the audit. A pass stopped in the background is re-run ONCE on the return to
+  the foreground (`armForegroundRerun`, armed whatever the foreground state is when the pass ends -
+  already back means at once), for the socket that survived the background and so has no new
+  connection to restart it; the session teardown disarms it (`disarmForegroundRerun`). **ONE
+  connection pass at a time** (`passInFlight`): a second caller awaits the first and runs again only
+  if it was cut short, because two passes side by side find each other's groups inside the
+  coalescing window and would hide a transport failure. A coalesced group is never counted covered
+  (`complete` is false).
+- **No line per group for "nobody online".** 714 identical lines in one session (one per group per
+  pass, 16 passes). The pass line now carries the count (`N with no member online`); the group is
+  still deferred for the peer-online edge, and a single-group trigger keeps its own line.
+- **A skipped Graine roster pass is said once per key-group version** (`keyGroupConvergence.ts`,
+  `skipSaid`; 961 identical lines before). A pass that RAN despite a record is always said, so a
+  resume with no such line skipped.

@@ -1,6 +1,8 @@
 ## P3 - reading owed: a photo sent as a reply has no frame, and its quote shows a thumbnail
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built 2026-11-27 on the owner's two minifixes ([chat](../frontend/modules/chat.md#a-quoted-photo-is-drawn-not-named-2026-11-27)). Owed on a phone, both themes, a DM:
 
@@ -13,3 +15,5 @@ Built 2026-11-27 on the owner's two minifixes ([chat](../frontend/modules/chat.m
 **2026-11-27, `1.8.3-alpha.1`, iPhone 12:** the light pass passed, and the dark pass found the quote GONE after a cold start (header and thumbnail): a file sent as a reply was sent and stored without its quote once its upload ended in the page's life ([chat](../frontend/modules/chat.md#a-reply-keeps-its-quote-after-a-restart-2026-11-27)). Owed again on the next alpha, with a NEW reply photo: send it, kill and relaunch the app, and the header and thumbnail must still be there (both themes), and the peer's copy must carry the quote too.
 
 Delete this entry once read.
+
+**2026-11-28, `1.8.3-alpha.2` web and `1.8.3-alpha.3` Mi 9T, light ([readings](../device-verification.md#the-readings-of-2026-11-28-183-alpha2-on-the-web-183-alpha3-on-both-phones-replies-the-grant-the-replay-the-voice-note-the-preferences)):** a photo reply has no frame and its quote shows the thumbnail, and an emoji, a link and a GIF sent as a reply carry no outline. Still owed: the dark pass, and the cold start (kill and relaunch with a NEW reply photo, the quote must remain) on a phone.

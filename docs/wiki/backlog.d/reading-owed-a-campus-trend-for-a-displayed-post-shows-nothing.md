@@ -1,6 +1,8 @@
 ## Reading owed - a campus trend for a post this device already displayed shows nothing, on both phones (2026-11-24)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
@@ -28,3 +30,5 @@ _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 **2026-11-27, `1.8.3-alpha.1` (Mi 9T): item 1 FAILED, item 2 passed, and the cause is the SERVER.** The trend push carried no `postId` (it was spread beside `pushNotice`'s fields and dropped), so `SeenTrends` could not recognise the displayed post - and said nothing, and the banner opened the feed. Fixed in the push data, every end of the device's decision now logged ([engagement](../engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)). The reading is owed again on a build carrying that fix, **on BOTH phones** - the iOS readers had the same gap (no `postId`, so nothing was ever withheld there either), so no iOS item has been read at all yet:
 - **Mi 9T**: item 1 shows `[PUSH_SHOW] outcome=suppressed-seen-trend`; the banner of item 2 opens the post (`fr.emse.canari://post/<id>`) with a `[SEEN_TREND] a campus trend shown: not-displayed` line.
 - **iPhone 12**: items 1, 2 and 5 as written above (`[CanariNSE] [SEEN_TREND]` notices, the `seen-trend` outcome of `[NSE_OUTCOME]`), AND item 4 - the blank, passive row the extension delivers for a withheld trend is stamped `canariWithheld` and REMOVED by the app (gone after a foreground and when the app runs for a push; `blank notification(s) of withheld trends removed` in the log). The Mi 9T cannot answer item 4: Android drops the push outright.
+
+**2026-11-28, `1.8.3-alpha.3`:** NOT READ again, the dev trend fixture (above) still does not exist; nothing else changed.

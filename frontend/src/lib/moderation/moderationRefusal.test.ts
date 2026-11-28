@@ -6,6 +6,9 @@ import { m } from '$lib/paraglide/messages';
 import { refusalCode } from '$lib/utils/apiRefusal';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MODERATION_REFUSAL_CODES, describeModerationRefusal } from './moderationRefusal';
+// STATIC, so the module graph loads at collection and not inside a test's 5 s budget: the dynamic
+// import this replaces took ~0.9 s alone and exceeded the budget in a loaded full run.
+import { deleteReportedComment, reviewReport, muteUser } from './api';
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: apiFetchMock }));
@@ -68,7 +71,6 @@ describe('moderation refusal codes', () => {
           { status: 403, headers: { 'content-type': 'application/json' } }
         )
     );
-    const { deleteReportedComment, reviewReport, muteUser } = await import('./api');
     for (const act of [
       () => deleteReportedComment('c1'),
       () => reviewReport('r1', 'reviewed'),

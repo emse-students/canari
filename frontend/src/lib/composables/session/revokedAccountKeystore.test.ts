@@ -69,6 +69,7 @@ const { ACCOUNT_KEY, keystoreAlias } = await import('$lib/utils/accountLocalKeys
 const { pendingDeletedAccountWipes, wipeReasonOf, forgetDeletedAccountOnSignIn } =
   await import('$lib/utils/deletedAccountMarker');
 const { wipeRevokedDevice } = await import('./sessionAuth');
+const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
 
 function session(): { ctx: SessionContext; cb: ChatSessionCallbacks; logs: () => string } {
   let wiping = false;
@@ -113,9 +114,12 @@ describe('the revoked wipe of ONE account on an install another account uses', (
     keystore.add(keystoreAlias('alice', 'device-a'));
     keystore.add(keystoreAlias('bob', 'device-b'));
     const s = session();
+    notificationPreferences.bind('alice', { offline: true });
 
     await wipeRevokedDevice(s.ctx, s.cb);
 
+    // The settings binding ends with the session: a late save has no account to write a copy for.
+    expect(notificationPreferences.account).toBeNull();
     expect(deleteKeyEntry).toHaveBeenCalledWith(keystoreAlias('alice', 'device-a'));
     expect(keystore.has(keystoreAlias('alice', 'device-a'))).toBe(false);
     expect(keystore.has(keystoreAlias('bob', 'device-b')), "the other account's entry").toBe(true);

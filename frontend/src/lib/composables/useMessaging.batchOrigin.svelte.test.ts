@@ -43,7 +43,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
 const { useMessaging } = await import('./useMessaging.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { NativeMessageNotification } from '$lib/utils/nativeNotification';

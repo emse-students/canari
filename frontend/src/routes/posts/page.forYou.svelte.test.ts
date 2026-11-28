@@ -27,7 +27,11 @@ vi.mock('$app/state', () => ({
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: { userId: null, deviceKeyB64: null, isLoggedIn: false },
 }));
-vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1' }));
+// The Alumni link card at the top of the feed reads the own profile: none is due here.
+vi.mock('$lib/stores/user', () => ({
+  currentUserId: () => 'u1',
+  fetchMyProfile: () => Promise.resolve({}),
+}));
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),

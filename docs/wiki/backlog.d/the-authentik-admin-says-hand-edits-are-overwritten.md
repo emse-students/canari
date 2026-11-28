@@ -1,6 +1,8 @@
 ## P3 - authentik's admin says that a hand edit is overwritten at the next stable
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-26: moved to 1.8.3 when 1.8.2 shipped._
 

@@ -1,6 +1,8 @@
 ## P2 - the Alumni SSO: the free window, the link due mid second year, the cotisant gate, the merge
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
@@ -46,7 +48,7 @@ property, so `cotisant` is first read at the next Alumni sign-in; the routing pa
    [reading-owed-miconnect-one-sign-in-per-path](reading-owed-miconnect-one-sign-in-per-path.md));
 3. the `cotisant` READ at a later Alumni sign-in: `attributes.alumni.read_on` today, username and name
    unchanged;
-4. the LINK STEP (D44): the reminder once per session, the block after its date;
+4. the LINK STEP (D44): the reminder (a feed card dismissed once per account, and a settings row that stays), the block after its date;
 5. D49 SIGNED IN: the confirmation page names the account, the tick goes on to Alumnforce, the link
    completes.
 6. a REAL MERGE: the first flagged duplicate verified by an admin (Alumni e-mail, `af_id`, asserted

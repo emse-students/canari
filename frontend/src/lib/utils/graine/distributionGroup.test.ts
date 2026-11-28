@@ -1263,6 +1263,20 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
     expect(lines.join(' | ')).toContain('roster pass skipped');
   });
 
+  it('says a skip once per version, not on every resume', async () => {
+    // Owner's log, 2026-11-27: 961 identical skip lines in a session.
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    const lines: string[] = [];
+    await runOn(mls, channels, version('v1'), (m) => lines.push(m));
+    await runOn(mls, channels, version('v1'), (m) => lines.push(m));
+    await runOn(mls, channels, version('v1'), (m) => lines.push(m));
+    await runOn(mls, channels, version('v1'), (m) => lines.push(m));
+
+    expect(lines.filter((l) => l.includes('roster pass skipped'))).toHaveLength(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
   it('runs the pass when the version moved (a member left, a commit landed)', async () => {
     const mls = current();
     const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
