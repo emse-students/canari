@@ -51,6 +51,10 @@ function twoKeyElements(): { at: string; title: string; aria: string }[] {
   return pairs;
 }
 
+// SCANNED ONCE, AT COLLECTION: the walk reads every component (~0.5 s alone) and used to run inside
+// each test, so on a loaded machine one test's 5 s budget could not hold it (a pre-push run timed out).
+const PAIRS = twoKeyElements();
+
 describe('an icon-only control names itself with ONE key when the hint and the name are one text', () => {
   /**
    * The convention of design-reference "Tooltips: one convention": a `title` and an `aria-label`
@@ -60,7 +64,7 @@ describe('an icon-only control names itself with ONE key when the hint and the n
    * 2026-10-08 merged four; three more were still there on 2026-10-18.
    */
   it('has no element whose two keys carry the same text in every locale', () => {
-    const duplicates = twoKeyElements().filter(
+    const duplicates = PAIRS.filter(
       (p) => fr[p.title] === fr[p.aria] && en[p.title] === en[p.aria]
     );
     expect(duplicates).toEqual([]);
@@ -72,6 +76,6 @@ describe('an icon-only control names itself with ONE key when the hint and the n
    * honest without breaking when one of them is reworded.
    */
   it('actually finds the two-key elements it claims to check', () => {
-    expect(twoKeyElements().length).toBeGreaterThan(20);
+    expect(PAIRS.length).toBeGreaterThan(20);
   });
 });
