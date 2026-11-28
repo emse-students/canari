@@ -48,7 +48,12 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
   isMobileTauriRuntime: () => false,
 }));
 
+// The account's settings, answered: this file is not about them (`test/answeredPreferences.ts`).
+vi.mock('$lib/notifications/preferencesApi', async (orig) =>
+  (await import('../../test/answeredPreferences')).answeringTheDefault(orig)
+);
 const { useMessaging } = await import('./useMessaging.svelte');
+await (await import('../../test/answeredPreferences')).answerPreferences();
 const { purgeConversation } = await import('$lib/utils/chat/conversations');
 
 const PEER = 'peer-user-id';

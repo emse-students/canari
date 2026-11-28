@@ -3513,6 +3513,51 @@ The three decisions are asserted against ONE contract, `libs/contracts/mention-d
 `canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
 target yet: there is no Xcode on the workstation that wrote it).
 
+**What a decision reads before the server has answered (2026-11-27).** Read on the iPhone 12
+(`1.8.3-alpha.1`): the server sent the frames of a group at `none` silent (`[PUSH_SEND] level=none
+... sent silent`), iOS woke the terminated app in the background for that silent push, the app
+pulled and decrypted the frame and `notifyInbound` raised it 140 ms BEFORE the sign-in
+`GET /mls/notification-preferences` answered - under the all-on default. "Aucune" rang. Decided
+with the fix (coordinator's review of #4207):
+
+- **The device keeps the last answered set, per account** (`ACCOUNT_KEY.notificationPreferences`,
+  in the read's wire shape and validated by the same parser, `preferencesSnapshot.ts`), written at
+  each answer and each successful save of the session that is still signed in. EVERY sign-out erases
+  every account's copy BY PREFIX (`eraseNotificationPreferenceCopies` in `clearUserLocally`), so a
+  sign-out during a sign-in, or behind the PIN gate after a cold start, where nothing was bound,
+  still leaves none; a change of account (`saveUserLocally`) erases all but the new account's. Every
+  branch of `endSessionImpl` also unbinds the store. The sign-in applies the copy
+  (`notificationPreferences.bind`, before the first frame can be handled) - `source` is `answered`,
+  `persisted` or `default`, and only an account with no copy is ever decided on the default, said
+  at WARN.
+- **A frame decision waits for the answer, not for the network.** `settingsReadyFor` (one rule for
+  messages and reactions) decides at once on an answered set; otherwise it parks behind
+  `notificationPreferences.answered()` - one shared read, the sign-in one when it is in flight - and
+  re-enters. The answer is TYPED where it is known: `answered`, `unanswered` (then the copy or the
+  default decides, and the line says which), or `superseded`.
+- **Superseded means another account's set, or none.** A parked decision is keyed on the ACCOUNT it
+  was parked under: another account signed in, or none, and it is DROPPED with one line naming the
+  sign-out, never taken on the next account's settings (charter principle 1). The same account
+  signed out and in again is still the frame's recipient: it is answered by the new session's read.
+  With no account bound nothing is read at all (`load` and `answered` refuse at once). A salon frame
+  waits twice (the sign-in set, then the salon's own level) and captures the account BEFORE the
+  second read; a salon read SUPERSEDED by a sign-in or sign-out (`loadChannelLevel` resolves
+  `superseded`, never a bare false) re-enters the frame as it first came, so the same account reads
+  the level again under its new session instead of raising as "all". A revoked-device wipe unbinds
+  the store too, and every sign-in starts with no salon level cached. Separately, every sign-in (`bind`) and sign-out (`reset`) moves the store's
+  GENERATION, and a read (the sign-in set, a salon level) or a save answering under an older one
+  writes nothing - not into the set, not into a copy, and a refused save reverts nothing of the
+  next session's.
+- **A failed read is latched.** No new read per frame: the next one waits for connectivity to return
+  (`connectivity.onReconnect`), the app coming back on screen (`onAppScreenChange` - an HTTP 5xx is
+  an answer, not a disconnection, so connectivity alone would hold it until the next sign-in), the
+  next sign-in, or an explicit load (the settings screen). Events, never a clock. An OFFLINE session
+  starts no read at all until `promoteOfflineSession` loads.
+- **A call ring never waits on the network.** `CallService`'s in-app ring and the call record of
+  `handleCallSignalForChat` read the set in memory synchronously - the answer, else the copy, else
+  the default, which rings: a missed call is worse than an unwanted ring, and the two reads stay one
+  predicate.
+
 **When this device's copy of the levels refreshes, and why that is enough.** The store is read at
 sign-in, at every visit to the notification settings, and at every opening of a conversation's
 panel (a salon's: its settings panel, which also writes the cache on save). No socket event announces a level changed on ANOTHER device, so until one of those three, a

@@ -14,6 +14,7 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { movedKeyOf, forgetConversationMoves } from '$lib/utils/chat/conversationMoves';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { appendLog } from '$lib/utils/sessionLog';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
@@ -371,6 +372,70 @@ function notificationGroupTitle(
 }
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
+/**
+ * Whether a notification decision may read the account's notification settings NOW - the ONE rule
+ * for every decision the client takes itself from a frame (a message, a reaction).
+ *
+ * - The server has answered this session: decide now.
+ * - It has not: the decision is PARKED behind `notificationPreferences.answered()` (one shared read,
+ *   or none at all when the session is offline or a failed read is latched) and `resume` re-enters it
+ *   with the account it was parked under. A phone the server's SILENT push woke in the background
+ *   (its answer to `none`) decrypts the frame before the sign-in read answers, and raised a group at
+ *   "Aucune" under the default (iPhone 12, 1.8.3-alpha.1, 2026-11-27).
+ * - On the re-entry: another account in memory, or none, means the account signed out meanwhile -
+ *   the decision is DROPPED, never taken on someone else's set. The ACCOUNT is the token, not the
+ *   session: the same account signed out and in again is still the frame's recipient, and the store
+ *   answers it from the new session's read. Otherwise it is taken on what is in memory, and said: the
+ *   device copy of the last answer, or - nothing else - the account default, at a level that accuses.
+ *
+ * @param what - The decision, as its lines name it.
+ * @param parkedAccount - The account a re-entry was parked under; undefined on the first entry.
+ * @param resume - Re-enters the decision with the account it was parked under.
+ */
+function settingsReadyFor(
+  what: string,
+  parkedAccount: string | undefined,
+  resume: (account: string) => void
+): boolean {
+  if (parkedAccount !== undefined) {
+    if (notificationPreferences.account !== parkedAccount) {
+      appendLog(
+        `[NOTIF] ${what} - its account signed out while its settings were read; nothing raised.`
+      );
+      return false;
+    }
+    if (notificationPreferences.source === 'persisted') {
+      appendLog(
+        `[NOTIF] ${what} - no settings answered this session; decided on the device copy of the last answer.`
+      );
+    } else if (notificationPreferences.source === 'default') {
+      appendLog(
+        `[NOTIF] WARN ${what} - no settings answered and no device copy; decided under the account default.`
+      );
+    }
+    return true;
+  }
+  const account = notificationPreferences.account;
+  if (account !== null && notificationPreferences.source === 'answered') return true;
+  void notificationPreferences.answered().then((answer) => {
+    if (answer.kind === 'superseded' || account === null) {
+      appendLog(
+        `[NOTIF] ${what} - its account signed out while its settings were read; nothing raised.`
+      );
+      return;
+    }
+    try {
+      resume(account);
+    } catch (e) {
+      console.error(
+        `[NOTIF] ${what} - the decision after the settings read threw; nothing raised:`,
+        e
+      );
+    }
+  });
+  return false;
+}
+
 export function useMessaging() {
   const messageReactions = new ReactionsByConversation();
   /**
@@ -1512,10 +1577,47 @@ export function useMessaging() {
      */
     arrivalSeen: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
-    salonLevelRead = false
+    salonLevelRead = false,
+    /**
+     * On a re-entry, the account (`notificationPreferences.account`) the decision was parked under -
+     * see {@link settingsReadyFor}. Undefined on the first entry.
+     */
+    parkedAccount?: string
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
+    /**
+     * Decides again once a read this decision needs has answered, with what it learnt. Caught here:
+     * the re-entry runs outside the caller's `afterTheRow`, and a throw must still cost the message
+     * nothing and be said.
+     */
+    const decideAgain = (salon: boolean, account: string) => {
+      try {
+        notifyInbound(
+          ctx,
+          conversationKey,
+          convo,
+          senderId,
+          content,
+          mentionsMe,
+          isSystem,
+          isOwn,
+          sentAt,
+          serverAt,
+          covers,
+          announced,
+          authorProven,
+          arrivalSeen,
+          salon,
+          account
+        );
+      } catch (e) {
+        console.error(
+          `[NOTIF] Inbound in ${conversationKey} - the decision after a read threw; nothing raised:`,
+          e
+        );
+      }
+    };
     const mine = countingReadPoint(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
@@ -1531,6 +1633,15 @@ export function useMessaging() {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} at ${sentAt} is already read here - nothing raised.`
       );
+      return;
+    }
+
+    // NOTHING BELOW IS DECIDED ON A SET THAT IS NOT THIS ACCOUNT'S BEST - see `settingsReadyFor`.
+    if (
+      !settingsReadyFor(`Inbound in ${conversationKey}`, parkedAccount, (account) =>
+        decideAgain(salonLevelRead, account)
+      )
+    ) {
       return;
     }
 
@@ -1570,30 +1681,22 @@ export function useMessaging() {
     } else {
       level = notificationPreferences.channelLevel(conversationKey);
       if (level === undefined && !salonLevelRead) {
-        void notificationPreferences.loadChannelLevel(conversationKey).then(() => {
-          notifyInbound(
-            ctx,
-            conversationKey,
-            convo,
-            senderId,
-            content,
-            mentionsMe,
-            isSystem,
-            isOwn,
-            sentAt,
-            serverAt,
-            covers,
-            announced,
-            authorProven,
-            arrivalSeen,
-            true
-          );
-        });
+        // The account is captured BEFORE the read: read after it, it would be whoever signed in
+        // meanwhile, and A's frame would be decided on B's set. `settingsReadyFor` passed above, so
+        // an account is bound here.
+        const account = parkedAccount ?? notificationPreferences.account;
+        if (account === null) return;
+        // A read SUPERSEDED by a sign-in or sign-out cached nothing: the frame re-enters as it first
+        // came - dropped by `settingsReadyFor` under another account, and read again under the new
+        // session for the same one - never raised as "all" for want of a level it never asked for.
+        void notificationPreferences
+          .loadChannelLevel(conversationKey)
+          .then((outcome) => decideAgain(outcome !== 'superseded', account));
         return;
       }
       if (level === undefined) {
         console.warn(
-          `[NOTIF] Inbound in ${conversationKey} - the salon's level is unreadable; raised as "all".`
+          `[NOTIF] Inbound in ${conversationKey} - the salon's level read failed; raised as "all".`
         );
       }
     }
@@ -1733,7 +1836,12 @@ export function useMessaging() {
   /** Whether the once-per-session line of an `unattributed` reaction has been said. */
   let unattributedSaid = false;
 
-  function notifyInboundReaction(reaction: InboundReaction, ctx: MessagingContext): void {
+  function notifyInboundReaction(
+    reaction: InboundReaction,
+    ctx: MessagingContext,
+    /** On a re-entry, the account the decision was parked under (`settingsReadyFor`). */
+    parkedAccount?: string
+  ): void {
     const key = reaction.conversationKey;
     const tag = `${reaction.messageId.slice(0, 8)} in ${key.slice(0, 16)}`;
     const verdict = inboundReactionVerdict(reaction, ctx.userId);
@@ -1764,6 +1872,14 @@ export function useMessaging() {
       return;
     }
     if (typeof document === 'undefined') return;
+    // The switch and the level below are read on this account's best set (`settingsReadyFor`).
+    if (
+      !settingsReadyFor(`Reaction to my message ${tag}`, parkedAccount, (account) =>
+        notifyInboundReaction(reaction, ctx, account)
+      )
+    ) {
+      return;
+    }
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
