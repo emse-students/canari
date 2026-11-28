@@ -1,20 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import {
-  ALERT_ADDRESS_PREF,
-  ALERT_ENABLED_PREF,
+  ALERT_CONTENT,
+  ALERT_RULE_NAME,
+  ALERT_SUBJECT,
   alertAddress,
+  alertRule,
   httpMailAlertServer,
+  isAlertRule,
   MailAlertServerError,
   newAlertToken,
   parseAlertAddress,
   readAlertRecord,
   syncMailAlert,
+  type FilterRule,
   type MailAlertServer,
   type MailAlertServerState,
 } from './mailAlert';
-import { parsePrefs } from './zimbraParse';
-import { getPrefsRequest, modifyPrefsRequest } from './zimbraRequests';
+import { MailError } from './mailErrors';
+import { parseFilterRules } from './zimbraParse';
+import { getFilterRulesRequest, modifyFilterRulesRequest } from './zimbraRequests';
 
 vi.mock('$lib/utils/Log', () => ({
   Log: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -23,6 +28,31 @@ vi.mock('$lib/utils/Log', () => ({
 const DOMAIN = 'alerte.example.test';
 const USER = 'u1';
 const DEVICE = 'dev-a';
+
+/** Two rules of the user's, in the shape Zimbra answers (one with fields Canari never writes). */
+const USER_RULES: FilterRule[] = [
+  {
+    name: 'newsletters',
+    active: true,
+    filterTests: [
+      {
+        condition: 'anyof',
+        headerTest: [
+          { index: 0, header: 'subject', stringComparison: 'contains', value: '[news]' },
+        ],
+      },
+    ],
+    filterActions: [
+      { actionFileInto: [{ index: 0, folderPath: 'News' }], actionStop: [{ index: 1 }] },
+    ],
+  },
+  {
+    name: 'forward-boss',
+    active: false,
+    filterTests: [{ condition: 'allof', addressTest: [{ index: 0, header: 'from', part: 'all' }] }],
+    filterActions: [{ actionRedirect: [{ index: 0, a: 'me@example.test' }] }],
+  },
+];
 
 /** A memory Storage. */
 function memoryStore(): Storage {
@@ -40,43 +70,43 @@ function memoryStore(): Storage {
 }
 
 /**
- * A mailbox holding the account's preferences as Zimbra would: an absent preference is not listed,
- * and an empty value written UNSETS it.
+ * A mailbox holding the account's filter rules as Zimbra would: `GetFilterRules` answers them in
+ * order, `ModifyFilterRules` REPLACES them with what it is handed. Rules round-trip through JSON, so
+ * an identity a test compares is a value, never a shared object.
  */
-function fakeMailbox(initial: Record<string, string> = {}) {
-  const prefs = new Map(Object.entries(initial));
-  const writes: Record<string, string>[] = [];
+function fakeMailbox(initial: FilterRule[] = []) {
+  let rules: FilterRule[] = structuredClone(initial);
+  const writes: FilterRule[][] = [];
   let failWrite = false;
   const call = vi.fn(async (body: Record<string, any>) => {
-    if (body.GetPrefsRequest) {
-      const names: string[] = body.GetPrefsRequest.pref.map((p: { name: string }) => p.name);
-      return {
-        GetPrefsResponse: {
-          pref: names.filter((n) => prefs.has(n)).map((n) => ({ name: n, _content: prefs.get(n) })),
-        },
-      };
+    if (body.GetFilterRulesRequest) {
+      return { GetFilterRulesResponse: { filterRules: [{ filterRule: structuredClone(rules) }] } };
     }
-    if (body.ModifyPrefsRequest) {
+    if (body.ModifyFilterRulesRequest) {
       if (failWrite) throw new Error('write refused');
-      const write: Record<string, string> = {};
-      for (const p of body.ModifyPrefsRequest.pref as { name: string; _content: string }[]) {
-        write[p.name] = p._content;
-        if (p._content === '') prefs.delete(p.name);
-        else prefs.set(p.name, p._content);
-      }
-      writes.push(write);
-      return { ModifyPrefsResponse: {} };
+      rules = structuredClone(body.ModifyFilterRulesRequest.filterRules[0].filterRule);
+      writes.push(rules);
+      return { ModifyFilterRulesResponse: {} };
     }
     throw new Error('unexpected request');
   });
   return {
     mailbox: { call } as any,
-    prefs,
+    rules: () => rules,
+    set(next: FilterRule[]) {
+      rules = structuredClone(next);
+    },
     writes,
     failNextWrites() {
       failWrite = true;
     },
   };
+}
+
+/** The token Canari's rule names now, or `null`. */
+function ruleToken(rules: FilterRule[]): string | null {
+  const ours = rules.find(isAlertRule) as any;
+  return ours ? parseAlertAddress(ours.filterActions[0].actionNotify[0].a)!.token : null;
 }
 
 /** A server holding one token per account and the devices that subscribed to it. */
@@ -125,24 +155,52 @@ describe('the opaque address', () => {
   });
 });
 
-describe('the Zimbra preference requests', () => {
-  it('reads named preferences, an absent one as never set', () => {
-    expect(getPrefsRequest([ALERT_ENABLED_PREF])).toEqual({
-      GetPrefsRequest: { _jsns: 'urn:zimbraAccount', pref: [{ name: ALERT_ENABLED_PREF }] },
-    });
-    expect(
-      parsePrefs({ GetPrefsResponse: { pref: [{ name: ALERT_ENABLED_PREF, _content: 'TRUE' }] } }, [
-        ALERT_ENABLED_PREF,
-        ALERT_ADDRESS_PREF,
-      ])
-    ).toEqual({ [ALERT_ENABLED_PREF]: 'TRUE', [ALERT_ADDRESS_PREF]: '' });
+describe("Canari's rule", () => {
+  it('is the measured shape: every mail, a fixed notice with no body, kept, never stopped', () => {
+    const address = alertAddress('a'.repeat(32), DOMAIN);
+    const rule = alertRule(address) as any;
+    expect(rule.name).toBe(ALERT_RULE_NAME);
+    expect(rule.active).toBe(true);
+    expect(rule.filterTests[0].condition).toBe('anyof');
+    expect(rule.filterActions[0].actionNotify).toEqual([
+      {
+        index: 0,
+        a: address,
+        su: ALERT_SUBJECT,
+        content: [{ _content: ALERT_CONTENT }],
+        maxBodySize: 0,
+      },
+    ]);
+    expect(rule.filterActions[0].actionKeep).toEqual([{ index: 1 }]);
+    expect(rule.filterActions[0].actionStop).toBeUndefined();
+    // `content` as a bare string is service.PARSE_ERROR on Partage (measured).
+    expect(Array.isArray(rule.filterActions[0].actionNotify[0].content)).toBe(true);
   });
 
-  it('writes values, the empty one unsetting', () => {
-    expect(modifyPrefsRequest({ [ALERT_ADDRESS_PREF]: '' })).toEqual({
-      ModifyPrefsRequest: {
-        _jsns: 'urn:zimbraAccount',
-        pref: [{ name: ALERT_ADDRESS_PREF, _content: '' }],
+  it('is recognised by our name AND an address of our shape, never by one alone', () => {
+    const address = alertAddress('a'.repeat(32), DOMAIN);
+    expect(isAlertRule(alertRule(address))).toBe(true);
+    expect(isAlertRule({ ...alertRule(address), name: 'my-alert' })).toBe(false);
+    expect(isAlertRule(alertRule('me@example.test'))).toBe(false);
+    for (const rule of USER_RULES) expect(isAlertRule(rule)).toBe(false);
+  });
+});
+
+describe('the Zimbra filter-rule requests', () => {
+  it('reads the rules in order, and refuses an answer without its rule list', () => {
+    expect(getFilterRulesRequest()).toEqual({ GetFilterRulesRequest: { _jsns: 'urn:zimbraMail' } });
+    expect(
+      parseFilterRules({ GetFilterRulesResponse: { filterRules: [{ filterRule: USER_RULES }] } })
+    ).toEqual(USER_RULES);
+    expect(parseFilterRules({ GetFilterRulesResponse: { filterRules: [{}] } })).toEqual([]);
+    expect(() => parseFilterRules({ GetFilterRulesResponse: {} })).toThrow(MailError);
+  });
+
+  it('writes the whole list in the measured shape', () => {
+    expect(modifyFilterRulesRequest(USER_RULES)).toEqual({
+      ModifyFilterRulesRequest: {
+        _jsns: 'urn:zimbraMail',
+        filterRules: [{ filterRule: USER_RULES }],
       },
     });
   });
@@ -157,38 +215,35 @@ describe('syncMailAlert', () => {
     store,
   });
 
-  it('saves the original, points the alert at a new token, and restores it EXACTLY', async () => {
-    const original = { [ALERT_ENABLED_PREF]: 'TRUE', [ALERT_ADDRESS_PREF]: 'me@example.test' };
-    const box = fakeMailbox(original);
+  it("puts Canari's rule FIRST, keeps the user's verbatim, and removes only ours", async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server, token } = fakeServer();
     const store = memoryStore();
 
     expect(await syncMailAlert(deps(box.mailbox, server, store), true)).toBe('configured');
-    expect(box.prefs.get(ALERT_ADDRESS_PREF)).toBe(alertAddress(token()!, DOMAIN));
-    expect(box.prefs.get(ALERT_ENABLED_PREF)).toBe('TRUE');
-    expect(readAlertRecord(USER, store)).toEqual({
-      v: 1,
-      subscribed: true,
-      saved: { enabled: 'TRUE', address: 'me@example.test' },
-    });
+    expect(isAlertRule(box.rules()[0])).toBe(true);
+    expect(ruleToken(box.rules())).toBe(token());
+    expect(box.rules().slice(1)).toEqual(USER_RULES);
+    expect(readAlertRecord(USER, store)).toEqual({ v: 1, subscribed: true });
 
-    expect(await syncMailAlert(deps(box.mailbox, server, store), false)).toBe('restored');
-    expect(Object.fromEntries(box.prefs)).toEqual(original);
+    expect(await syncMailAlert(deps(box.mailbox, server, store), false)).toBe('removed');
+    expect(box.rules()).toEqual(USER_RULES);
     expect(readAlertRecord(USER, store)).toBeNull();
     expect(token()).toBeNull();
   });
 
-  it('an alert never set is restored to never set', async () => {
-    const box = fakeMailbox({});
+  it('an account with no rule gets ours alone, and is left with none', async () => {
+    const box = fakeMailbox([]);
     const { server } = fakeServer();
     const store = memoryStore();
     await syncMailAlert(deps(box.mailbox, server, store), true);
+    expect(box.rules()).toHaveLength(1);
     await syncMailAlert(deps(box.mailbox, server, store), false);
-    expect(box.prefs.size).toBe(0);
+    expect(box.rules()).toEqual([]);
   });
 
   it('is idempotent: a second sync writes nothing', async () => {
-    const box = fakeMailbox({});
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer();
     const store = memoryStore();
     await syncMailAlert(deps(box.mailbox, server, store), true);
@@ -196,9 +251,8 @@ describe('syncMailAlert', () => {
     expect(box.writes).toHaveLength(1);
   });
 
-  it('a second device joins the live token, and the alert stays until the last one leaves', async () => {
-    const original = { [ALERT_ENABLED_PREF]: 'FALSE', [ALERT_ADDRESS_PREF]: 'me@example.test' };
-    const box = fakeMailbox(original);
+  it('a second device joins the token read back from the rule, which stays until the last leaves', async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server, devices } = fakeServer();
     const storeA = memoryStore();
     const storeB = memoryStore();
@@ -208,58 +262,66 @@ describe('syncMailAlert', () => {
     expect(devices.size).toBe(2);
     expect(box.writes).toHaveLength(1);
 
-    // A leaves first: the alert stays for B, and A's saved original goes (documented limit).
     expect(await syncMailAlert(deps(box.mailbox, server, storeA, 'dev-a'), false)).toBe('left');
-    expect(parseAlertAddress(box.prefs.get(ALERT_ADDRESS_PREF)!)).not.toBeNull();
-    expect(await syncMailAlert(deps(box.mailbox, server, storeB, 'dev-b'), false)).toBe('restored');
-    expect(box.prefs.size).toBe(0);
+    expect(box.rules().some(isAlertRule)).toBe(true);
+    expect(await syncMailAlert(deps(box.mailbox, server, storeB, 'dev-b'), false)).toBe('removed');
+    expect(box.rules()).toEqual(USER_RULES);
   });
 
-  it('the last device keeps the original when it was the one that saved it', async () => {
-    const original = { [ALERT_ENABLED_PREF]: 'FALSE', [ALERT_ADDRESS_PREF]: 'me@example.test' };
-    const box = fakeMailbox(original);
-    const { server } = fakeServer();
-    const storeA = memoryStore();
-    const storeB = memoryStore();
-    await syncMailAlert(deps(box.mailbox, server, storeA, 'dev-a'), true);
-    await syncMailAlert(deps(box.mailbox, server, storeB, 'dev-b'), true);
-    expect(await syncMailAlert(deps(box.mailbox, server, storeB, 'dev-b'), false)).toBe('left');
-    expect(await syncMailAlert(deps(box.mailbox, server, storeA, 'dev-a'), false)).toBe('restored');
-    expect(Object.fromEntries(box.prefs)).toEqual(original);
-  });
-
-  it('never touches an alert the user pointed elsewhere since', async () => {
-    const box = fakeMailbox({});
+  it('a rule the user changed or added meanwhile is written back as it now is', async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer();
     const store = memoryStore();
     await syncMailAlert(deps(box.mailbox, server, store), true);
-    box.prefs.set(ALERT_ADDRESS_PREF, 'elsewhere@example.test');
-    const writes = box.writes.length;
-    expect(await syncMailAlert(deps(box.mailbox, server, store), false)).toBe('unchanged');
-    expect(box.writes).toHaveLength(writes);
-    expect(box.prefs.get(ALERT_ADDRESS_PREF)).toBe('elsewhere@example.test');
-    expect(readAlertRecord(USER, store)).toBeNull();
+    const added: FilterRule = { ...USER_RULES[0], name: 'added-later' };
+    box.set([added, ...box.rules()]);
+    await syncMailAlert(deps(box.mailbox, server, store), false);
+    expect(box.rules()).toEqual([added, ...USER_RULES]);
   });
 
-  it('a stale Canari address is not saved as the original', async () => {
-    const stale = alertAddress('b'.repeat(32), DOMAIN);
-    const box = fakeMailbox({ [ALERT_ENABLED_PREF]: 'TRUE', [ALERT_ADDRESS_PREF]: stale });
+  it('a rule the user disabled is replaced by an active one when the push is wanted', async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer();
     const store = memoryStore();
+    await syncMailAlert(deps(box.mailbox, server, store), true);
+    box.set(box.rules().map((r) => (isAlertRule(r) ? { ...r, active: false } : r)));
     expect(await syncMailAlert(deps(box.mailbox, server, store), true)).toBe('configured');
-    expect(readAlertRecord(USER, store)?.saved).toEqual({ enabled: '', address: '' });
+    expect(box.rules().filter(isAlertRule)).toHaveLength(1);
+    expect(box.rules()[0].active).toBe(true);
+    expect(box.rules().slice(1)).toEqual(USER_RULES);
   });
 
-  it('repairs an orphan of Canari shape, only when the server says nobody listens', async () => {
-    const orphan = alertAddress('c'.repeat(32), DOMAIN);
-    const box = fakeMailbox({ [ALERT_ENABLED_PREF]: 'TRUE', [ALERT_ADDRESS_PREF]: orphan });
+  it('a stale rule of ours is replaced, never duplicated', async () => {
+    const stale = alertRule(alertAddress('b'.repeat(32), DOMAIN));
+    const box = fakeMailbox([...USER_RULES, stale]);
+    const { server, token } = fakeServer();
+    expect(await syncMailAlert(deps(box.mailbox, server, memoryStore()), true)).toBe('configured');
+    expect(box.rules().filter(isAlertRule)).toHaveLength(1);
+    expect(ruleToken(box.rules())).toBe(token());
+    expect(box.rules().slice(1)).toEqual(USER_RULES);
+  });
+
+  it("a rule of our name pointing elsewhere is the user's: never touched", async () => {
+    const theirs = alertRule('me@example.test');
+    const box = fakeMailbox([theirs]);
+    const { server } = fakeServer();
+    const store = memoryStore();
+    await syncMailAlert(deps(box.mailbox, server, store), true);
+    expect(box.rules().slice(1)).toEqual([theirs]);
+    await syncMailAlert(deps(box.mailbox, server, store), false);
+    expect(box.rules()).toEqual([theirs]);
+  });
+
+  it('repairs an orphan rule of ours, only when the server says nobody listens', async () => {
+    const orphan = alertRule(alertAddress('c'.repeat(32), DOMAIN));
+    const box = fakeMailbox([orphan, ...USER_RULES]);
     const { server } = fakeServer();
     expect(await syncMailAlert(deps(box.mailbox, server, memoryStore()), false)).toBe('repaired');
-    expect(box.prefs.size).toBe(0);
+    expect(box.rules()).toEqual(USER_RULES);
   });
 
-  it('leaves a live alert of another device alone', async () => {
-    const box = fakeMailbox({});
+  it('leaves a live rule of another device alone', async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer();
     await syncMailAlert(deps(box.mailbox, server, memoryStore(), 'dev-a'), true);
     const writes = box.writes.length;
@@ -269,20 +331,19 @@ describe('syncMailAlert', () => {
     expect(box.writes).toHaveLength(writes);
   });
 
-  it('with mail_push none: nothing is configured, and an existing record restores', async () => {
-    const original = { [ALERT_ADDRESS_PREF]: 'me@example.test' };
-    const box = fakeMailbox(original);
+  it('with mail_push none: nothing is configured, and a subscribed device removes its rule', async () => {
+    const box = fakeMailbox(USER_RULES);
     const fake = fakeServer();
     const store = memoryStore();
     await syncMailAlert(deps(box.mailbox, fake.server, store), true);
     fake.server.mode = 'none';
     expect(await syncMailAlert(deps(box.mailbox, fake.server, store), true)).toBe('off');
-    expect(await syncMailAlert(deps(box.mailbox, fake.server, store), false)).toBe('restored');
-    expect(Object.fromEntries(box.prefs)).toEqual(original);
+    expect(await syncMailAlert(deps(box.mailbox, fake.server, store), false)).toBe('removed');
+    expect(box.rules()).toEqual(USER_RULES);
   });
 
   it('an estate without an alert domain configures nothing', async () => {
-    const box = fakeMailbox({});
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer('cloudflare', null);
     expect(await syncMailAlert(deps(box.mailbox, server, memoryStore()), true)).toBe(
       'unconfigured'
@@ -291,15 +352,15 @@ describe('syncMailAlert', () => {
   });
 
   it('no device id: nothing is read or written', async () => {
-    const box = fakeMailbox({});
+    const box = fakeMailbox(USER_RULES);
     const { server } = fakeServer();
     const d = { ...deps(box.mailbox, server, memoryStore()), deviceId: null };
     expect(await syncMailAlert(d, true)).toBe('no_device');
     expect(box.mailbox.call).not.toHaveBeenCalled();
   });
 
-  it('a failed write takes the subscription back and keeps the original', async () => {
-    const box = fakeMailbox({ [ALERT_ADDRESS_PREF]: 'me@example.test' });
+  it('a failed write takes the subscription back and leaves the rules as they were', async () => {
+    const box = fakeMailbox(USER_RULES);
     const { server, devices } = fakeServer();
     const store = memoryStore();
     box.failNextWrites();
@@ -307,11 +368,8 @@ describe('syncMailAlert', () => {
       'write refused'
     );
     expect(devices.size).toBe(0);
-    expect(readAlertRecord(USER, store)).toEqual({
-      v: 1,
-      subscribed: false,
-      saved: { enabled: '', address: 'me@example.test' },
-    });
+    expect(box.rules()).toEqual(USER_RULES);
+    expect(readAlertRecord(USER, store)).toEqual({ v: 1, subscribed: false });
   });
 
   it('an unreadable record is ignored', () => {

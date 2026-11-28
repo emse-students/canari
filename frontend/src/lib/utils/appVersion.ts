@@ -100,7 +100,7 @@ export const MAIL_MODES: readonly MailMode[] = ['off', 'on'];
 /**
  * How a new school mail reaches a phone that is not watching (`platform_config.mail_push`, published
  * as `mail.push`, mail lot 5): `none` - no server takes part (Android's persistent connection, iOS's
- * background refresh); `cloudflare` - the account's own Zimbra alert goes to an opaque address on
+ * background refresh); `cloudflare` - a filter rule of the account's notifies an opaque address on
  * Cloudflare Email Routing and comes back as an empty push.
  */
 export type MailPush = 'none' | 'cloudflare';

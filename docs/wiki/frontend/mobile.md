@@ -1830,7 +1830,8 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
 
 - **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
   notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,
-  `server-content`, `call-blank`, `seen-trend`, `expired`), the first `cause` found (`no-push-context`,
+  `server-content`, `call-blank`, `seen-trend`, `expired`; mail lot 5's `mail`, `mail-generic`,
+  `mail-foreground`, `mail-nothing-new`), the first `cause` found (`no-push-context`,
   `no-device-key`, `no-proto`, `proto-fetch-failed`, `state-absent`, `refused-for-good`,
   `locality-unknown;direct=<token>`, `catchup-failed;direct=<token>`, `group-absent;direct=<token>`,
   `no-seed`, `no-ciphertext`, `not-opened`, where `<token>` is Rust's refusal reason of the direct

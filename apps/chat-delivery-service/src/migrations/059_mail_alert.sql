@@ -6,7 +6,7 @@
 -- push (`{type: 'mail'}`) to the account's subscribed devices. A token is useless alone: it names
 -- no person, carries nothing, and only ever triggers an empty push to its owner.
 --
--- `mail_alert_token`: ONE live token per account (an account's Zimbra alert holds one address), as
+-- `mail_alert_token`: ONE live token per account (an account holds one Canari filter rule), as
 -- the SHA-256 of the token - the token itself is never stored, so a database copy cannot be used to
 -- trigger pushes, and a hook post is matched by hashing what it carries. Rotated by a subscription
 -- that names a new token (the row is replaced). Deleted when the account's last subscribed device

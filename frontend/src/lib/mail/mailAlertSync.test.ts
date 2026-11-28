@@ -30,8 +30,8 @@ describe('createMailAlertSync', () => {
     let release!: () => void;
     const run = vi.fn(
       (_u: string, want: boolean) =>
-        new Promise<'configured' | 'restored'>((resolve) => {
-          release = () => resolve(want ? 'configured' : 'restored');
+        new Promise<'configured' | 'removed'>((resolve) => {
+          release = () => resolve(want ? 'configured' : 'removed');
         })
     );
     const sync = createMailAlertSync(run);

@@ -3,7 +3,7 @@ import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
 /**
  * The account's ONE live mail alert token, as its SHA-256 (migration 059, mail lot 5;
  * docs/wiki/mail-client-transport.md#as-built---lot-5). The token is the local part of the opaque
- * address the account's own Zimbra alert is pointed at; the token itself is never stored.
+ * address the account's own filter rule notifies; the token itself is never stored.
  */
 @Entity({ name: 'mail_alert_token' })
 export class MailAlertToken {

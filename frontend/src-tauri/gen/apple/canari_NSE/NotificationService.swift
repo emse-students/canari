@@ -168,7 +168,7 @@ class NotificationService: UNNotificationServiceExtension {
       trace?.outcome = "server-content"
       finish()
     case "mail":
-      // Mail lot 5: an EMPTY push - the account's Zimbra alert reached Canari. This process reads the
+      // Mail lot 5: an EMPTY push - the account's filter-rule notice reached Canari. This process reads the
       // new mail itself (`handleMailPush`).
       handleMailPush(content: content)
     case "call_ring":

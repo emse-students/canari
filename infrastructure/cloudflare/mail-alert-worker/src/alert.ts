@@ -1,8 +1,10 @@
 /**
  * THE MAIL ALERT RELAY'S DECISION, PURE (mail lot 5, docs/wiki/mail-client-transport.md#as-built---lot-5).
  *
- * Partage sends the account's own new-mail alert to `n-<32 hex>@<alert domain>`. The only thing the
- * relay ever takes from that message is the TOKEN in the envelope recipient: no header, no subject,
+ * The account's own filter rule (`canari-alerte`, an `actionNotify`) sends a fixed-text notice from
+ * the account itself to `n-<32 hex>@<alert domain>` for every mail received; the original sender,
+ * subject and body never travel (measured on Partage, 2026-11-28). The only thing the relay ever
+ * takes from that notice is the TOKEN in the envelope recipient: no header, no subject,
  * no body is read, stored or forwarded. It posts `{token}` to Canari's hook with the estate's shared
  * secret, and the message itself is dropped (never forwarded, never rejected: a bounce would land in
  * the user's mailbox).

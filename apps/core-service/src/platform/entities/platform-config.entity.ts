@@ -102,7 +102,7 @@ export class PlatformConfig {
 
   /**
    * How a new school mail reaches a phone that is not watching (migration 034, mail lot 5): `none`
-   * (no server takes part) or `cloudflare` (the account's Zimbra alert, through Cloudflare Email
+   * (no server takes part) or `cloudflare` (a notice of the account's own filter rule, through Cloudflare Email
    * Routing, becomes an EMPTY push). Published by `GET /api/version` as `mail.push`; READ by
    * chat-delivery-service at the alert hook.
    */

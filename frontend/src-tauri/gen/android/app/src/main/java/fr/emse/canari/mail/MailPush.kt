@@ -4,7 +4,7 @@ package fr.emse.canari.mail
  * THE TWO MAIL PUSHES, ROUTED (mail lot 5, docs/wiki/mail-client-transport.md#as-built---lot-5). Pure,
  * so `MailPushTest` asserts it on the JVM.
  *
- * - `mail`: the EMPTY push the account's Zimbra alert triggers (`mail_push = cloudflare`). Nothing
+ * - `mail`: the EMPTY push the account's filter-rule notice triggers (`mail_push = cloudflare`). Nothing
  *   travels but the type: the device reads the new mail itself.
  * - `mail-forget` (D6): the server ended this device's place in the account (revoked, signed out
  *   from elsewhere, account erased) - what it keeps of the school mailbox outside the page goes.
@@ -37,16 +37,3 @@ fun mailPushRouteOf(data: Map<String, String>): MailPushRoute? = when (data["typ
     else -> null
 }
 
-/**
- * What the native watcher answered a handoff. Lot 4b's watcher (`NativeMailWatcher`) is not on this
- * branch: until it is merged, every handoff answers [Unavailable], TYPED, and the caller says so -
- * a stated gap, never a silent one.
- */
-sealed interface NativeWatcherAnswer {
-    data object Done : NativeWatcherAnswer
-
-    data class Failed(val code: String) : NativeWatcherAnswer
-
-    /** The native watcher is not in this build (lot 4b owed). */
-    data object Unavailable : NativeWatcherAnswer
-}

@@ -24,6 +24,8 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        // Empty in release: the mail bridge listens to the app's own origin only (`mailBridgeOrigins`).
+        buildConfigField("String", "MAIL_DEV_HOST", "\"\"")
     }
 
     signingConfigs {
@@ -47,6 +49,9 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
+            // The dev server's host when a phone loads it over the network (`TAURI_DEV_HOST`, vite's
+            // `server.host`): the mail bridge listens to it in debug only (`mailBridgeOrigins`).
+            buildConfigField("String", "MAIL_DEV_HOST", "\"" + (System.getenv("TAURI_DEV_HOST") ?: "").replace("\"", "") + "\"")
             packaging {
                 jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")

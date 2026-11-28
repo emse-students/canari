@@ -216,9 +216,9 @@ export const ACCOUNT_KEY = {
    */
   mailNotifications: (userId: string) => `canari_mail_notifications:v1:${userId}`,
   /**
-   * `mail/mailAlert.ts` (lot 5): whether THIS device subscribed to the empty mail push, and the
-   * account's new-mail alert preferences as they were BEFORE Canari pointed them at its address
-   * (restored exactly when the last device leaves). Erased with the mail data (D8).
+   * `mail/mailAlert.ts` (lot 5): whether THIS device subscribed to the empty mail push. Nothing of
+   * the account's is saved: Canari's filter rule is added beside the user's, never over one. Erased
+   * with the mail data (D8).
    */
   mailAlert: (userId: string) => `canari_mail_alert:v1:${userId}`,
   /**

@@ -5092,7 +5092,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         if (mailRoute == fr.emse.canari.mail.MailPushRoute.Check) {
-            MailPushHandoff.handle(this, mailRoute)
+            // The native check reads the mailbox over the network: a worker thread under a wake lock,
+            // as every other push that leaves this method waiting on I/O.
+            runWithWakeLock("fcm_mail") { MailPushHandoff.handle(this, fr.emse.canari.mail.MailPushRoute.Check) }
             return
         }
 

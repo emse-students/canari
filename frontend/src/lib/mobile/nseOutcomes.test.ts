@@ -67,10 +67,13 @@ describe('the extension and the reader agree on the file contract', () => {
       ...swift.matchAll(/trace\??\.outcome = (?:[^\n]*?\? )?"([a-z-]+)"(?: : "([a-z-]+)")?/g),
     ].flatMap((m) => [m[1], m[2]].filter(Boolean));
     const ended = [...swift.matchAll(/\.end\(outcome: "([a-z-]+)"/g)].map((m) => m[1]);
+    const blanked = [...swift.matchAll(/finishMailBlank\(content: \w+, outcome: "([a-z-]+)"/g)].map(
+      (m) => m[1]
+    );
     const marked = [...swift.matchAll(/\.mark\("([a-z-]+)"\)/g)].map((m) => m[1]);
     expect(written.length + ended.length).toBeGreaterThan(3);
     expect(marked.length).toBeGreaterThan(3);
-    for (const o of [...written, ...ended]) expect(outcomes, o).toContain(o);
+    for (const o of [...written, ...ended, ...blanked]) expect(outcomes, o).toContain(o);
     for (const st of [...marked, 'start']) expect(stages, st).toContain(st);
   });
 

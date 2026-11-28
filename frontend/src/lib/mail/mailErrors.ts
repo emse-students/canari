@@ -90,9 +90,10 @@ export class MailError extends Error {
 /**
  * Zimbra fault codes, as Zimbra 9 throws them, to the kind each one means. A code not listed is
  * `server`. The list is the measured ones (docs/wiki/mail-client-transport.md) plus the documented
- * codes of the calls this client makes.
+ * codes of the calls this client makes. Held equal to `libs/contracts/mail-fault-kinds.json`, which the
+ * Android native watcher's copy is held to as well (lot 4b).
  */
-const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
+export const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
   'account.AUTH_FAILED': 'bad_credentials',
   'account.CHANGE_PASSWORD': 'password_change_required',
   'account.ACCOUNT_INACTIVE': 'account_unavailable',
@@ -121,7 +122,7 @@ const FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
 export type FaultOrigin = 'auth' | 'call';
 
 /** What a fault means only when the session's own sign-in answered it. */
-const AUTH_FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
+export const AUTH_FAULT_KINDS: Readonly<Record<string, MailErrorKind>> = {
   'account.NO_SUCH_ACCOUNT': 'account_closed',
 };
 

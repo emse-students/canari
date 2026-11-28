@@ -11,7 +11,7 @@ import { forgetNativeMailWatch } from './mailWatchCursor';
  * reach a key the mail client did not write. Lot 2 keeps the sealed password at rest; lot 4 adds the
  * new-mail watcher's cursor (an address and an item id, never a subject or a sender) and the
  * account's "Notifications de nouveaux mails" switch; lot 5 the device's subscription to the empty
- * mail push with the alert preferences it replaced, and Android's persistent-connection choice. The rest of the mail store lives in memory
+ * mail push, and Android's persistent-connection choice. The rest of the mail store lives in memory
  * (`MailStore.reset`). A later lot that persists mail (a cached list, a draft) adds its key HERE, and
  * `mailLocalData.test.ts` asserts the list is exactly what the module says.
  */

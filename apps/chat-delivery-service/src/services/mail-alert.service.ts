@@ -50,7 +50,7 @@ export interface MailAlertState {
   /** Whether THIS device is subscribed. */
   deviceSubscribed: boolean;
   /**
-   * Whether the token the client read from the account's Zimbra alert is the account's LIVE one (its
+   * Whether the token the client read from the account's filter rule is the account's LIVE one (its
    * hash is the stored one and at least one device is subscribed). False for no token given.
    */
   tokenLive: boolean;
@@ -160,7 +160,7 @@ export class MailAlertService {
     }
     const row = await this.tokenRepo.findOne({ where: { tokenHash: hashMailAlertToken(token) } });
     if (!row) {
-      // A token rotated away or never subscribed: the account's Zimbra alert still names it until a
+      // A token rotated away or never subscribed: the account's filter rule still names it until a
       // device repairs it (lot 5's reconcile). Said at info - it names nobody.
       this.logger.log('[MAIL_ALERT] alert for an unknown token - nothing sent');
       return { status: 'unknown' };

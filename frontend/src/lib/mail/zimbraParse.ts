@@ -408,15 +408,13 @@ export function parseWaitSetAnswer(body: Json): WaitSetAnswer {
 }
 
 /**
- * The values of `GetPrefsResponse` for `names` (lot 5): `''` for a preference the answer leaves
- * out, which is how Zimbra says it was never set - and the value that, written back, unsets it again.
+ * The rules of `GetFilterRulesResponse` (lot 5), in their order and EXACTLY as Zimbra sent them: a
+ * caller writes the ones it does not own back verbatim. `filterRules` is a required element of the
+ * answer (present, empty, for an account with no rule), so its absence is a malformed answer - never
+ * read as "no rules", which written back would erase the user's own.
  */
-export function parsePrefs(body: Json, names: readonly string[]): Record<string, string> {
-  const answer = responseOf(body, 'GetPrefsResponse');
-  const found = new Map<string, string>();
-  for (const pref of list(answer.pref)) {
-    const name = str(pref.name);
-    if (name !== null) found.set(name, str(pref._content) ?? '');
-  }
-  return Object.fromEntries(names.map((name) => [name, found.get(name) ?? '']));
+export function parseFilterRules(body: Json): Json[] {
+  const answer = responseOf(body, 'GetFilterRulesResponse');
+  if (!('filterRules' in answer)) throw new MailError('server', 'malformed-GetFilterRulesResponse');
+  return list(answer.filterRules).flatMap((group) => list(group.filterRule));
 }

@@ -51,7 +51,7 @@ function refusalAnswer(e: unknown): never {
  *
  * - `POST /api/mls/mail-alert/subscribe|unsubscribe|state`: a device, with its own Canari session
  *   (`HeaderAuthGuard`, 10 per minute per user), subscribes to the empty mail push under the token
- *   it wrote into its OWN Zimbra alert, leaves it, or reads whether a token is live.
+ *   its account's OWN filter rule notifies (`canari-alerte`), leaves it, or reads whether a token is live.
  * - `POST /api/hooks/mail-alert`: Cloudflare's Email Worker, with the estate's shared secret
  *   (`x-canari-mail-alert-secret`, compared in constant time), posts `{token}` - the local part of
  *   the address the alert went to, and nothing else. Throttled per token.
@@ -90,7 +90,7 @@ export class MailAlertController {
 
   /**
    * What this device needs to decide: the switch, the domain, whether it is subscribed, and whether
-   * `token` (read from the account's own Zimbra alert, in the BODY so it never reaches a log line)
+   * `token` (read from the account's own filter rule, in the BODY so it never reaches a log line)
    * is the account's live one.
    */
   @UseGuards(HeaderAuthGuard, UserThrottlerGuard)

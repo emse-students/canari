@@ -6,6 +6,7 @@ vi.mock('$lib/mobile/androidMailWatch', () => ({
   NATIVE_MAIL_EVENT: 'canari:mail-native',
   startAndroidMailService: vi.fn(() => true),
   stopAndroidMailService: vi.fn(),
+  armAndroidMailWatch: vi.fn(() => true),
 }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   serverMailMode: () => 'on',
@@ -34,12 +35,15 @@ vi.mock('$lib/utils/apiUrl', () => ({
 
 import type { MailClient } from './mailClient.svelte';
 import type { MailSessionState } from './mailSession';
+import { armAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import {
+  armNativeCopyIfCurrent,
   backgroundRefresh,
   backgroundRefreshWanted,
   eraseCursorOnceStopped,
   mailAlertWanted,
   mailTabOnScreen,
+  nativeWatchWanted,
   pauseUntilRetry,
   watcherShouldRun,
 } from './mailWatch.svelte';
@@ -70,6 +74,7 @@ const facts = (over: Partial<Parameters<typeof watcherShouldRun>[0]> = {}) => ({
   phone: false,
   needsPersistent: false,
   persistent: false,
+  remembered: true,
   ...over,
 });
 
@@ -138,6 +143,26 @@ describe('backgroundRefreshWanted (the iOS flag)', () => {
     expect(backgroundRefreshWanted(facts({ mailKnown: false, mailOn: false }), 'ready')).toBeNull();
     expect(backgroundRefreshWanted(facts({ mailKnown: false }), null)).toBeNull();
     expect(backgroundRefreshWanted(facts({ client: null }), 'ready')).toBeNull();
+  });
+});
+
+describe('nativeWatchWanted (the Android sealed copy, lot 4b)', () => {
+  it('armed only while wanted AND remembered, from read facts', () => {
+    expect(nativeWatchWanted(facts(), null)).toBe(true);
+    expect(nativeWatchWanted(facts({ remembered: false }), null)).toBe(false);
+  });
+
+  it('erased by any fact read false: the switch, the server, a mail sign-out, a closed account', () => {
+    expect(nativeWatchWanted(facts({ wanted: false }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ mailOn: false }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ state: 'signed_out' }), 'ready')).toBe(false);
+    expect(nativeWatchWanted(facts({ state: 'closed' }), 'ready')).toBe(false);
+  });
+
+  it('left alone while a fact is unknown: a launch has not read them yet', () => {
+    expect(nativeWatchWanted(facts({ mailKnown: false }), null)).toBeNull();
+    expect(nativeWatchWanted(facts({ client: null }), 'ready')).toBeNull();
+    expect(nativeWatchWanted(facts({ state: 'signed_out', remembered: false }), null)).toBeNull();
   });
 });
 
@@ -253,5 +278,47 @@ describe('the switch "Notifications de nouveaux mails"', () => {
     store.removeItem(ACCOUNT_KEY.mailPersistentConnection('u1'));
     forgetMailNotificationsSwitch('u1');
     expect(mailPersistentWanted('u1', store as unknown as Storage)).toBe(false);
+  });
+});
+
+describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
+  const remembered = { account: 'ada@etu.emse.fr', password: 'pw' };
+  const sessionWith = (onRead: (session: { generation: number }) => void) => {
+    const session = {
+      generation: 1,
+      rememberedForNativeWatch: async () => {
+        onRead(session);
+        return remembered;
+      },
+    };
+    return { userId: 'u1', session } as unknown as MailClient;
+  };
+
+  beforeEach(() => vi.mocked(armAndroidMailWatch).mockClear());
+
+  it('arms when nothing moved while the password was read', async () => {
+    expect(
+      await armNativeCopyIfCurrent(
+        sessionWith(() => {}),
+        () => true
+      )
+    ).toBe(true);
+    expect(armAndroidMailWatch).toHaveBeenCalledWith('u1', 'ada@etu.emse.fr', 'pw');
+  });
+
+  it('sends nothing once the page decided otherwise (an erase came after)', async () => {
+    expect(
+      await armNativeCopyIfCurrent(
+        sessionWith(() => {}),
+        () => false
+      )
+    ).toBe(false);
+    expect(armAndroidMailWatch).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing once the session moved (a sign-out or a new sign-in during the read)', async () => {
+    const client = sessionWith((session) => (session.generation = 2));
+    expect(await armNativeCopyIfCurrent(client, () => true)).toBe(false);
+    expect(armAndroidMailWatch).not.toHaveBeenCalled();
   });
 });

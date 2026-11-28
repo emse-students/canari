@@ -14,6 +14,16 @@
     <string name="notif_channel_mail_desc">A new mail in the school mailbox</string>
     <string name="notif_channel_mail_watch_name">Receiving mail</string>
     <string name="notif_channel_mail_watch_desc">The notification shown while Canari waits for new mail</string>
+    <string name="mail_watch_ongoing_title">Receiving mail</string>
+    <string name="mail_watch_ongoing_text">Canari is waiting for your new school mail.</string>
+    <string name="mail_sender_unknown">Unknown sender</string>
+    <string name="mail_no_subject">(no subject)</string>
+    <string name="mail_notif_public_title">New mail</string>
+    <string name="mail_notif_summary_body">In your inbox</string>
+    <plurals name="mail_notif_summary_title">
+        <item quantity="one">%d new mail</item>
+        <item quantity="other">%d new mails</item>
+    </plurals>
     <!-- Mail lot 5: the empty mail push while the native watcher is absent (MailPushHandoff). -->
     <string name="notif_mail_generic">New mail</string>
     <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>

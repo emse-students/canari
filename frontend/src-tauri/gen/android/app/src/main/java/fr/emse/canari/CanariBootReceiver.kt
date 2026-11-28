@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * dead server-side (pushes sent to the old token) until the user manually opens the app, and
  * outbox messages queued before the reboot wait just as long.
  *
- * Two best-effort steps, both silent no-ops when the device is not enrolled yet:
+ * Two best-effort push steps, both silent no-ops when the device is not enrolled yet, and the mail watch:
  *  1. Force-read the current FCM token ([FirebaseMessaging.getToken] - `onNewToken` only fires
  *     on CHANGE, which the process missed while off), persist it (`fcm_token.txt` + prefs) and
  *     re-register it on the backend via PushSecret
@@ -26,6 +26,10 @@ import java.util.concurrent.TimeUnit
  *  2. Warm the MLS state and drain the outbox mirror
  *     ([CanariFirebaseMessagingService.drainOutboxBackground]) so messages queued before the
  *     reboot go out now instead of at the next push/open.
+ *
+ * 3. The new-mail watch (mail lot 4b): [MailWatchService.resumeIfArmed] restarts the native watcher
+ *    when the user left the switch on with the password remembered. LOCKED_BOOT_COMPLETED is NOT
+ *    listened to, deliberately: the sealed copy lives in credential-encrypted storage.
  *
  * iOS counterpart: no OS boot hook exists; the equivalent launch-time force-fetch lives in
  * `canari_push.mm` `CanariPushSetup` (tokenWithCompletion -> CanariPersistFcmToken).
@@ -46,6 +50,9 @@ class CanariBootReceiver : BroadcastReceiver() {
         }
         Log.i(TAG, "onReceive: $action -> push token re-registration + outbox drain")
         val appContext = context.applicationContext
+        // The new-mail watch (lot 4b): resumed natively when a sealed copy is there. BOOT_COMPLETED
+        // comes after the first unlock, when the credential-encrypted copy can be read.
+        MailWatchService.resumeIfArmed(appContext, action)
         val pendingResult = goAsync()
         val wakeLock = (appContext.getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:boot_reregister")

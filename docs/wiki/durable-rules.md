@@ -2483,6 +2483,13 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 Three estates live on a machine this project does NOT own, beside other associations and under
 DSI-managed tooling. These bind any command run there, not just the migration that found them.
 
+- **NEVER ASK THE SCHOOL IT (DSI) FOR ANYTHING** (owner rule, relayed 2026-11-28). No agent writes to,
+  files a ticket with or plans work that waits on the DSI. A design that would need something from
+  them - a name, a port, a server-side mail rule, an account, an install - is redesigned to need
+  nothing (the mail watch of lots 4 and 4b runs entirely on the user's device for that reason). Where
+  a rule below still requires the DSI's written agreement, the request is the OWNER's to make, never
+  an agent's: the agent stops and says what would be needed.
+
 - **NO NEW CONTAINER GOES ON THE SHARED HOST UNTIL THE DSI HAS EXTENDED ITS DISK AND SAID GO** (2026-10-24). The DSI warned that the root disk stood at 92 %; the cleanup brought it to 73 %, and the headroom is theirs to grant ([host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24)).
 - **THE MESH NGINX CONTAINER OF #3120 IS AGREED** (owner, 2026-11-15): the IT department agreed to it, one in production and one in dev. It is the one container this rule has let through; any other still needs the written agreement, asked before.
 - **NO CONTAINER IS RECREATED UNATTENDED TO APPLY A LOG SETTING** (owner, 2026-10-24). A retention bound reaches a container at its next ordinary recreation (a deploy, a human's operation), never through a job that recreates it for that alone ([logging](infrastructure/logging.md#no-unattended-container-recreation-for-log-retention-owner-2026-10-24)).

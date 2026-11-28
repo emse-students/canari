@@ -3,6 +3,7 @@ import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
 import { eraseMailPushSecret } from './mailPushSecret';
+import { eraseNativeMailPassword } from './mailWatchCursor';
 
 /**
  * "RETENIR LE MOT DE PASSE" (docs/wiki/mail-client.md D6): the school mailbox's password, SEALED
@@ -173,6 +174,9 @@ export async function readRememberedMailPassword(
  */
 export function forgetMailPassword(userId: string, store: Storage = localStorage): void {
   void eraseMailPushSecret('the remembered password is forgotten');
+  // The Android native watcher's copy goes with it (lot 4b) - even when this entry is already gone:
+  // the copy's erasure must not depend on the page's own record still being there.
+  void eraseNativeMailPassword(userId);
   if (store.getItem(ACCOUNT_KEY.mailSealedPassword(userId)) === null) return;
   store.removeItem(ACCOUNT_KEY.mailSealedPassword(userId));
   Log.d('MAIL', 'the remembered mailbox password is forgotten');

@@ -2016,6 +2016,7 @@ pub fn run() {
             commands::mail_watch::mail_watch_forget,
             commands::mail_push_secret::mail_push_secret_store,
             commands::mail_push_secret::mail_push_secret_erase,
+            commands::mail_watch::mail_watch_vault_erase,
             notify_native_message,
             record_read_elsewhere,
             cancel_conversation_notifications,

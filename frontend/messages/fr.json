@@ -1620,7 +1620,7 @@
   "admin_platform_mail_push_label": "Notifications rapides des mails",
   "admin_platform_mail_push_none": "Aucun serveur (connexion permanente sur Android, vérification périodique sur iPhone)",
   "admin_platform_mail_push_cloudflare": "Alerte Partage relayée par Cloudflare",
-  "admin_platform_mail_push_hint": "Cloudflare : chaque téléphone qui active les notifications pointe l'alerte de nouveau mail de son compte Partage vers une adresse jetable de Canari ; Cloudflare reçoit cette alerte (avec l'expéditeur et l'objet du mail), n'en garde rien et transmet seulement le jeton, et Canari envoie une notification vide que le téléphone complète lui-même. Aucun serveur : rien ne quitte Partage, les notifications sont plus lentes sur iPhone.",
+  "admin_platform_mail_push_hint": "Cloudflare : chaque téléphone qui active les notifications ajoute au compte Partage une règle de filtre « canari-alerte » qui envoie, à chaque mail reçu, un avis au texte fixe vers une adresse jetable de Canari ; Cloudflare ne voit que l'adresse du compte, ce texte fixe et le jeton (jamais l'expéditeur, l'objet ni le contenu du mail), n'en garde rien et transmet seulement le jeton, et Canari envoie une notification vide que le téléphone complète lui-même. Aucun serveur : rien ne quitte Partage, les notifications sont plus lentes sur iPhone.",
   "admin_platform_group_calls_mode_label": "Appels de groupe",
   "admin_platform_group_calls_mode_off": "Désactivés",
   "admin_platform_group_calls_mode_mesh": "Pair à pair (4 audio, 3 vidéo)",

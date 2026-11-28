@@ -1,3 +1,4 @@
+import { forgetAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
@@ -99,17 +100,39 @@ export function platformCursorStore(): MailCursorStore {
 }
 
 /**
- * Erases what the native side keeps for `userId`'s mail watch (the cursor file) - D8, the switch
- * turned off and the account's local wipe all go through here. A no-op on the web. Never throws.
+ * Erases what the native side keeps for `userId`'s mail watch (the cursor file and, on Android, the
+ * native watcher's sealed password copy) - D8, the switch turned off and the account's local wipe all
+ * go through here. A no-op on the web. Never throws.
  */
 export async function forgetNativeMailWatch(userId: string): Promise<void> {
   if (!isTauriRuntime()) return;
+  // The native run stops with the copy (Android): a file erased under it is not enough.
+  forgetAndroidMailWatch(userId);
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('mail_watch_forget', { userId });
     Log.i('MAIL-WATCH', 'the native mail watch state was erased');
   } catch (err) {
     Log.w('MAIL-WATCH', `ERROR: the native mail watch state was not erased (${String(err)})`);
+  }
+}
+
+/**
+ * Erases the Android native watcher's sealed copy of `userId`'s mailbox password (lot 4b) - Rust's
+ * `erase_vault`, the ONE erasure. `forgetMailPassword` calls it, so every path that forgets the
+ * remembered password (a mail sign-out, unticked, refused, the Canari sign-out) erases the copy too;
+ * {@link forgetNativeMailWatch} erases it with the cursor. A no-op on the web. Never throws.
+ */
+export async function eraseNativeMailPassword(userId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  // The native run stops with the copy (Android): a file erased under it is not enough.
+  forgetAndroidMailWatch(userId);
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('mail_watch_vault_erase', { userId });
+    Log.d('MAIL-WATCH', 'the native password copy is erased (if there was one)');
+  } catch (err) {
+    Log.w('MAIL-WATCH', `ERROR: the native password copy was not erased (${String(err)})`);
   }
 }
 

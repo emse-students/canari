@@ -1588,7 +1588,7 @@
   "admin_platform_mail_push_label": "Fast mail notifications",
   "admin_platform_mail_push_none": "No server (persistent connection on Android, periodic check on iPhone)",
   "admin_platform_mail_push_cloudflare": "Partage alert relayed by Cloudflare",
-  "admin_platform_mail_push_hint": "Cloudflare: every phone that turns notifications on points its Partage account's new-mail alert at a throwaway Canari address; Cloudflare receives that alert (with the mail's sender and subject), keeps nothing and forwards only the token, and Canari sends an empty notification the phone completes itself. No server: nothing leaves Partage, notifications are slower on iPhone.",
+  "admin_platform_mail_push_hint": "Cloudflare: every phone that turns notifications on adds a \"canari-alerte\" filter rule to its Partage account, which sends a fixed-text notice to a throwaway Canari address for every mail received; Cloudflare sees only the account's address, that fixed text and the token (never the mail's sender, subject or content), keeps nothing and forwards only the token, and Canari sends an empty notification the phone completes itself. No server: nothing leaves Partage, notifications are slower on iPhone.",
   "admin_platform_group_calls_mode_label": "Group calls",
   "admin_platform_group_calls_mode_off": "Off",
   "admin_platform_group_calls_mode_mesh": "Peer to peer (4 audio, 3 video)",

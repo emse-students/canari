@@ -463,6 +463,28 @@ client and a `MailContext` - the Canari account id, a getter for the session's d
 Unticked, nothing is written and any earlier entry is removed: the token lives in memory only and
 the password is asked again when it lapses.
 
+**A SECOND SEALED COPY, ON ANDROID ONLY (lot 4b, owner decision 2026-11-28).** The native new-mail
+watcher restarts at boot and after the process is killed, with no page to open the copy above. So
+while the user ticked "remember" AND turned "Notifications de nouveaux mails" on, the page hands the
+password to `MailWatchVault.kt`, which seals it under an **Android Keystore key**: AES-256-GCM,
+generated inside the keystore (the TEE on a phone that has one), never exportable, with **no
+user-authentication requirement** (the watch runs with the screen locked). The ciphertext is
+`mail_watch/vault_<id>.bin` in the app's data dir, **credential-encrypted storage**: it cannot be read
+before the user's first unlock after a boot, so the watch starts after that unlock. The associated
+data names the Canari account. **Every forget path erases it through ONE function**, Rust's
+`erase_vault` (`commands/mail_watch.rs`): `forgetMailPassword` calls it (a mail sign-out, unticked, a
+refused password, the Canari sign-out), and `mail_watch_forget` calls it with the cursor (the switch
+off, D8, the account deletion); a fact read false (the switch, the server's `mail_mode`, the mailbox
+ended, "remember" unticked) erases it from the controller too. One account's copy at a time.
+**Erasing the copy also STOPS a native run that is going**: each of those paths sends the bridge's
+`forget` unconditionally (the page cannot know whether a native run goes), and the native side erases
+the copy AND stops and joins every native run as ONE op (`NativeMailWatcher.forget`, on the vault's
+single executor, so an `arm` sent earlier is ordered before it and an `arm` racing it seals nothing).
+**A remote revocation (a device revoked, the account deleted, "sign out everywhere") does not reach
+the copy yet**: the server push that will (`{type:'mail-forget'}`, mail lot 5, calling the same
+`NativeMailWatcher.forget` from the FCM service) is not landed, so until it is, **the copy outlives a
+remote revocation until the app is next opened** on that phone (its first fact read false erases it).
+
 **Offered everywhere, with no warning (owner, 2026-11-27, the review's I2).** The exposure: on the
 web and the desktop the device key is derived from the PIN, so a stolen `localStorage` lets the
 sealed password be guessed OFFLINE against the PIN; on a phone the key is the hardware keystore's.
@@ -988,8 +1010,8 @@ so turning it on again takes a new baseline: nothing that came while it was off 
     (`MainActivity.onDestroy`), task removed.
   - **It never outlives the page.** The watcher, its TLS and the session token live in the page
     (D3, D6), so a service with no page would keep the process alive for nothing.
-  - For the same reason this lot does **NOT restart it at boot**: at boot there is no page, so
-    there is no watcher. The owner decided on 2026-11-28 that it must (lot 4b, a native watcher).
+  - Lot 4 alone did not restart it at boot (no page, no watcher). Lot 4b does, with a native
+    watcher: see below.
   - Android refuses a foreground start from the background (`off-screen`). The next return on
     screen asks again; that event triggers the retry, never a timer.
   - New-mail notices are posted natively (`MailWatchBridge.post`) on the channel `canari_mail`,
@@ -1029,6 +1051,8 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
    (mAh), wakelocks, mobile/Wi-Fi radio active time and network bytes.
 4. Reset again, turn the switch **on**, and repeat for 1 h.
 5. Write both readings here. The hint's "battery" line is believed only once they exist.
+6. Lot 4b: repeat step 4 with the app closed from Recents (the NATIVE watcher, 300 s waits) and
+   compare it with the page's 60 s waits.
 
 **The numbers are owed.** No reading has been taken yet.
 
@@ -1071,9 +1095,7 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
 
 - **The full path on the Mi 9T and the iPhone** (device-verification `MAIL-N`), including the iOS
   cold launch above.
-- **Boot restart on Android**: the owner decided on 2026-11-28 that the watcher restarts by itself
-  at boot and after the process is killed. It needs a native watcher holding a Keystore-sealed copy
-  of the password: lot 4b, its own pull request.
+- **Boot restart on Android**: built in lot 4b (below).
 - **Play Console - OWED before the first store build carrying `MailWatchService`**: the `specialUse`
   foreground service (`FOREGROUND_SERVICE_SPECIAL_USE`) must be declared in App content with its
   justification (a persistent connection to the school's mail server while the user's switch is on).
@@ -1083,6 +1105,143 @@ The procedure, on the bench Mi 9T, with an idle mailbox:
   no link, so it opens the app on the Mail tab's last screen. The desktop's tap payload is unmeasured
   (the same caveat as chat's, `useNotifications.svelte.ts`).
 - **The battery numbers** above.
+
+## As built - lot 4b: the native Android watcher
+
+**The decision (owner, 2026-11-28): "un maximum pratique pour l'utilisateur".** On Android the
+new-mail watch restarts by itself at boot and after the app's process is killed, while the switch is
+on. With no page there, a NATIVE watcher runs it.
+
+**What it runs.** `NativeMailWatcher.kt` is the page's watcher (`mailWatcher.ts`) without the page:
+
+- it signs in from a **sealed copy of the password** (`MailWatchVault.kt`, D6 above: an Android
+  Keystore key, credential-encrypted storage, armed only with "remember" ticked AND the switch on);
+- it talks to `partage.emse.fr` **directly, over the platform's TLS** (`HttpsURLConnection`: the
+  system trust store and hostname verification) - no relay;
+- it follows the **same protocol**, every rule pure in `mail/NativeMailWatch.kt` and held to the
+  page's by `NativeMailWatchTest.kt`: the wait set created first, the delta paged by id against the
+  cursor, the cursor written before notifying, the wait from the wait set's `seq`, the same fault
+  classes, the same retry ladder, a summary beyond five, the same notice words (Android resources
+  mirroring the Paraglide `mail_*` messages);
+- it reads and writes **the same cursor file** as the page (`mail_watch/cursor_<id>.json`, atomic),
+  byte for byte the page's JSON - so "never twice" holds across the page and the native run;
+- WHAT it decides is pure and JVM-tested (`mail/NativeMailRun.kt`, `NativeMailRunTest.kt`: the real
+  loop against a fake server); `NativeMailWatcher.kt` is only its Android ports;
+- a forget is not discovered by the run, it STOPS the run: every forget path sends `forget` (D6),
+  which erases the copy and stops and joins every native run in one op; the run ALSO re-checks the
+  copy after EVERY wait answer, before each cursor write and before each notice, so a copy erased by
+  any other route ends it at the next of these (not at the next mail);
+- **the faults are the page's table** (`NATIVE_PAGE_FAULT_KINDS`, held with the page's
+  `FAULT_KINDS` to `libs/contracts/mail-fault-kinds.json` by `NativeMailWatchTest` and
+  `mailErrors.test.ts`), with the page's sign-in rule: answered to the run's OWN sign-in,
+  `account.AUTH_FAILED` / `CHANGE_PASSWORD` erase the copy and end the run (a wrong password retried at
+  every boot is a lockout risk), `account.NO_SUCH_ACCOUNT` is D8 (the copy AND the cursor erased, the
+  run ends), `account.ACCOUNT_INACTIVE` ends the run and erases nothing;
+- a lapsed session (`service.AUTH_EXPIRED` / `AUTH_REQUIRED`) is signed in again at once ONLY after a
+  wait completed normally since the last sign-in; refused again before any wait, it is a failure on
+  the ladder - signing in in a loop is how an account gets locked;
+- the copy is opened at EACH sign-in, never held in memory for the run; a copy that can never open (a
+  failed authentication tag, a missing key, a truncated or unreadable record) is removed, any other
+  error leaves it for the next sign-in;
+- a delta page that hands back the id it was read after ends the read (logged at error level), never
+  a loop.
+
+**One watcher at a time, and the handover.** `decideMailWatch` (`mail/MailWatch.kt`) is the whole
+table, over three modes: `OFF`, `PAGE`, `NATIVE`.
+
+| Event | OFF | PAGE | NATIVE |
+| --- | --- | --- | --- |
+| the page's run starts (`start`) | foreground, PAGE | redraw | hand to the page |
+| the watch is not wanted (`stop`) | ignored | leave | leave (native stopped) |
+| the page goes (activity destroyed, task removed, a new document's `page`) | ignored | NATIVE if armed, else leave | ignored |
+| boot, an update, a restart of the killed process (`Resume`) | NATIVE if armed | ignored | ignored |
+| the native run ends by itself (that run's id: an earlier run's end is ignored) | ignored | ignored | leave |
+| the copy is forgotten (`forget`, done: copy erased, runs joined) | ignored | ignored | leave |
+
+**The page wins, and it claims first.** Before the page's own run starts, it sends `claim`; the
+bridge stops the native run and JOINS its thread, and only then answers `handed`
+(`claimAndroidMailWatch`). So the two never write the cursor or notify at once: the overlap is
+removed, not reconciled afterwards. A new document sends `page` (the page before it is gone), so an
+armed watch goes native until this page claims it; an old activity's WebView going after a new one
+attached is NOT the page's going (`MailWatchBridge.detach` answers whether it was the page). When the
+page's watcher stops it sends `release`, so a push check may read again.
+
+**Each run is its own handle.** A native run (the persistent watch, or one push check) carries its own
+stop flag, connection and pause, and an id: a stop acts on the handle captured at the call, so it
+never lands on a run started after it, and the service ignores the end of an earlier run
+(`NativeEnded` carries the id). The connection is published under the run's lock after re-reading the
+stop flag there, so a stop either sees it and cuts it or is seen before connecting. Redirects are
+never followed (`instanceFollowRedirects = false`).
+
+**The bridge's origins are an allowlist** (`mailBridgeOrigins`): the app's `http://tauri.localhost`,
+and in a debug build only the dev server's (`127.0.0.1:1420`, `localhost:1420`, and
+`TAURI_DEV_HOST:1420` from the build's environment) - never a wildcard.
+
+**The restarts.**
+
+- **Boot**: `CanariBootReceiver` on `BOOT_COMPLETED` (and `MY_PACKAGE_REPLACED`) calls
+  `MailWatchService.resumeIfArmed`. `BOOT_COMPLETED` arrives after the first unlock. The receiver
+  does **not** listen to `LOCKED_BOOT_COMPLETED`, deliberately: the sealed copy is in
+  credential-encrypted storage and cannot be read before that unlock. A `specialUse` foreground
+  service may start from `BOOT_COMPLETED` (the Android 15 boot restriction names other types).
+- **The process killed**: while NATIVE, the service returns `START_STICKY`, and the system's restart
+  (a null intent) is a `Resume`. A PAGE run is not sticky: a restarted process has no page. A
+  `Resume` that finds nothing to do still enters the foreground first and then leaves: it came
+  through `startForegroundService`, which the system punishes when no foreground follows.
+- **The page gone**: `MainActivity.onDestroy` and a removed task hand an armed watch to native.
+
+**What the native side never decides.** Whether the watch is wanted is the page's facts: the page
+arms the copy (`arm`) only while `nativeWatchWanted` (the iOS flag's rule plus "remember") is true,
+and erases it the moment a fact is READ false. A copy is the native side's only licence to run.
+
+**A five-minute wait, not one.** The page asks for 60 s only to stay under the web relay's 100 s idle
+close. The native watcher talks to the server directly, so it asks for **300 s**
+(`NATIVE_WAIT_TIMEOUT_SECONDS`): the longest hold measured on Partage (a wait with no timeout given
+answered after 303 s, 2026-11-27). An idle mailbox then wakes the radio once per five minutes instead
+of once per minute; the battery procedure below compares the two. A longer request is not measured:
+a server that capped it lower would answer sooner (one more empty round trip), never miss a change.
+
+**Its timers bound a rate or a transport.** The ladder (2 s doubling to 5 min) ends early when a
+network comes back (`ConnectivityManager` default-network callback, hence `ACCESS_NETWORK_STATE`).
+The read timeout (360 s, over the 300 s wait) only cuts a connection the server stopped answering: a
+transport failure, retried. Neither question reads a clock.
+
+**The push path's entry point: `NativeMailWatcher.checkOnce(context)`.** Mail lot 5 wakes the device
+with an empty FCM data push when the mailbox changed; its handler calls `checkOnce` for ONE delta
+check and notify: the same sealed copy, the same cursor file, the same notices, no foreground
+service. It is blocking (call it from a worker thread) and answers a typed `CheckOutcome`: `DONE`,
+`NOTHING_SEALED`, `WATCHING` (the page or the persistent run watches and notifies by itself), `BUSY`
+(a check already runs), `REFUSED` (the password was refused: the copy is erased), `ACCOUNT_CLOSED`
+(D8: the copy and the cursor are erased), `UNAVAILABLE` (nothing erased), `FAILED`. One
+writer at a time still holds: a check does nothing while a watcher runs, a page claim waits for a
+check in flight to end, and a persistent run starting waits for it too. The persistent watch stays
+the user's separate choice ("sans aucun serveur, consomme plus de batterie").
+
+**The remote kill's entry point: `NativeMailWatcher.forget(context, userId = null)`.** The same op
+as the bridge's `forget` - the copy erased (every copy when no account is named: a revocation does
+not know which), every native run stopped and joined, the service told (`Forgotten`: a NATIVE watch
+leaves). Mail lot 5's FCM handler calls it on a `{type:'mail-forget'}` data push, sent by the server
+on a device revocation, an account deletion and "sign out everywhere" (D6 says what holds until it
+lands). Not blocking: it runs on the vault's executor.
+
+**Unverified on a phone (MAIL-N):** the restart after boot and after the process is killed, a
+`START_STICKY` restart's foreground start being allowed from the background on Android 12+ (a
+refusal is caught and logged, and the watch then resumes at the next open), the network in Doze
+while a foreground service holds it, and the battery cost. None of these is proven by a compile.
+
+**Tests.** `NativeMailRunTest.kt` (the loop against a fake server: a copy erased during a wait ends
+the run after it with nothing more asked, refused / closed / inactive at sign-in, the lapsed-session
+rule, the copy reopened at each sign-in, a page that does not advance, the wait set released after a
+stop); `NativeMailWatchTest.kt` (the requests, the measured answers, the fault table equal to the
+contract with both origins, the one address normalisation, the cursor file byte for byte, the delta,
+the baseline, the notice, the ladder, the copy's file name and associated data); `MailWatchTest.kt`
+(the three-mode table with `Forgotten` and an earlier run's end, the nine bridge ops, the origin
+allowlist); Rust `mail_watch.rs` (the one erasure, alone or with the cursor, never another
+account's); `androidMailWatch.test.ts` (a claim resolves only on `handed`, `forget` and `release`);
+`mailWatchCursorForget.test.ts` (every erase path sends `forget`); `mailWatch.svelte.test.ts`
+(`nativeWatchWanted`, no stale arm); `mailSession.test.ts` (the password handed over only from a
+ready, remembered mailbox with the device key held, under the canonical address);
+`sealedMailPassword.test.ts` (forgetting erases the native copy).
 
 ## As built - lot 5
 
@@ -1102,11 +1261,26 @@ D11 kept the server-side path (Zimbra's alert sent to a service mailbox) parked.
 behind the admin's switch, off by default, in the form below; lot 4's device-only path stays the
 default and the fallback of a switch at `none`.
 
+**The trigger is a FILTER RULE of the account's own, not the new-mail alert preference** (revised
+the same day, after a live measurement on Partage). The first build pointed
+`zimbraPrefNewMailNotificationAddress` at the opaque address, but that alert's text is built from
+`zimbraNewMailNotificationSubject` / `Body` / `From`, domain-admin attributes a user cannot set, so
+it would have carried Partage's default text (the sender and the subject) through Cloudflare. A
+user filter rule with an `actionNotify` carries OUR text instead. Measured with a user token
+(2026-11-28): `GetFilterRulesRequest` / `ModifyFilterRulesRequest` (`urn:zimbraMail`) work,
+`actionNotify` is accepted, the notice arrived in about a second, its subject was exactly the fixed
+text, neither the original subject nor its body was included, and its sender was the account
+itself. That closed the open question on what Cloudflare carries, and removed the need to save and
+restore the user's alert preferences at all. Only an INTERNAL target was measured; delivery to the
+external alert domain is the live test (still open, below).
+
 ### The path, end to end
 
 ```
- Partage (the account's OWN alert pref)
-   | mail to n-<128-bit token>@alerte.canari-emse.fr     (alerte-dev.canari-emse.fr on dev)
+ Partage (the account's OWN filter rule `canari-alerte`, first, matching every mail)
+   | actionNotify: a fixed-text notice, from the account itself, no body,
+   | to n-<128-bit token>@alerte.canari-emse.fr          (alerte-dev.canari-emse.fr on dev)
+   | actionKeep: the mail is filed as usual; the user's own rules run after it
    v
  Cloudflare Email Routing -> Email Worker (infrastructure/cloudflare/mail-alert-worker/)
    | reads the envelope RECIPIENT only; drops the message; rate-limits per token
@@ -1116,32 +1290,44 @@ default and the fallback of a switch at `none`.
    | sha256(token) -> mail_alert_token -> the account's subscribed devices (mail_alert_device)
    | an EMPTY push {type:'mail'} to each
    v
- iOS: the notification extension reads the mail itself      Android: lot 4b's native watcher (owed)
+ iOS: the notification extension reads the mail itself      Android: lot 4b's NativeMailWatcher.checkOnce
 ```
 
 **The client half (`mailAlert.ts`, `mailAlertSync.ts`, `mailWatch.svelte.ts`).** A PHONE whose
-account wants notifications, with `mail_push` READ as `cloudflare`, sets the account's two alert
-preferences through `ModifyPrefsRequest`: `zimbraPrefNewMailNotificationEnabled = TRUE` and
-`zimbraPrefNewMailNotificationAddress = n-<token>@<domain>` (128 random bits, hex). Before the first
-write it SAVES the two values as they were (`ACCOUNT_KEY.mailAlert`, a D8 key); the last device to
-leave writes them back EXACTLY (an absent preference is written as the empty value, which unsets
-it - measured round trip, 2026-11-27). The device registers the token with the server
-(`POST /api/mls/mail-alert/subscribe`, one live token per account, one row per device, the device
-rows cascading with `push_token`); another device of the account reads the token from the
-preferences and JOINS it. Only an address of Canari's shape (`n-<32 hex>@`) is ever overwritten or
-taken back - an allowlist: an alert the user pointed elsewhere since is left alone. An alert of
-Canari's shape that nobody listens to (the server says so: `state`) is turned off by any device of
-the account - a repair gated on the server's answer, never on a guess. Every step is decided from
-durable facts (Zimbra's preferences, the server's state, the device's record), single-flight, and
-retried at the next change of a fact, never on a timer.
+account wants notifications, with `mail_push` READ as `cloudflare`, adds ONE incoming filter rule to
+the account by a READ-MODIFY-WRITE of the whole list (`GetFilterRulesRequest`, then
+`ModifyFilterRulesRequest`, which replaces the list): named `canari-alerte`, put FIRST, an `anyof`
+of two header tests (`From` or `Received` matches `*` - every delivered mail carries one; the
+header-test shape is the measured one), `actionNotify {a: n-<token>@<domain>, su: 'Canari',
+content: [{_content: 'Canari'}], maxBodySize: 0}` (a bare string `content` is a
+`service.PARSE_ERROR`, measured) and `actionKeep`; NO `actionStop`. The token is 128 random bits,
+hex. Every other rule goes back EXACTLY as Zimbra read it, in its order - an allowlist: a rule is
+ours only by our name AND a notice to an address of Canari's shape (`n-<32 hex>@`), so a rule the
+user named the same but pointed elsewhere is theirs and untouched. `parseFilterRules` refuses an
+answer without its `filterRules` element (required by Zimbra's schema) rather than read it as "no
+rules", which written back would erase the user's.
 
-**The templates are NOT ours (open question, owner).** `zimbraNewMailNotificationSubject` / `Body` /
-`From` are domain-admin attributes, not preferences: `ModifyPrefsRequest` refuses them. So the alert
-Cloudflare receives carries Partage's DEFAULT text - by Zimbra's defaults the sender's address and
-the subject. The Worker never reads them, but Cloudflare's mail servers carry them
-([open-questions](open-questions.md#what-cloudflare-carries-of-a-mail-alert-parked-2026-11-28)).
-This is why the switch is the admin's and off by default, and why the privacy policy must name
-Cloudflare before it is turned on (owner's procedure below).
+The device registers the token with the server (`POST /api/mls/mail-alert/subscribe`, one live
+token per account, one row per device, the device rows cascading with `push_token`) BEFORE writing
+the rule, and takes the subscription back if the write fails; another device of the account reads
+the token back from our rule's `a` and JOINS it. The last device to leave (the server says nobody
+else listens: `state`) removes our rule, and only it. A rule of ours that nobody listens to (or with
+the switch at `none`) is removed by any device of the account - a repair gated on the server's
+answer, never on a guess. A rule of ours the user disabled in the webmail is replaced by an active
+one while the push is wanted. The device keeps one fact (`ACCOUNT_KEY.mailAlert`, a D8 key:
+`{v:1, subscribed}`); nothing of the user's is saved, because nothing of the user's is overwritten.
+Every step is decided from durable facts (the rules Zimbra answers, the server's state, the device's
+record), single-flight, and retried at the next change of a fact, never on a timer.
+
+**One estate's rule per account.** Production and dev share the real mailbox and the rule's name: an
+account signed in on BOTH estates with the push wanted on both would have each replace the other's
+rule at its next sync (no loop - a sync runs on a change of a fact - but the other estate's pushes
+stop until it syncs again). Dev testers use dev with production's push off.
+
+**What Cloudflare sees.** The notice's envelope and headers: the sender (the account's own address),
+the fixed subject `Canari`, the fixed body, and the token in the recipient. Never what the mail said
+or who sent it. The Worker reads only the recipient. The privacy policy still names Cloudflare as
+the carrier before the switch is turned on (owner's procedure below, register C34).
 
 **The Worker (`infrastructure/cloudflare/mail-alert-worker/`).** `relayAlert` (pure, `bun test`ed
 from `make test-ci-scripts`) takes the token from the envelope recipient on ITS domain only, asks the
@@ -1171,10 +1357,12 @@ runs; on Android a high-priority data message `{type:'mail'}`. The token is stor
   nothing new and unread: a blank passive row the app removes. No item, another account, a failed
   read: the server's generic "Nouveau mail" stays, logged at error - a stated degraded display.
 - **Android** (`CanariFirebaseMessagingService.kt` -> `MailPushHandoff.kt`, routing in
-  `mail/MailPush.kt`): the push is handed to lot 4b's native watcher. **Lot 4b is not on this
-  branch**: the handoff answers a TYPED `NativeWatcherAnswer.Unavailable`, logged at warn, and posts
-  ONE generic "Nouveau mail" notice. Wiring it is two lines once lot 4b is merged (the two
-  `TODO(lot 4b)` in `MailPushHandoff.kt`).
+  `mail/MailPush.kt`): the push is ONE `NativeMailWatcher.checkOnce` (lot 4b) - the inbox above the
+  cursor, read with the sealed copy, and the same notices as the persistent run - on a worker thread
+  under a wake lock (`runWithWakeLock("fcm_mail")`, it blocks on the network). `DONE`, `WATCHING`
+  (the page or the persistent run notifies by itself) and `BUSY` post nothing more; `ACCOUNT_CLOSED`
+  posts nothing (logged); `NOTHING_SEALED`, `REFUSED`, `UNAVAILABLE` and `FAILED` post ONE generic
+  "Nouveau mail" notice, logged at warn - a stated degraded display.
 - **Web, desktop**: no mail push; lot 4 while open.
 
 ### D6, the remote forget (added 2026-11-28)
@@ -1194,7 +1382,8 @@ push rows THAT delete removed - read, then deleted one by one under the same fil
 that signed in again meanwhile (its row rewritten with its new session) is never told to forget.
 On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls `canari_mail_forget`: the
 Keychain item goes when it names that account, and the shared cursor goes. On Android it goes to
-`NativeMailWatcher.forget` - typed unavailable until lot 4b is merged. It is the IMMEDIATE half; the
+`NativeMailWatcher.forget(context, userId)` (lot 4b): that account's sealed copy erased, every native
+run stopped. It is the IMMEDIATE half; the
 durable half is the device's own sign-out at its next refused refresh, which erases the same things.
 iOS delivers a background push at its own discretion (never to an app the user force-quit), which is
 why the durable half stays the guarantee.
@@ -1210,16 +1399,19 @@ why the durable half stays the guarantee.
    `MAIL_ALERT_HOOK_SECRET`; `--env dev` and `DEV_MAIL_ALERT_HOOK_SECRET`.
 4. Email Routing > Routing rules: a **catch-all** on each subdomain, action "Send to a Worker",
    `canari-mail-alert` (production) and `canari-mail-alert-dev` (dev).
-5. Have the privacy policy name Cloudflare as the carrier of the alert (register C34).
+5. Have the privacy policy name Cloudflare as the carrier of the alert notice (register C34).
 6. Deploy (the secret reaches the container), then flip `/admin/platform` > "Notifications rapides
    des mails" to Cloudflare - dev first, read on both phones, then production.
 
 ### Tests
 
-`mailAlert.test.ts` (save and EXACT restore, idempotence, join, leave/restore, the allowlist, orphan
-repair, the typed server refusals), `mailAlertSync.test.ts`, `mailPushSecret.test.ts` (the Keychain
+`mailAlert.test.ts` (the measured rule shape, our rule FIRST and the user's rules written back
+verbatim and in order, removal of ours only, a rule of our name pointing elsewhere left alone,
+idempotence, join from the rule's address, leave/remove, orphan repair, a disabled rule replaced, a
+failed write taking the subscription back, the typed server refusals), `mailAlertSync.test.ts`,
+`mailPushSecret.test.ts` (the Keychain
 names, the SOAP URL, the inbox id, the cursor path and the forget type held together across Rust,
-Swift, Kotlin and the server), `mailPushModesAgree.test.ts` (the five copies of `mail_push`),
+Swift, Kotlin and the server)Swift, Kotlin and the server), `mailPushModesAgree.test.ts` (the five copies of `mail_push`),
 `mailWatch.svelte.test.ts`; chat-delivery `mail-alert.service.spec.ts`,
 `mail-alert.controller.spec.ts`, `mail-forget.spec.ts`, the session-end and revocation specs;
 core-service platform and version specs; the Worker's `alert.test.ts`; Rust `mail_push_secret`
@@ -1228,12 +1420,17 @@ tests).
 
 ### Still open after lot 5
 
-- **Lot 4b's handoff** on Android (`MailPushHandoff.kt`, two lines) - until then a generic notice.
-- **The live alert test** on Partage, once routing exists: the lead's probe sets the alert to a given
-  address, sends one mail to self, restores the preferences exactly.
+- **The live alert test** on Partage, once routing exists: the lead's probe saves the WHOLE rule
+  list, installs the rule notifying a given alert address, sends one mail to self, restores the list
+  and checks it reads back identical. It also settles what was not measured: delivery of the notice
+  to the EXTERNAL alert domain, and that `ModifyFilterRulesRequest` accepts the list Zimbra answered
+  verbatim.
 - **The full path on the Mi 9T and the iPhone**, including the remote forget; the NSE and the iOS
   Rust FFI are not compiled here.
+- **Lot 4b resumes the persistent watch at boot whenever a sealed copy exists**
+  (`MailWatchService.resumeIfArmed`). With `mail_push = cloudflare` and "Connexion permanente" off,
+  the sealed copy is still needed (for `checkOnce`), so after a reboot the persistent watch runs
+  until the page next claims it: more battery, nothing lost. The resume must read the persistent
+  choice too.
 - **Cursors of lot 4 builds on iOS** stay in the app data dir, orphaned: the first read after the
   update takes a new baseline (no mail announced twice, none of the gap announced).
-- **The original alert of a device that left first**: when the device that saved it leaves while
-  others remain, the last device restores to UNSET (the record is per device).
