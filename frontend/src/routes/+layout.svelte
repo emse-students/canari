@@ -80,7 +80,6 @@
   import ConnectionAnnouncer from '$lib/components/shared/ConnectionAnnouncer.svelte';
   import LeaveInAppBrowser from '$lib/components/shared/LeaveInAppBrowser.svelte';
   import { inAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
-  import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { syncNativeGround, syncNativeGroundAfterTransitions } from '$lib/stores/nativeGround';
   import {
@@ -901,10 +900,6 @@
       <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
       <PublishQueueBanner />
       <ConnectionAnnouncer />
-      <!-- The Alumni link, due mid second year and missing (D44); skippable, it decides itself. -->
-      {#if !isLoginPage}
-        <AlumniLinkBanner />
-      {/if}
     </div>
 
     <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain
