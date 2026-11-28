@@ -56,3 +56,58 @@ it('starting a second voice note pauses the first and its button shows play agai
   expect(second.isPlaying()).toBe(true);
   expect(first.button().getAttribute('aria-label'), 'back to the play button').toBe(playLabel);
 });
+
+/** A mounted player with a known length, whose strip is 200 px wide starting at x = 0. */
+function mountScrubbable() {
+  vi.stubGlobal('fetch', () => Promise.reject(new Error('no network in this test')));
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(VoiceMessagePlayer, {
+    target,
+    props: { src: 'blob:voice' },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const audio = target.querySelector('audio')!;
+  Object.defineProperty(audio, 'duration', { configurable: true, get: () => 40 });
+  audio.dispatchEvent(new Event('loadedmetadata'));
+  flushSync();
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200 }) as DOMRect;
+  return { audio, slider };
+}
+
+const press = (type: string, clientX: number) =>
+  Object.assign(new Event(type, { bubbles: true }), {
+    clientX,
+    pointerId: 1,
+    pointerType: 'touch',
+  });
+
+it('a press on the waveform seeks to its proportional position, and a drag follows it', () => {
+  const { audio, slider } = mountScrubbable();
+  slider.dispatchEvent(press('pointerdown', 50));
+  flushSync();
+  expect(audio.currentTime).toBe(10);
+  slider.dispatchEvent(press('pointermove', 150));
+  expect(audio.currentTime).toBe(30);
+  slider.dispatchEvent(press('pointerup', 150));
+  slider.dispatchEvent(press('pointermove', 20));
+  expect(audio.currentTime, 'a released pointer no longer scrubs').toBe(30);
+  flushSync();
+  expect(slider.getAttribute('aria-valuenow')).toBe('30');
+});
+
+it('the slider answers the arrow keys and exposes its value', () => {
+  const { audio, slider } = mountScrubbable();
+  slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  flushSync();
+  expect(audio.currentTime).toBe(5);
+  slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  flushSync();
+  expect(audio.currentTime).toBe(40);
+  expect(slider.getAttribute('aria-valuemax')).toBe('40');
+  expect(slider.hasAttribute('data-scrub')).toBe(true);
+});
