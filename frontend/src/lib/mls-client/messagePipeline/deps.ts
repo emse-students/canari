@@ -8,6 +8,7 @@ import type { AnnouncedJoinAsk } from '$lib/utils/chat/actions';
 import type { SettledJoinAsk } from '$lib/utils/chat/joinRequests.svelte';
 import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
 import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
+import type { CatchupWrites } from './catchupWrites';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -33,6 +34,12 @@ export interface MessageHandlerDeps {
   getSelectedContact: () => string | null;
   setSelectedContact: (value: string | null) => void;
   saveConversation: (contactName: string) => Promise<void>;
+  /**
+   * The ledger of the store writes a catch-up batches (a reaction's, a peer's read mark's): created
+   * and registered by `setupMessageHandler`, which fills it in. Absent (a unit test of one handler)
+   * means every write is awaited per frame, as before.
+   */
+  catchupWrites?: CatchupWrites;
   /** Delete a conversation from the local DB. Used when migrating away from a dead MLS group. */
   deleteConversation?: (key: string) => Promise<void>;
   addMessageToChat: (

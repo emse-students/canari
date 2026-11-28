@@ -4048,8 +4048,52 @@ the same prefix.
 conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes from ~10 s to
 ~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
 mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
-the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
+batched since 2026-11-28 ([below](#the-reactions-and-read-marks-of-a-catch-up-are-written-once-2026-11-28)); the
 reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
+
+#### The reactions and read marks of a catch-up are written once (2026-11-28)
+
+**The cost** (owner's Android `1.7.3` log, [above](#a-catch-up-lands-in-one-render-2026-11-24)): 34 reactions at ~75 ms
+(`applyReactionFrame` merged each onto its stored row before its handler returned) and the peer's read
+marks at ~65 ms (one `saveConversation` each): ~4 s of the 10 s drain that the texts' batching did not touch.
+A later `1.8.2` log showed the same shape, so the owner decided (2026-11-28) to batch them.
+
+**The mechanism is the texts' own, in one place** (`mls-client/messagePipeline/catchupWrites.ts`, registered by
+`setupMessageHandler` as a bulk-ingest observer, BEFORE the UI render buffer's):
+
+- while a UI-buffering window is open and no checkpoint hold stands (`deferring()`; every drain opens one, so every drain batches), the reaction handler
+  hands its compare-and-set fold to the ledger (`deferReaction`) and the read-mark handler hands the
+  conversation key (`deferConversationSave`) instead of awaiting the store - a mark of THIS account read on its other device is deferred like a peer's, both go through the same branch. Nothing else changes in the
+  handler: memory, the notification trigger and the pending-mutation parking are as before;
+- the window's CLOSE (`onBulkIngestEnd`, the drain's own completion - no timer, no debounce) writes them: ONE
+  `mergeMessages` per conversation (the folds of a row run in frame order inside the one merge) and ONE
+  `saveConversation` per conversation. A checkpoint's hold writes them first, as it does the texts
+  (`holdRowsForCheckpoint`, [rows before ratchet](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19));
+- **the ack never runs ahead of the disk**: a held write's frame is in `framesLeftUnstored` until it lands,
+  the same ledger the texts' frames sit in.
+
+**Why the result is today's.** A reaction is already a compare-and-set fold of the row AS THE STORE HOLDS IT, and
+`applyReaction` is idempotent per (reactor, emoji) rank, so folding N frames in frame order inside one merge
+ends on the row N merges ended on, and a replay folds to nothing. A conversation save writes the row as memory
+holds it, and every handler updates memory before handing the save over, so the one save writes what the last
+per-frame save wrote (`saveConversation` writes the conversation's metadata only, never message rows, so a
+save and a reaction merge do not order against each other). Because the ledger is registered before the render
+buffer's observer, its writes land before the buffered rows' store on every close and hold, as the per-frame
+writes landed before it. Deletions and edits are compare-and-set merges of other fields, so they commute with
+a held reaction. Pinned by `catchupWrites.test.ts` (the same rows, the same reactions in memory, one merge per
+conversation, nothing on disk before the close, a replay changing nothing, a throwing merge parked per frame) and
+`systemMessageHandler.readState.test.ts` (two marks, one save of the last row).
+
+**A checkpoint is refused while a held write stands** (`CatchupWritesNotStoredError`, as the texts' `BufferedRowsNotStoredError`): a landed checkpoint lets the frames it covers be acknowledged without reading `framesLeftUnstored` (`idsDurableEnoughToAck`), so a hold that could not write everything throws and the next hold writes it again. **A thread opened mid-drain shows memory first**: `renderStoredPage` merges the stored reactions into the ones memory holds (`mergeReactions`, the later state per pair wins) instead of replacing them, because the stored row can be behind a frame already applied. **Rows are written where they ARE**: each key (the thread's key now, then the key the frame named) is asked which rows it holds, so a re-key whose row move failed never routes a fold to an empty key; a fold that changed more rows than were written is said at ERROR.
+
+**Failures are kept, never swallowed.** A merge that throws parks each of its reactions as a pending mutation (the
+per-frame path's answer, said at ERROR); a reaction that cannot even be parked stays held, and an unexpected throw of a flush puts back everything it had not written. A save that throws stays in the ledger with its frames withheld and is
+written at the next close or hold - the per-frame path swallowed it and lost the mark - and its blocking cause is said ONCE until every held write has landed. **A save the store can never take** (`DataCloneError`, or a `RowRefusedError`, by type, as `classifyRowWriteFailure` decides for rows; a bare `DataError` stays transient because `importKey` raises one for an empty device key) is dropped and accused once, never kept to refuse every checkpoint for good. **Every caller checks `deferring()` and hands the write over with no await between** (a hold beginning in between would flush before it is held): the ledger says at ERROR when a write arrives outside a window or during a hold. The legacy `remove_reaction` event owes its row through its dispatch (`SYSTEM_EVENTS_OWING_THEIR_ROW`), so a checkpoint cannot land inside its store read. A thread that left the map
+during the window is dropped and said; one a Welcome re-keyed is written under its new key (`movedKeyOf`).
+Logs: `[CATCHUP_WRITES]` at each flush, each drop and each failure.
+
+**What is NOT batched**: the per-reaction READ (`getMessagesByIds`) that decides shown / stored / pending, which
+is a point read by primary key and the frame's own question.
 
 #### An open lands once: a change above the reader never glides (2026-11-25)
 
