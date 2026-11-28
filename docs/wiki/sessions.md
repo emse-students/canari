@@ -1077,3 +1077,20 @@ container with forged headers, and the forged call is the one the 401 must answe
 two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user
 on a manage action); its authorization refusals are 403s (`refuseModeration`).
 
+
+### One tap is one open: the handoff has an in-flight guard (owner's log of 2026-11-27, 1.8.4)
+
+A link to a MiGallery album in a message reaches `openEcosystemSite` through `openEcosystemSiteLink`.
+The mint takes seconds on a slow link and nothing on screen answered the tap meanwhile, so the same
+link was tapped three times in four seconds: three `POST /api/auth/handoff` and three system-browser
+launches, and the app then ended (the next start logged `the previous session ended while on screen`).
+**What killed the app is NOT established**: the marker says the process died IN FRONT, which does not
+fit Android reclaiming a backgrounded app, and the log cannot say more. The tap-triple is the proven
+defect and is removed; whether it was the trigger is for the next log to say - the cause is owed by
+[the exit-reason entry](backlog.d/p3-the-next-start-logs-why-the-last-process-died.md).
+
+The opener keeps the opens whose mint has not settled (`opening`, keyed site + destination): a second
+tap on the SAME open is dropped with one info line, and the key is released only when the open has
+settled - the mint AND the system opener's promise - success or failure. State, never a clock: nothing
+expires, so a retry after a failed mint is immediate. The tap is acknowledged by a toast
+(`ecosystem_site_opening`) driven by the same set, so the reader sees it was taken.

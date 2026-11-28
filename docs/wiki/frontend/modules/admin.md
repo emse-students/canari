@@ -530,3 +530,8 @@ display name. [Reporting and blocking](../../moderation-and-blocking.md)
 ## User management
 
 Global admins can list all users (`GET /api/users/admin/list`) and toggle admin status (`PATCH /api/users/:id/admin`). An admin cannot revoke their own admin flag.
+
+**One resume asks once on a native shell (2026-11-26 log, 1.8.4).** The pause releases the socket, so
+the foreground always reopens it and `adminQueuesChanged('socket-open')` asks; the visibility edge,
+firing a moment earlier, asked a second time. On a native shell that edge now asks nothing (a failed
+reopen is the link-back ask's); the web keeps it, its socket is not paused.

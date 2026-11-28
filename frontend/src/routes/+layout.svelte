@@ -366,7 +366,7 @@
   });
   $effect(() => {
     if (!followsAdminCounts) return;
-    return followAdminQueueCounts();
+    return followAdminQueueCounts(() => globalSession.isWsConnected);
   });
 
   // ── Push notification init ───────────────────────────────────────────────────

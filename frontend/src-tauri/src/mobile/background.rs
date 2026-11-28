@@ -1174,17 +1174,119 @@ fn record_refusal(files_dir: &Path, group_id: &str, written: &[u8], memo: Refusa
 /// the bytes, so the compare refuses it - under the same lock every `mls.bin` writer takes. The
 /// refusal is an error: a send batch is discarded and re-encrypted at the next drain, a Welcome stays
 /// for the foreground.
-fn write_over_loaded_state(files_dir: &Path, loaded: &[u8], data: &[u8]) -> Result<(), String> {
+fn write_over_loaded_state(
+    files_dir: &Path,
+    loaded: &[u8],
+    data: &[u8],
+) -> Result<(), crate::concurrency::BackgroundWriteRefused> {
     crate::concurrency::background_write_mls_bin_if_unchanged(
         &files_dir.join("mls.bin"),
         &crate::concurrency::mls_bin_digest(loaded),
         data,
     )
-    .map_err(|e| {
-        log::error!("[BG_STATE] mls.bin NOT written: {e}");
-        format!("write mls.bin: {e}")
+    .inspect_err(|e| {
+        // A refused write is NOT_YET (the foreground has the state; its own load joins/sends): warn.
+        log::warn!("[BG_STATE] mls.bin NOT written: {e}");
     })
 }
+
+/// Why a background Welcome did not install, CLASSIFIED WHERE IT IS THROWN, from the TYPED
+/// `MlsError` and never from the call site that happened to fail (review of #4217: every load error
+/// mapped to "never" at one site and every `process_welcome` error at another, while the send path
+/// reads the same variants as NOT_YET - a stale `mls.bin` with no matching key package was a false
+/// "never"). The join used to answer a bare `false`, so the phone's log read `join failed` with no
+/// cause, and the Rust line that told them apart is lost in a killed app (no logger yet).
+/// A group the state ALREADY holds is not an error at all: `process_welcome` answers it with `Ok`.
+#[derive(Debug)]
+pub enum BackgroundJoinError {
+    /// The device key does not decode: nothing this call holds can open the state.
+    KeyUnreadable(String),
+    /// The saved state did not load; read by [`SendProspect::of_state_load`], as the send path does.
+    StateLoad(mls_core::MlsError),
+    /// The state could not be re-sealed; read by [`SendProspect::of_state_load`].
+    Seal(mls_core::MlsError),
+    /// The Welcome or the ratchet tree is not valid base64: malformed, so it never installs.
+    WelcomeEncoding(String),
+    /// MLS refused the Welcome; read by [`SendProspect::of_welcome`].
+    Welcome(mls_core::MlsError),
+    /// The install was refused (the foreground is active, `mls.bin` moved, a warm process, an I/O or
+    /// lock failure). The Welcome stays for the app's own load.
+    WriteRefused(crate::concurrency::BackgroundWriteRefused),
+    /// A JNI marshalling fault: nothing about the Welcome was judged.
+    Jni(String),
+}
+
+impl BackgroundJoinError {
+    /// EVERY cause token this answer can carry - the closed set the Kotlin reader matches against
+    /// (`libs/contracts/background-join-answer.cases.json`, read by both sides' tests).
+    pub const CAUSES: [&'static str; 5] = [
+        "state-unreadable",
+        "welcome-malformed",
+        "welcome-refused",
+        "write-refused",
+        "jni",
+    ];
+
+    /// The stable cause token the platform logs read, never prose.
+    pub fn cause(&self) -> &'static str {
+        match self {
+            Self::KeyUnreadable(_) | Self::StateLoad(_) | Self::Seal(_) => "state-unreadable",
+            Self::WelcomeEncoding(_) => "welcome-malformed",
+            Self::Welcome(_) => "welcome-refused",
+            Self::WriteRefused(_) => "write-refused",
+            Self::Jni(_) => "jni",
+        }
+    }
+
+    /// Whether a later attempt can succeed, from the typed error.
+    pub fn prospect(&self) -> SendProspect {
+        match self {
+            Self::KeyUnreadable(_) | Self::WelcomeEncoding(_) => SendProspect::Never,
+            Self::StateLoad(e) | Self::Seal(e) => SendProspect::of_state_load(e),
+            Self::Welcome(e) => SendProspect::of_welcome(e),
+            Self::WriteRefused(_) | Self::Jni(_) => SendProspect::NotYet,
+        }
+    }
+
+    /// The level a platform logs this failure at, CHOSEN FROM THE PROSPECT: a failure a later attempt
+    /// can cure (NOT_YET) is expected and said at warn, one no retry from this device can cure
+    /// (NEVER) is the visible end of something upstream and accuses at error.
+    pub fn log_level(&self) -> log::Level {
+        match self.prospect() {
+            SendProspect::NotYet => log::Level::Warn,
+            SendProspect::Never => log::Level::Error,
+        }
+    }
+
+    /// Logs the failure at {@link Self::log_level}, for every platform entry point that has no typed
+    /// answer channel of its own to carry the cause.
+    pub fn log(&self, site: &str) {
+        log::log!(self.log_level(), "[BG_JOIN] {site} failed: {self}");
+    }
+
+    /// What crosses the JNI as the join's answer: `failed:<cause>:<prospect>` (the success is the
+    /// literal `joined`, [`JOINED_TOKEN`]).
+    pub fn token(&self) -> String {
+        format!("failed:{}:{}", self.cause(), self.prospect().token())
+    }
+}
+
+impl std::fmt::Display for BackgroundJoinError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::KeyUnreadable(why) | Self::WelcomeEncoding(why) | Self::Jni(why) => {
+                write!(f, "{}: {why}", self.cause())
+            }
+            Self::StateLoad(e) | Self::Seal(e) | Self::Welcome(e) => {
+                write!(f, "{}: {e}", self.cause())
+            }
+            Self::WriteRefused(e) => write!(f, "{}: {e}", self.cause()),
+        }
+    }
+}
+
+/// The JNI answer of a background Welcome that installed.
+pub const JOINED_TOKEN: &str = "joined";
 
 /// Applies an MLS Welcome received in the background (receiver side).
 /// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
@@ -1196,10 +1298,13 @@ pub fn process_welcome_background_with_key(
     device_id: &str,
     welcome_b64: &str,
     ratchet_tree_b64: &str,
-) -> Result<(), String> {
+) -> Result<(), BackgroundJoinError> {
+    use BackgroundJoinError::{
+        KeyUnreadable, Seal, StateLoad, Welcome, WelcomeEncoding, WriteRefused,
+    };
     let welcome_bytes = STANDARD
         .decode(welcome_b64.trim())
-        .map_err(|e| format!("base64 decode welcome: {e}"))?;
+        .map_err(|e| WelcomeEncoding(format!("base64 decode welcome: {e}")))?;
 
     let rt_trimmed = ratchet_tree_b64.trim();
     let ratchet_tree_bytes = if rt_trimmed.is_empty() || rt_trimmed == "null" {
@@ -1208,19 +1313,20 @@ pub fn process_welcome_background_with_key(
         Some(
             STANDARD
                 .decode(rt_trimmed)
-                .map_err(|e| format!("base64 decode ratchet tree: {e}"))?,
+                .map_err(|e| WelcomeEncoding(format!("base64 decode ratchet tree: {e}")))?,
         )
     };
 
-    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
+    let key = decode_base64_to_32_bytes(key_b64.trim()).map_err(KeyUnreadable)?;
+    let mut manager =
+        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
+            .map_err(StateLoad)?;
 
     let group_id = manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
-        .map_err(|e| format!("process_welcome: {e:?}"))?;
+        .map_err(Welcome)?;
 
-    let enc = manager
-        .save_encrypted_with_key(&key)
-        .map_err(|e| e.to_string())?;
+    let enc = manager.save_encrypted_with_key(&key).map_err(Seal)?;
     // Noted before the install, so no join goes unnoted (see `note_background_join`).
     let inserted = note_background_join(files_dir, &group_id);
     if let Err(e) = write_over_loaded_state(files_dir, state_bytes, &enc) {
@@ -1228,7 +1334,7 @@ pub fn process_welcome_background_with_key(
         if inserted {
             unnote_refused_background_join(files_dir, &group_id);
         }
-        return Err(e);
+        return Err(WriteRefused(e));
     }
     log::info!(
         "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
@@ -1279,6 +1385,32 @@ impl SendProspect {
             E::OpenMls(_)
             | E::GroupNotFound(_)
             | E::InvalidData
+            | E::AlreadyMember(_)
+            | E::Evicted(_)
+            | E::NoSuchMember(_)
+            | E::GroupAlreadyHeld(_)
+            | E::ForeignExternalRemove(_) => Self::NotYet,
+        }
+    }
+
+    /// What a refused Welcome means, from the TYPED error (exhaustive on purpose). NEVER: the bytes
+    /// are not a Welcome (`InvalidData`, `Serialization`) or the state is declared unrecoverable.
+    /// A state-load variant reads as [`Self::of_state_load`]. NOT_YET: `OpenMls` is the untyped
+    /// catch-all of openmls (a stale `mls.bin` holding no matching key package lands there, and a
+    /// refreshed state may hold it), and the group-membership variants say nothing permanent about
+    /// THIS Welcome.
+    pub fn of_welcome(error: &mls_core::MlsError) -> Self {
+        use mls_core::MlsError as E;
+        match error {
+            E::InvalidData | E::Serialization(_) | E::Unrecoverable(_) => Self::Never,
+            E::StateUndecryptable(_)
+            | E::StateIdentityMismatch(_)
+            | E::StateSealedUnderAnotherKey(_)
+            | E::StateAltered(_)
+            | E::KeystoreKeyUnavailable(_)
+            | E::KeystorePromptDismissed(_) => Self::of_state_load(error),
+            E::OpenMls(_)
+            | E::GroupNotFound(_)
             | E::AlreadyMember(_)
             | E::Evicted(_)
             | E::NoSuchMember(_)
@@ -1478,7 +1610,8 @@ pub fn send_messages_background_with_key(
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| SendBatchError::not_yet(format!("save: {e}")))?;
-    write_over_loaded_state(files_dir, state_bytes, &enc).map_err(SendBatchError::not_yet)?;
+    write_over_loaded_state(files_dir, state_bytes, &enc)
+        .map_err(|e| SendBatchError::not_yet(format!("write mls.bin: {e}")))?;
     log::info!(
         "[BG_SEND] batch encrypted {encrypted}/{attempted} attempted, {held} held behind a staged commit, {} left for the next drain (mls.bin {} bytes, 1 load, 1 save)",
         entries.len() - attempted - held,
@@ -2056,8 +2189,100 @@ mod tests {
             &tree,
         );
 
-        assert!(joined.is_err(), "the compare-and-swap refuses the write");
+        assert!(
+            matches!(joined, Err(BackgroundJoinError::WriteRefused(_))),
+            "the compare-and-swap refuses the write, typed as a refused write: {joined:?}"
+        );
         assert!(take_background_joins(&dir).unwrap().is_empty());
+    }
+
+    /// THE ANSWER'S CONTRACT (`libs/contracts/background-join-answer.cases.json`, also read by the
+    /// Kotlin reader's test): every token this side can write is in the file, and the cause set is the
+    /// file's.
+    #[test]
+    fn a_background_join_failure_carries_its_typed_cause() {
+        use mls_core::MlsError as E;
+        use BackgroundJoinError as J;
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../libs/contracts/background-join-answer.cases.json"
+        ))
+        .unwrap();
+        let causes: Vec<&str> = fixture["causes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            causes,
+            J::CAUSES.to_vec(),
+            "the closed cause set is the contract's"
+        );
+        let tokens: Vec<&str> = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["outcome"] == "failed")
+            .map(|c| c["token"].as_str().unwrap())
+            .collect();
+        let refused = crate::concurrency::BackgroundWriteRefused::WarmProcess;
+        let samples = [
+            J::KeyUnreadable("k".into()),
+            J::StateLoad(E::StateUndecryptable("x".into())),
+            J::StateLoad(E::OpenMls("x".into())),
+            J::Seal(E::OpenMls("x".into())),
+            J::WelcomeEncoding("x".into()),
+            J::Welcome(E::InvalidData),
+            J::Welcome(E::OpenMls("no matching key package".into())),
+            J::WriteRefused(refused),
+            J::Jni("x".into()),
+        ];
+        for sample in &samples {
+            assert!(
+                tokens.contains(&sample.token().as_str()),
+                "{sample:?} wrote {}, which the contract does not list",
+                sample.token()
+            );
+        }
+        assert_eq!(JOINED_TOKEN, "joined");
+    }
+
+    /// CLASSIFIED FROM THE TYPED ERROR: a stale state that holds no matching key package (the
+    /// untyped `OpenMls`) is NOT_YET for a load and for a Welcome - the send path's own reading - and
+    /// only a type that says permanent is `never`.
+    #[test]
+    fn the_join_prospect_reads_the_typed_error_as_the_send_path_does() {
+        use mls_core::MlsError as E;
+        use BackgroundJoinError as J;
+        assert_eq!(
+            J::StateLoad(E::OpenMls("x".into())).prospect(),
+            SendProspect::NotYet
+        );
+        assert_eq!(
+            J::Welcome(E::OpenMls("x".into())).prospect(),
+            SendProspect::NotYet
+        );
+        assert_eq!(J::Welcome(E::InvalidData).prospect(), SendProspect::Never);
+        assert_eq!(
+            J::StateLoad(E::StateSealedUnderAnotherKey("x".into())).prospect(),
+            SendProspect::Never
+        );
+        assert_eq!(J::KeyUnreadable("x".into()).prospect(), SendProspect::Never);
+    }
+
+    /// THE LOG LEVEL FOLLOWS THE PROSPECT, on every platform entry point: a failure a retry can cure
+    /// is warn, one no retry from this device can cure is error.
+    #[test]
+    fn the_join_failure_is_logged_at_the_level_its_prospect_names() {
+        use mls_core::MlsError as E;
+        use BackgroundJoinError as J;
+        assert_eq!(J::Jni("x".into()).log_level(), log::Level::Warn);
+        assert_eq!(
+            J::Welcome(E::OpenMls("x".into())).log_level(),
+            log::Level::Warn
+        );
+        assert_eq!(J::Welcome(E::InvalidData).log_level(), log::Level::Error);
+        assert_eq!(J::KeyUnreadable("x".into()).log_level(), log::Level::Error);
     }
 
     /// A NOTE ALREADY THERE is not this call's to take back.
@@ -2088,7 +2313,10 @@ mod tests {
             "",
         );
 
-        assert!(joined.is_err());
+        assert!(
+            matches!(joined, Err(BackgroundJoinError::Welcome(_))),
+            "bytes that are not a Welcome are a refused Welcome: {joined:?}"
+        );
         assert!(take_background_joins(&dir).unwrap().is_empty());
     }
 
