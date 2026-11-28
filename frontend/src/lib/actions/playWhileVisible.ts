@@ -157,7 +157,10 @@ function tryPlay(video: HTMLVideoElement) {
   const generation = (playGeneration.get(video) ?? 0) + 1;
   playGeneration.set(video, generation);
   video.play().catch((err: unknown) => {
-    ambientStarts.delete(video);
+    // ONLY THE LATEST PLAY'S MARKER IS THIS REJECTION'S TO CLEAR: an older play aborted by a pause
+    // lands after a newer one was asked, and deleting the marker then made the newer play's own
+    // `play` event read as the reader's (it would then be resumed as theirs after a viewer).
+    if (playGeneration.get(video) === generation) ambientStarts.delete(video);
     const name = playRejectionName(err);
     if (
       isExpectedPlayInterruption(name, {

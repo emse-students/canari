@@ -5908,8 +5908,13 @@ that held it is lost in a killed app (no logger yet,
 a token classified where it is thrown (`BackgroundJoinError`): `joined`, or `failed:<cause>:<prospect>`
 with the cause `write-refused` (foreground active, `mls.bin` moved: NOT_YET, warn - the app's own load
 joins the group), `welcome-refused` or `state-unreadable` (never from this state: error).
-`BackgroundJoinAnswer.kt` reads it, JVM-tested. A Welcome for a group the state already holds is a
-success (`process_welcome` answers it `Ok`), so it never reaches the failure branch. The same pass
-moves `encryptQueuedMessages: ok=false, NOT_YET` from error to info: NOT_YET is the foreground guard
-working as designed and the drain's own warn already says the messages stay queued; only BLOCKED is
-an error.
+The cause comes from the TYPED `MlsError`, never from the call site (`SendProspect::of_state_load`
+for a load or a re-seal, `of_welcome` for a refused Welcome, the send path's own reading: a stale
+`mls.bin` with no matching key package is the untyped `OpenMls`, so NOT_YET). The answer is a CLOSED
+contract, `libs/contracts/background-join-answer.cases.json`, read by the Rust and the Kotlin tests;
+`BackgroundJoinAnswer.kt` reads it, and a token outside it is `Unreadable`, said at error with the raw
+text (a null from a failed string build included, which Rust logs instead of panicking across the FFI). A Welcome for a group the state already holds is a
+success (`process_welcome` answers it `Ok`), so it never reaches the failure branch. The levels are the same on the send and the join path: NOT_YET is warn, never-from-here is error. The
+send path says ONE warn line (`drainOutboxBackground: batch encrypt failed (<prospect>: <cause>) -> N
+message(s) stay queued`): an info line reaches logcat only, so the cause would vanish from the exported
+log, and NOT_YET also covers untyped OpenMls faults.

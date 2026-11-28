@@ -8598,8 +8598,17 @@ A reply sent from a build before this fix stays a plain photo on both sides: the
   unreachable". A pass of 157 groups used to go on for 12 s after the app was paused, and its
   elections then failed in transport and were reported as the server being unreachable
   ([the suspension entry](../../backlog.d/p3-a-suspension-is-logged-as-the-server-being-unreachable.md)).
-  A group not asked is owed (the audit discharges only what was asked). A SWEEP cut short does not
-  write the connection record, so the next connection sweeps again; one line names the stop.
+  A group not asked is owed (the audit discharges only what was asked). `reconcileGroupOutcome`
+  answers `asked` / `no-peer` / `unreachable` / `skipped`, and the pass counts those (never a
+  stale deferral); `complete` is false when it stopped, or when an election never left the device.
+  ONE pass line, "stopped, <why>" or "complete", never both. The stop reasons read "the app went to
+  the background" and "offline or server unreachable".
+  A SWEEP cut short does not write the connection record, so the next connection sweeps again - and
+  RESTARTS WHERE IT STOPPED: the groups it asked are kept per store (`history_open_sweep`, a sweep
+  generation closed by a completed sweep), so the tail of a long list cannot starve behind a head
+  asked first and cut again. A pass stopped in the background is re-run ONCE on the return to the
+  foreground (`armForegroundRerun`), for the socket that survived the background and so has no new
+  connection to restart it.
 - **No line per group for "nobody online".** 714 identical lines in one session (one per group per
   pass, 16 passes). The pass line now carries the count (`N with no member online`); the group is
   still deferred for the peer-online edge, and a single-group trigger keeps its own line.

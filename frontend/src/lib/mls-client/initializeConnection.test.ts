@@ -56,7 +56,13 @@ vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
 
 import { initializeConnection, openGatewayConnection } from './initializeConnection';
 import { markGroupInCreation } from '$lib/utils/chat/groupsInCreation';
-import { noteConnection, resetAuditRecord } from '$lib/utils/chat/historyReconcile';
+import {
+  closeOpenSweep,
+  groupsAskedInOpenSweep,
+  noteConnection,
+  resetAuditRecord,
+} from '$lib/utils/chat/historyReconcile';
+import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 describe('initializeConnection (realistic connect + membership sync)', () => {
@@ -606,6 +612,43 @@ describe('initializeConnection - the history pass leaves a group being created o
     const log = await connect(creatingMls());
     expect(log).toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
     expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cut sweep restarts where it stopped: the groups it asked are not asked again', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-tail');
+    const three = () => {
+      const mls = creatingMls();
+      mls.getLocalGroups.mockReturnValue(['g-a', 'g-b', 'g-c']);
+      return mls;
+    };
+    reconcileAllGroupsMock.mockResolvedValueOnce({ asked: ['g-a'], complete: false });
+    await connect(three());
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-a', 'g-b', 'g-c']);
+    reconcileAllGroupsMock.mockClear();
+
+    // The tail is asked next; the head, already asked, is not.
+    reconcileAllGroupsMock.mockResolvedValueOnce({ asked: ['g-b', 'g-c'], complete: true });
+    await connect(three());
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-b', 'g-c']);
+
+    // A completed sweep closes the open one: nothing is owed afterwards.
+    expect(groupsAskedInOpenSweep('u-c', 'dev-c', 'store-tail').size).toBe(0);
+  });
+
+  it('a stopped pass is re-run when the app returns to the foreground', async () => {
+    closeOpenSweep('u-c', 'dev-c');
+    incarnationMock.mockResolvedValue('store-fg');
+    (window as unknown as Record<string, unknown>).__canariForeground = false;
+    reconcileAllGroupsMock.mockResolvedValueOnce({ asked: [], complete: false });
+    await connect(creatingMls());
+    reconcileAllGroupsMock.mockClear();
+    reconcileAllGroupsMock.mockResolvedValue({ asked: ['g-old'], complete: true });
+
+    (window as unknown as Record<string, unknown>).__canariForeground = true;
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+    await vi.waitFor(() => expect(reconcileAllGroupsMock).toHaveBeenCalledTimes(1));
+    delete (window as unknown as Record<string, unknown>).__canariForeground;
   });
 
   it('a store that cannot name its incarnation is read as a new one', async () => {

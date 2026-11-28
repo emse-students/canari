@@ -287,7 +287,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     "a label, state or outcome the app spells itself (a constant, an enum, a classifier's output)",
     [
       // `OutboxRetry.Prospect` and its Rust token (`SendProspect::token`): an enum's name.
-      '2x CanariFirebaseMessagingService.kt|prospect',
+      'CanariFirebaseMessagingService.kt|batch.prospect',
       // `BackgroundJoinAnswer.Outcome.Failed`: the cause is a fixed token of Rust's
       // `BackgroundJoinError::cause`, the prospect an enum - each said at warn or error by level.
       '2x CanariFirebaseMessagingService.kt|joinAnswer.cause',
@@ -388,7 +388,9 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'messaging.rs|err_dbg',
       'state.rs|manager.state_composition_summary()',
       '2x CallRingPlayer.kt|message',
-      '2x CanariFirebaseMessagingService.kt|json.optString("error").take(120)',
+      // The native answer of the background join, cut to 60 chars: a closed token or, from a newer
+      // build, another token - never message text.
+      'CanariFirebaseMessagingService.kt|joinAnswer.raw?.take(60)',
       'CanariFirebaseMessagingService.kt|r.optString("error").take(80)',
       'canari_push.mm|r["error"]',
       'mls_account_state.rs|message',

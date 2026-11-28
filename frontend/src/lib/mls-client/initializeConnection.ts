@@ -6,7 +6,7 @@ import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isAppInForeground } from '$lib/utils/appForeground';
+import { isAppInForeground, onAppForegroundChange } from '$lib/utils/appForeground';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
 import { adminQueuesChanged } from '$lib/admin/adminQueueCounts.svelte';
@@ -22,10 +22,13 @@ import {
 } from '$lib/utils/chat/groupSweep';
 import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import {
+  closeOpenSweep,
   connectionSweepDecision,
+  groupsAskedInOpenSweep,
   groupsOwingAudit,
   noteConnection,
   noteGroupsAudited,
+  noteOpenSweepProgress,
   reconcileAllGroups,
 } from '$lib/utils/chat/historyReconcile';
 
@@ -503,6 +506,48 @@ export async function syncConnectionAfterWsOpen(
   // raised its own trigger where it failed. `connectionSweepDecision` states the one remaining
   // case - see it for why the other two need nobody asked.
   const deviceId = mlsService.getDeviceId();
+  await reconcileOnConnection(mlsService, userId, deviceId, log);
+  return verdicts;
+}
+
+/** The one armed rerun of a pass that stopped in the background (replaced by a newer one). */
+let foregroundRerunOff: (() => void) | null = null;
+
+/**
+ * Re-runs the connection reconciliation ONCE when the app returns to the foreground, for a pass that
+ * stopped because it was not on screen. A resume that reopens the socket runs a new connection pass
+ * anyway; this is for the socket that SURVIVED the background, which would otherwise leave the
+ * unasked groups owed until the next connection.
+ */
+function armForegroundRerun(
+  mlsService: IMlsService,
+  userId: string,
+  deviceId: string,
+  log: (msg: string) => void
+): void {
+  foregroundRerunOff?.();
+  const off = onAppForegroundChange((foreground) => {
+    if (!foreground) return;
+    off();
+    if (foregroundRerunOff === off) foregroundRerunOff = null;
+    log('[HISTORY_RECONCILE] back on screen - re-running the pass that stopped in the background');
+    void reconcileOnConnection(mlsService, userId, deviceId, log).catch((e: unknown) =>
+      log(`[HISTORY_RECONCILE] the rerun after the background failed: ${String(e).slice(0, 120)}`)
+    );
+  });
+  foregroundRerunOff = off;
+}
+
+/**
+ * Step 5 of the connection: the sweep or the audit of the groups this device holds, recorded per
+ * group asked. A function of its own so a pass cut short by the background can be run again.
+ */
+async function reconcileOnConnection(
+  mlsService: IMlsService,
+  userId: string,
+  deviceId: string,
+  log: (msg: string) => void
+): Promise<void> {
   // READ AGAIN HERE, deliberately: the `localGroups` snapshot taken before the sync loop predates
   // the joins and purges it performs, and reconciling a stale list would audit groups this device
   // has just left and miss the ones it has just joined.
@@ -530,12 +575,16 @@ export async function syncConnectionAfterWsOpen(
     (groupId) => mlsService.isDistributionGroup(groupId),
     store
   );
-  const targets = sweep ? groupsNow : owing;
+  // A SWEEP CUT SHORT BEFORE restarts where it stopped: the groups it already asked are not asked
+  // again, so the tail of a long list cannot starve behind a head asked first and cut again.
+  const alreadyAsked = sweep ? groupsAskedInOpenSweep(userId, deviceId, store) : new Set<string>();
+  const targets = sweep ? groupsNow.filter((id) => !alreadyAsked.has(id)) : owing;
 
   // A SWEEP CUT SHORT IS NOT RECORDED AS DONE: the connection record is what stops the next
   // connection sweeping, so a sweep that stopped before every group was asked leaves it unwritten
   // and the next connection sweeps again.
   let sweepCutShort = false;
+  let incomplete = false;
   if (targets.length > 0) {
     log(
       sweep
@@ -553,18 +602,25 @@ export async function syncConnectionAfterWsOpen(
         !isAppInForeground()
           ? 'the app went to the background'
           : connectivity.isOffline
-            ? 'the server is unreachable'
+            ? 'offline or server unreachable'
             : null
     );
     // DISCHARGED ON THE ASK ITSELF. `reconcileAllGroups` returns the groups a probe really left for,
     // which is shorter than `targets` by whatever was deferred - and those come back next time.
     noteGroupsAudited(userId, deviceId, askedGroups, store);
+    incomplete = !complete;
     sweepCutShort = sweep && !complete;
+    if (sweepCutShort) noteOpenSweepProgress(userId, deviceId, store, askedGroups);
   } else {
     log(`[HISTORY_RECONCILE] no sweep - ${reason}; every group already audited`);
   }
-  if (!sweepCutShort) noteConnection(userId, deviceId, Date.now(), store);
-  return verdicts;
+  if (!sweepCutShort) {
+    noteConnection(userId, deviceId, Date.now(), store);
+    closeOpenSweep(userId, deviceId);
+  }
+  // A PASS THAT STOPPED BECAUSE THE APP WAS NOT ON SCREEN has nothing to restart it when the socket
+  // survived the background (no reconnect, so no new connection): the return to the foreground does.
+  if (incomplete && !isAppInForeground()) armForegroundRerun(mlsService, userId, deviceId, log);
 }
 
 /**

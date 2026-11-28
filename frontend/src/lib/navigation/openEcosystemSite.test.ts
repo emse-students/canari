@@ -36,6 +36,8 @@ const sites = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => openUrl(url) }));
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
+const showToast = vi.fn();
+vi.mock('$lib/stores/toast.svelte', () => ({ showToast: (...a: unknown[]) => showToast(...a) }));
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://canari.example' }));
 vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn(), i: vi.fn() } }));
 vi.mock('$lib/navigation/ecosystemSites', async (importOriginal) => {
@@ -82,6 +84,7 @@ describe('openEcosystemSite', () => {
     vi.restoreAllMocks();
     openUrl.mockClear();
     apiFetch.mockReset();
+    showToast.mockClear();
   });
 
   describe('on the native shells', () => {
@@ -107,6 +110,8 @@ describe('openEcosystemSite', () => {
       openEcosystemSite('migallery', '/mes-photos');
       openEcosystemSite('migallery', '/mes-photos');
       expect(apiFetch).toHaveBeenCalledTimes(1);
+      // The tap was taken: ONE pending toast, none for the dropped taps.
+      expect(showToast).toHaveBeenCalledTimes(1);
       resolveMint(json(200, { url: MINTED }));
       await settle();
       expect(openUrl).toHaveBeenCalledTimes(1);
@@ -115,6 +120,25 @@ describe('openEcosystemSite', () => {
       await settle();
       expect(apiFetch).toHaveBeenCalledTimes(2);
       expect(openUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the guard until the opener itself has settled', async () => {
+      let finishOpen!: () => void;
+      openUrl.mockReturnValueOnce(new Promise<void>((r) => (finishOpen = r)));
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(openUrl).toHaveBeenCalledTimes(1);
+      // The browser launch is still pending: a tap now is the same open.
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      finishOpen();
+      await settle();
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(apiFetch).toHaveBeenCalledTimes(2);
     });
 
     it('releases the guard when the mint fails, so a retry is possible', async () => {

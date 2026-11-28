@@ -413,6 +413,63 @@ export function noteConnection(
   }
 }
 
+/**
+ * THE GROUPS ASKED WITHIN A SWEEP THAT HAS NOT FINISHED (a sweep generation, keyed by the message
+ * store it was owed for). A sweep cut short - the app left the screen, the link dropped - is not
+ * recorded as done, so the next connection sweeps again; restarting from the head every time let
+ * the tail of a long list starve behind a head that is asked first and cut again. The next sweep
+ * asks only the groups this record does not hold, and a sweep that completes closes it.
+ */
+type OpenSweep = { store: string | null; groupIds: string[] };
+
+function readOpenSweep(userId: string, deviceId: string, store: string | null): Set<string> {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_KEY.openSweep(userId, deviceId));
+    if (!raw) return new Set();
+    const held = JSON.parse(raw) as OpenSweep;
+    // A sweep owed for another store is another sweep: nothing in it is evidence about this one.
+    if (held.store !== store || !Array.isArray(held.groupIds)) return new Set();
+    return new Set(held.groupIds);
+  } catch {
+    return new Set();
+  }
+}
+
+/** The groups an unfinished sweep already asked for this store; empty when none is open. */
+export function groupsAskedInOpenSweep(
+  userId: string,
+  deviceId: string,
+  store: string | null
+): Set<string> {
+  return readOpenSweep(userId, deviceId, store);
+}
+
+/** Adds `groupIds` to the open sweep (opening it), so the next one skips them. */
+export function noteOpenSweepProgress(
+  userId: string,
+  deviceId: string,
+  store: string | null,
+  groupIds: Iterable<string>
+): void {
+  try {
+    const done = readOpenSweep(userId, deviceId, store);
+    for (const id of groupIds) done.add(id);
+    const record: OpenSweep = { store, groupIds: [...done] };
+    localStorage.setItem(ACCOUNT_KEY.openSweep(userId, deviceId), JSON.stringify(record));
+  } catch {
+    // Unwritable: the next sweep restarts from the head - the old behaviour, wasteful, never wrong.
+  }
+}
+
+/** Closes the open sweep: a sweep that covered every group needs no memory. */
+export function closeOpenSweep(userId: string, deviceId: string): void {
+  try {
+    localStorage.removeItem(ACCOUNT_KEY.openSweep(userId, deviceId));
+  } catch {
+    /* nothing to close */
+  }
+}
+
 /** Test seam: forgets this device's connection record so a case starts from a known state. */
 export function resetConnectionRecord(userId: string, deviceId: string): void {
   try {
@@ -646,9 +703,9 @@ export function answerAfterMailboxDrained(
  * common case, and the reason this can run for every group on every connection. When they differ the
  * responder asks for a digest and the existing diff exchange takes over from there.
  *
- * @returns `true` when a probe left the device.
+ * @returns what the group came to ({@link ReconcileOutcome}); `reconcileGroup` is `=== 'asked'`.
  */
-export async function reconcileGroup(
+export async function reconcileGroupOutcome(
   mlsService: Pick<
     IMlsService,
     'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup' | 'isGroupActive'
@@ -679,7 +736,7 @@ export async function reconcileGroup(
    * deferred; only the line moves. A single-group trigger keeps its own line.
    */
   inPass = false
-): Promise<boolean> {
+): Promise<ReconcileOutcome> {
   const short = groupId.slice(0, 8);
 
   // A DISTRIBUTION GROUP HAS NO HISTORY TO RECONCILE, and this is the one door every trigger comes
@@ -708,7 +765,7 @@ export async function reconcileGroup(
   //
   // Silent, because there is nothing here for a reader to act on: not asking is the correct and
   // permanent behaviour for this kind of group, not a degradation of anything.
-  if (mlsService.isDistributionGroup(groupId)) return false;
+  if (mlsService.isDistributionGroup(groupId)) return 'skipped';
 
   // AND A GROUP THIS DEVICE HOLDS NO LEAF IN CANNOT BE PROBED, WHICH THE LOCAL STORE KNOWS AND THE
   // SWEEP USED TO LEARN BY BEING REFUSED. Measured on DEL-1, 2026-09-05: seconds after a peer
@@ -747,7 +804,7 @@ export async function reconcileGroup(
     log(
       `[HISTORY_RECONCILE] ${short}… is held but this device has no leaf in it - nothing to ask until a Welcome arrives`
     );
-    return false;
+    return 'skipped';
   }
 
   // A FRESH ASK STARTS A FRESH WALK. `exclude` is empty for every ordinary trigger, so this is the
@@ -778,7 +835,7 @@ export async function reconcileGroup(
     log(
       `[HISTORY_RECONCILE] ${short}… was asked ${PROBE_COALESCE_MS / 1000}s ago at most - not asking again, that exchange is still the one that repairs this`
     );
-    return false;
+    return 'skipped';
   }
 
   if (!sendProbe) {
@@ -786,7 +843,7 @@ export async function reconcileGroup(
     // that raised it, so this ask is the only remaining trace of the gap - see `no-probe-sender`.
     deferred.set(groupId, 'no-probe-sender');
     log(`[HISTORY_RECONCILE] no probe sender yet - ${short}… deferred until one is installed`);
-    return false;
+    return 'skipped';
   }
 
   // THE WINDOW IS RESERVED BEFORE THE FIRST AWAIT, and released again on every path that does not
@@ -846,7 +903,7 @@ export async function reconcileGroup(
     log(
       `[HISTORY_RECONCILE] could not reach the service for ${short}…: ${String(e).slice(0, 120)}`
     );
-    return false;
+    return 'unreachable';
   }
 
   if (outcome?.refused) {
@@ -859,7 +916,7 @@ export async function reconcileGroup(
     log(
       `[HISTORY_RECONCILE] the service refused the history ask for ${short}… (${outcome.refused}) - no member elected, no probe sent`
     );
-    return false;
+    return 'skipped';
   }
 
   if (outcome?.noPeerOnline) {
@@ -886,7 +943,7 @@ export async function reconcileGroup(
         log(
           `[HISTORY_RECONCILE] the only member online for ${short}… is the one that answered nothing - putting it back rather than claiming a coverage nobody stated`
         );
-        return false;
+        return 'skipped';
       }
       if (cannotRepair && cannotRepair.size > 0) {
         // THE END OF THE WALK ON AN ANSWER, not on a silence: every member the server could reach
@@ -899,7 +956,7 @@ export async function reconcileGroup(
         log(
           `[HISTORY_RECONCILE] every reachable member (${outcome.excludedOnline}) holds nothing ${short}… lacks - ${cannotRepair.size} said so; the frames this device cannot read wait for a member that holds them`
         );
-        return false;
+        return 'skipped';
       }
       // THE TERMINATION PROOF, and the reason this walk cannot run away. Every member that was
       // reachable has already stated its coverage, so there is nobody left who could close the gap -
@@ -910,14 +967,14 @@ export async function reconcileGroup(
       log(
         `[HISTORY_RECONCILE] every reachable member (${outcome.excludedOnline}) has stated its coverage for ${short}… - nothing more to ask`
       );
-      return false;
+      return 'skipped';
     }
     // The server elects the responder, so it already knows there was none. Remembered only so the
     // peer-online edge can pick it up - it is not evidence that anything is missing.
     deferred.set(groupId, 'no-peer-online');
     if (!inPass)
       log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
-    return false;
+    return 'no-peer';
   }
 
   if (excluding.length > 0 && outcome?.target && excludes(excluding, outcome.target)) {
@@ -929,7 +986,7 @@ export async function reconcileGroup(
     log(
       `[HISTORY_COVERAGE] election for ${short}… returned ${outcome.target}, which we asked it to skip - the coverage walk stops here`
     );
-    return false;
+    return 'skipped';
   }
 
   const sent = await sendProbe(groupId, { incomplete }).catch((e) => {
@@ -940,7 +997,7 @@ export async function reconcileGroup(
     // The election went out but the probe did not, so the responder is waiting for something that
     // will never arrive. Let the next edge ask again rather than leaving the group coalesced out.
     asked.delete(groupId);
-    return false;
+    return 'skipped';
   }
   // CLEARED ONLY ONCE AN ASK ACTUALLY LEFT THE DEVICE. Clearing it on the election - which is where
   // it used to sit - discharged the deferral on the strength of a round trip that asks nobody
@@ -952,7 +1009,25 @@ export async function reconcileGroup(
   // that was never asked anything.
   if (outcome?.target) electedFor.set(groupId, outcome.target);
   log(`[HISTORY_RECONCILE] asked ${short}… whether we hold the same history`);
-  return true;
+  return 'asked';
+}
+
+/**
+ * What one reconciliation of one group came to, decided where it is thrown (review of #4217: the
+ * pass counted "nobody online" from a deferral record that an earlier call could have left behind):
+ * - `asked`: a probe left the device;
+ * - `no-peer`: the election found nobody online (deferred for the peer-online edge);
+ * - `unreachable`: the election never left the device (transport failure) - nothing was learnt;
+ * - `skipped`: nothing to ask, by a decision (a distribution group, no leaf, coverage stated, a
+ *   probe that failed to encrypt).
+ */
+export type ReconcileOutcome = 'asked' | 'no-peer' | 'unreachable' | 'skipped';
+
+/** {@link reconcileGroupOutcome} read as the boolean every single-group trigger wants. */
+export async function reconcileGroup(
+  ...args: Parameters<typeof reconcileGroupOutcome>
+): Promise<boolean> {
+  return (await reconcileGroupOutcome(...args)) === 'asked';
 }
 
 /**
@@ -1267,6 +1342,8 @@ export async function reconcileAllGroups(
   // The first reason the pass was told to stop, and how many groups it left unasked.
   let stoppedBecause: string | null = null;
   let leftUnasked = 0;
+  // Elections that never left the device: the pass did not compare those groups, so it is not whole.
+  let unreachable = 0;
 
   const started = Date.now();
   // At most `NETWORK_READ_CONCURRENCY` elections in flight: the pass is bounded by the slowest
@@ -1287,11 +1364,18 @@ export async function reconcileAllGroups(
         coalesced++;
         return;
       }
-      if (await reconcileGroup(mlsService, groupId, log, Date.now(), [], 'stated-coverage', true)) {
-        askedGroups.push(groupId);
-      } else if (deferred.get(groupId) === 'no-peer-online') {
-        noPeer++;
-      }
+      const outcome = await reconcileGroupOutcome(
+        mlsService,
+        groupId,
+        log,
+        Date.now(),
+        [],
+        'stated-coverage',
+        true
+      );
+      if (outcome === 'asked') askedGroups.push(groupId);
+      else if (outcome === 'no-peer') noPeer++;
+      else if (outcome === 'unreachable') unreachable++;
     },
     (groupId) => groupId.slice(0, 8)
   );
@@ -1310,17 +1394,24 @@ export async function reconcileAllGroups(
       ? `, ${coalesced} already asked within ${PROBE_COALESCE_MS / 1000}s and not asked again`
       : '';
   const waiting = noPeer > 0 ? `, ${noPeer} with no member online (asked when one returns)` : '';
-  log(
-    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked${swallowed}${waiting} in ${Date.now() - started} ms`
-  );
+  const unreached =
+    unreachable > 0 ? `, ${unreachable} whose election never left the device (owed again)` : '';
+  // ONE PASS LINE, and it says which end the pass had: a pass that stopped is never also "complete".
+  // The stop is EXPECTED and necessary (the app left the screen, the link is down); naming it keeps a
+  // reader from looking for an outage.
   if (stoppedBecause) {
-    // EXPECTED and necessary: the pass ended early on a fact (the app left the screen, the server
-    // cannot be reached), and the line names which, so a reader does not look for an outage.
     log(
-      `[HISTORY_RECONCILE] pass stopped, ${stoppedBecause} - ${leftUnasked}/${total} group(s) left unasked and owed again`
+      `[HISTORY_RECONCILE] reconciliation pass stopped, ${stoppedBecause} - ${askedGroups.length}/${total} group(s) asked, ${leftUnasked} left unasked and owed again${swallowed}${waiting}${unreached} in ${Date.now() - started} ms`
+    );
+  } else {
+    log(
+      `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked${swallowed}${waiting}${unreached} in ${Date.now() - started} ms`
     );
   }
-  return { asked: askedGroups, complete: stoppedBecause === null };
+  return {
+    asked: askedGroups,
+    complete: stoppedBecause === null && unreachable === 0 && failures.length === 0,
+  };
 }
 
 /**

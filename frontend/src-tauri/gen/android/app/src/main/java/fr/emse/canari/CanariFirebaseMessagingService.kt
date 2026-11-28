@@ -2667,7 +2667,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ) : EncryptBatch
 
             /** The whole batch failed; [prospect] says whether a later drain can do better. */
-            data class Failed(val prospect: OutboxRetry.Prospect) : EncryptBatch
+            data class Failed(val prospect: OutboxRetry.Prospect, val why: String = "") : EncryptBatch
         }
 
         /**
@@ -2776,7 +2776,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ciphertextsOf = when (val batch = encryptQueuedMessages(context, service, ctx, entries)) {
                 is EncryptBatch.Encrypted -> batch
                 is EncryptBatch.Failed -> {
-                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
+                    // THE ONE LINE of a failed batch: the prospect and the native cause ride here (at warn,
+                    // which the exported log keeps; an info line reaches logcat only), so a NOT_YET that
+                    // hides an untyped OpenMls fault still names it.
+                    Log.w(TAG, "drainOutboxBackground: batch encrypt failed (${batch.prospect}${if (batch.why.isEmpty()) "" else ": ${batch.why}"}) -> ${entries.size} message(s) stay queued")
                     return List(entries.size) { batch.prospect }
                 }
             }
@@ -2918,12 +2921,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // CLASSIFIED WHERE IT WAS THROWN (Rust `SendBatchError`): a key that does not
                     // open the state is BLOCKED, a refused write or a passing failure NOT_YET.
                     val prospect = OutboxRetry.Prospect.of(json.optString("prospect").takeIf { it.isNotEmpty() }, batch = true)
-                    // NOT_YET is the foreground guard (or a passing refusal) working as designed: the
-                    // entries stay queued, and the drain says so at warn. Only a batch that can never go
-                    // from this device (BLOCKED) is an error.
-                    val line = "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})"
-                    if (prospect == OutboxRetry.Prospect.NOT_YET) Log.i(TAG, line) else Log.e(TAG, line)
-                    return EncryptBatch.Failed(prospect)
+                    // No line here: the drain's single warn line carries the prospect AND this cause.
+                    return EncryptBatch.Failed(prospect, json.optString("error").take(120))
                 }
                 val results = json.optJSONArray("results") ?: JSONArray()
                 val out = mutableMapOf<String, String>()
@@ -4905,7 +4904,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         welcomeB64: String,
         ratchetTreeB64: String,
-    ): String
+    ): String?
 
     /**
      * Encrypts a BATCH of pending outgoing messages (text/reply) against the live epoch, loading
@@ -6928,12 +6927,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .build()
             enqueueWorkerIfHealthy(workRequest)
         } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Failed) {
-            // The cause is CLASSIFIED WHERE IT WAS THROWN (Rust `BackgroundJoinError`). A refused write
-            // is the app's own load taking the join (NOT_YET): said at warn with its cause. Any other
-            // cause means this Welcome never installs from this state: an error.
+            // The cause is CLASSIFIED WHERE IT WAS THROWN, from the typed MlsError (Rust
+            // `BackgroundJoinError`). SAME LEVELS AS THE SEND PATH: NOT_YET is warn (the app's own
+            // load takes the join, the entries stay queued), anything that never installs is error.
             val line = "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)} " +
                 "cause=${joinAnswer.cause} prospect=${joinAnswer.prospect}"
             if (joinAnswer.prospect == OutboxRetry.Prospect.NOT_YET) Log.w(TAG, line) else Log.e(TAG, line)
+        } else if (joinAnswer is BackgroundJoinAnswer.Outcome.Unreadable) {
+            // An answer outside the contract (a newer native build, a null): never guessed at.
+            Log.e(TAG, "processReceivedWelcomeBackground: join answer unreadable group=${ConversationRef.of(groupId)} raw=${joinAnswer.raw?.take(60)}")
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,

@@ -9,6 +9,8 @@ import { refusalFromResponse, ApiRefusalError } from '$lib/utils/apiRefusalError
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /** The page of a site that redeems a handoff token; the token rides in the fragment after it. */
 const HANDOFF_LANDING_PATH = '/auth/handoff';
@@ -49,6 +51,15 @@ class HandoffUrlMismatchError extends Error {
  * while the first is pending is the SAME open, and is dropped.
  */
 const opening = new Set<string>();
+
+/**
+ * THE TAP WAS TAKEN: a mint takes seconds and nothing else on screen moves, which is what made the
+ * same link get tapped again. One toast per open that starts (a dropped second tap shows none), so
+ * the pending state is the `opening` set made visible.
+ */
+function showOpeningFeedback(): void {
+  showToast(m.ecosystem_site_opening(), 'info', 3000);
+}
 
 /** Said once per app run: an estate without the handoff opens every site plainly by design. */
 let notOfferedSaid = false;
@@ -146,8 +157,8 @@ function urlWithoutHandoff(site: EcosystemSite, dest: string, err: unknown): str
 }
 
 /** Opens `url` in the system browser (native shells). A rejected open is logged, never thrown. */
-function openInSystemBrowser(url: string, site: EcosystemSite): void {
-  void import('@tauri-apps/plugin-opener')
+function openInSystemBrowser(url: string, site: EcosystemSite): Promise<void> {
+  return import('@tauri-apps/plugin-opener')
     .then(({ openUrl }) => openUrl(url))
     .catch((e: unknown) =>
       // The class only: the URL may carry a handoff token, and an opener error can quote it.
@@ -201,6 +212,8 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
       return;
     }
     opening.add(key);
+    showOpeningFeedback();
+    // The guard is released only once the OPENER has settled too (it returns its promise).
     void mintSiteHandoff(site, dest)
       .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
       .then((url) => openInSystemBrowser(url, site))
@@ -222,6 +235,7 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   // The opener link is cut before the tab is steered: the site must not reach back into Canari.
   tab.opener = null;
   opening.add(key);
+  showOpeningFeedback();
   void mintSiteHandoff(site, dest)
     .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
     .then((url) => {

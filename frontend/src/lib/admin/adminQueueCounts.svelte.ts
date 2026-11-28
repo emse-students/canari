@@ -145,7 +145,11 @@ let tabChannel: BroadcastChannel | null = null;
 /** How many followers are running: a socket reopen asks nothing of a reader who has no badge. */
 let following = 0;
 
-/** Asks for the counts unless the app is hidden - its return to the foreground asks anyway. */
+/**
+ * Asks for the counts unless the app is hidden. Its return asks anyway: through the visibility edge on
+ * the web, and on a native shell through the socket reopen the resume always causes
+ * ({@link followAdminQueueCounts}).
+ */
 function recountIfVisible(why: string): void {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     Log.d('adminQueueCounts', `${why} while hidden: asked on the return to the foreground`);
@@ -179,8 +183,9 @@ export function adminQueuesChanged(why: 'frame' | 'socket-open'): void {
  * 2026-11-18): the counts are asked at once, then again on each `admin.queues.changed` frame the
  * server sends when an item enters or leaves a queue this reader may act on, on every socket
  * (re)open (a frame sent while it was down is never replayed) - both through
- * {@link adminQueuesChanged}, relayed to the other tabs - and on the app coming back to the
- * foreground and the link coming back. No timer. The CALLER decides when - the root layout runs it inside an
+ * {@link adminQueuesChanged}, relayed to the other tabs - and on the link coming back. The return to
+ * the foreground asks on the WEB (the visibility edge); on a native shell it is the socket reopen
+ * that asks, once, so the visibility edge asks nothing there. No timer. The CALLER decides when - the root layout runs it inside an
  * effect over the tier stores, so a tier published late starts it and an account that loses every
  * tier stops it. Returns the cleanup.
  */

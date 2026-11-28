@@ -1110,10 +1110,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     welcome_b64: jni::objects::JString,
     ratchet_tree_b64: jni::objects::JString,
 ) -> jni::sys::jstring {
-    use mobile::background::BackgroundJoinError::StateUnreadable;
-    // A marshalling fault is thrown as `StateUnreadable`: nothing the Welcome says can be judged.
+    use mobile::background::BackgroundJoinError::Jni;
+    // A marshalling fault is thrown as `Jni`: nothing the Welcome says can be judged (NOT_YET).
     let result = (|| -> Result<(), mobile::background::BackgroundJoinError> {
-        let jni = |e: jni::errors::Error| StateUnreadable(format!("jni: {e}"));
+        let jni = |e: jni::errors::Error| Jni(e.to_string());
         let files_dir_str: String = env.get_string(&files_dir).map_err(jni)?.into();
         let state_vec = env.convert_byte_array(&state_bytes).map_err(jni)?;
         let key_b64_str: String = env.get_string(&key_b64).map_err(jni)?.into();
@@ -1142,9 +1142,15 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             e.token()
         }
     };
-    env.new_string(token)
-        .unwrap_or_else(|_| env.new_string("failed:state-unreadable:never").unwrap())
-        .into_raw()
+    // A string that cannot be built is logged and answered null (read as unreadable by Kotlin): an
+    // `unwrap` here would panic across the FFI boundary.
+    match env.new_string(token) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            log::error!("[BG_JOIN] nativeProcessWelcomeBackground: answer string not built: {e}");
+            std::ptr::null_mut()
+        }
+    }
 }
 
 // ─── A key group joined from a salon push (channel-encryption section 26) ────────────────────

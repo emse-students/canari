@@ -665,6 +665,44 @@ describe('reconcileAllGroups', () => {
     ).toHaveLength(1);
   });
 
+  it('says ONE pass line, and a stopped pass is never also complete', async () => {
+    let reads = 0;
+    await reconcileAllGroups(service(), ['a', 'b', 'c'], log, () =>
+      ++reads > 1 ? 'offline or server unreachable' : null
+    );
+    const said = log.mock.calls
+      .map(([m]) => String(m))
+      .filter((m) => m.includes('reconciliation pass'));
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain('pass stopped, offline or server unreachable');
+  });
+
+  it('does not count a stale deferral as "no member online" for a group skipped this time', async () => {
+    // The group was deferred by an earlier call; this pass skips it (no leaf), so it is not one that
+    // found nobody online NOW.
+    await reconcileGroup(service({ noPeerOnline: true }), GROUP, log);
+    log.mockClear();
+    const mls = service();
+    mls.isGroupActive.mockResolvedValue(false);
+    await reconcileAllGroups(mls, [GROUP], log);
+    expect(log.mock.calls.map(([m]) => String(m)).join(' | ')).not.toContain(
+      'with no member online'
+    );
+  });
+
+  it('is not complete when an election never left the device', async () => {
+    const result = await reconcileAllGroups(
+      service(new Error('Failed to fetch')),
+      [GROUP, OTHER],
+      log
+    );
+    expect(result.complete).toBe(false);
+    expect(result.asked).toEqual([]);
+    expect(log.mock.calls.map(([m]) => String(m)).join(' | ')).toContain(
+      '2 whose election never left the device'
+    );
+  });
+
   it('is complete when nothing told it to stop', async () => {
     const result = await reconcileAllGroups(service(), [GROUP, OTHER], log, () => null);
     expect(result).toEqual({ asked: [GROUP, OTHER], complete: true });
