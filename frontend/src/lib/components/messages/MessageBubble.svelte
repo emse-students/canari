@@ -706,6 +706,22 @@
     );
   }
 
+  /**
+   * A PRESS THAT STARTS ON A VOICE NOTE'S WAVEFORM IS ITS SCRUBBER'S (owner, 1.8.2: "I cannot seek").
+   * The bubble read every press as one of its own: held for 420 ms it opened the actions sheet, and
+   * dragged sideways it became a reply swipe whose `touchmove` claim cancelled the stroke - so the
+   * finger that was moving the playhead moved the message instead. The scrubber says so by being a
+   * `[data-scrub]`; the bubble reads that fact at the press and arms neither gesture.
+   */
+  function pressOwnedByScrub(e: Event): boolean {
+    const target = e.target as Element | null;
+    return (
+      target !== null &&
+      typeof target.closest === 'function' &&
+      target.closest('[data-scrub]') !== null
+    );
+  }
+
   /** The actions sheet, opened from a video's chip - the long press it replaces over a video. */
   function openActionsFromVideo() {
     Log.d('MESSAGE', `actions of ${messageId} opened from its video's chip`);
@@ -724,6 +740,11 @@
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
+
+    if (pressOwnedByScrub(e)) {
+      replyGesture = null;
+      return;
+    }
 
     // Long press: arm on any non-mouse touch event on mobile - never over a video, whose hold pauses.
     if (pointerType !== 'mouse' && isMobile && !pressOwnedByVideo(e)) {
@@ -1283,6 +1304,7 @@
               e.preventDefault();
               // A phone raises `contextmenu` for a touch hold too: over a video it is the player's
               // pause, never the sheet.
+              if (pressOwnedByScrub(e)) return;
               if (pressOwnedByVideo(e)) {
                 Log.d(
                   'MESSAGE',

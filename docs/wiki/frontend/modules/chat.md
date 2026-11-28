@@ -3139,6 +3139,23 @@ type MessageEnvelope =
 `appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
 MessageEnvelope).
 
+### A voice note's waveform is its scrubber
+
+`VoiceMessagePlayer`'s waveform is a `role="slider"` on pointer events (touch and mouse), with arrow
+keys, Home and End, and `aria-valuenow`/`aria-valuetext`; the arithmetic is in
+`utils/audio/scrub.ts`. It replaced a transparent `input[type=range]` that could not work in a
+bubble: **the bubble reads every press as its own** - held 420 ms it opens the actions sheet, dragged
+sideways it is a reply swipe that claims the `touchmove` - so the finger moved the message, not the
+playhead (owner, 1.8.2). The scrubber is marked `data-scrub`, and `MessageBubble.pressOwnedByScrub`
+arms neither gesture for a press that starts on it (the same contract as `[data-video-player]`).
+
+**The note's place outlives its element.** The player keeps where the note stands under
+`MediaRef.mediaId` (`rememberVoicePosition`, bounded to 64 notes, written on teardown and on every
+seek, forgotten at the end) and a player rebuilt for the same attachment resumes there, playing if it
+was. A reaction itself does not remount the row (`MessageBubble.voiceReaction.svelte.test.ts` pins
+it: same `<audio>`, same position); the memory is what keeps a rebuild from the other causes (a
+virtualised row, a media effect re-running) from starting the note over.
+
 ### A voice note declares itself, because nothing downstream can tell
 
 **A recording and an imported `.m4a` are the same bytes with the same mime type.** By the time a
