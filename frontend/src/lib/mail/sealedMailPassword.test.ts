@@ -2,6 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '$lib/utils/accountLocalKeys';
 import { moveRememberedMailPassword } from '$lib/utils/chat/pinChange';
+
+const native = vi.hoisted(() => ({ erased: [] as string[] }));
+vi.mock('./mailWatchCursor', () => ({
+  eraseNativeMailPassword: async (userId: string) => {
+    native.erased.push(userId);
+  },
+}));
 import {
   forgetMailPassword,
   readRememberedMailPassword,
@@ -20,7 +27,10 @@ const KEY_C = btoa(String.fromCharCode(...new Uint8Array(32).fill(3)));
 const USER = 'user-a';
 const REMEMBERED = { account: 'ada@etu.emse.fr', password: 'p4ssw0rd-é' };
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  native.erased = [];
+});
 
 describe('the remembered mailbox password', () => {
   it('is stored sealed, opens under its key only, and is forgotten on demand', async () => {
@@ -37,6 +47,13 @@ describe('the remembered mailbox password', () => {
     expect(await readRememberedMailPassword(USER, KEY_B)).toEqual({ kind: 'unopenable' });
     forgetMailPassword(USER);
     expect(localStorage.getItem(ACCOUNT_KEY.mailSealedPassword(USER))).toBeNull();
+  });
+
+  it('forgetting it erases the Android native copy too, even when the page entry is already gone (lot 4b)', async () => {
+    await rememberMailPassword(USER, KEY_A, REMEMBERED);
+    forgetMailPassword(USER);
+    forgetMailPassword(USER);
+    expect(native.erased).toEqual([USER, USER]);
   });
 
   it('an entry this build did not write is unopenable, never parsed as a password', async () => {

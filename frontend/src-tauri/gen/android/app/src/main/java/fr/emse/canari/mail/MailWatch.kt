@@ -4,38 +4,71 @@ package fr.emse.canari.mail
  * THE MAIL WATCH SERVICE'S DECISIONS, WITH NOTHING FROM ANDROID IN THEM (lot 4,
  * docs/wiki/mail-client-transport.md#as-built---lot-4).
  *
- * The new-mail watcher runs in the page; [fr.emse.canari.MailWatchService] only keeps the process in
- * the foreground while it does (the persistent connection of D11). Every command reaching the service
+ * The new-mail watcher runs in the page while there is one; [fr.emse.canari.MailWatchService] keeps
+ * the process in the foreground while it does (the persistent connection of D11), and with no page
+ * runs the native watcher of lot 4b ([MailWatchMode.NATIVE], `NativeMailWatch.kt`). Every command reaching the service
  * goes through [decideMailWatch], and every notice the page hands the native builder through
  * [mailNoticeOf] - pure, so `android-tests` runs both on a JVM (`MailWatchTest`).
  *
  * Compiled by the JVM test project too, so nothing here may import Android (see `PushRecoveryLadder`).
  */
 
-/** The persistent notification while the service holds the foreground: Paraglide text from the page. */
+/** The persistent notification while the service holds the foreground: the page's Paraglide text, or the native resources' at a resume. */
 data class MailWatchSpec(val title: String, val text: String)
+
+/** Who watches while the service holds the foreground (lot 4b). */
+enum class MailWatchMode {
+    /** Nothing held. */
+    OFF,
+
+    /** The page's watcher runs (`mailWatcher.ts`); the service only keeps the process's network. */
+    PAGE,
+
+    /** No page: the native watcher runs from the sealed copy ([NativeVaultRecord]). */
+    NATIVE,
+}
 
 /** What reaches the service. */
 sealed interface MailWatchCommand {
     /** The page's watch runs: hold the foreground with [spec]. */
     data class Start(val spec: MailWatchSpec) : MailWatchCommand
 
-    /** The page's watch stopped (the switch off, a sign-out, D8, `mail_mode` off). */
+    /** The page's watch is not wanted (the switch off, a sign-out, D8, `mail_mode` off): ALL of it ends. */
     data class Stop(val reason: String) : MailWatchCommand
 
-    /** The page is gone (the activity destroyed): nothing watches any more. */
+    /** The page is gone (the activity destroyed, or a new document replaced it). */
     data object PageGone : MailWatchCommand
 
     /** The user swiped the app away: the page goes with the task. */
     data object TaskRemoved : MailWatchCommand
+
+    /** No page, and a reason to watch again: the phone booted, the app was updated, or the system
+     *  restarted the service after killing the process. [spec] is the native resources' text. */
+    data class Resume(val spec: MailWatchSpec) : MailWatchCommand
+
+    /**
+     * The native run [run] ended by itself (the password refused, the account closed, the sealed copy
+     * erased). [run] is the id [fr.emse.canari.NativeMailWatcher.start] gave it: the end of an EARLIER
+     * run, delivered after a new one started, ends nothing.
+     */
+    data class NativeEnded(val reason: String, val run: Long) : MailWatchCommand
+
+    /** The sealed copy was forgotten and every native run joined (`NativeMailWatcher.forget`). */
+    data object Forgotten : MailWatchCommand
 }
 
 /** What the service does about a command. */
 sealed interface MailWatchEffect {
-    data class EnterForeground(val spec: MailWatchSpec) : MailWatchEffect
+    data class EnterForeground(val spec: MailWatchSpec, val mode: MailWatchMode) : MailWatchEffect
 
-    /** Already in the foreground: the notification's text is redrawn (a language change). */
+    /** Already in the foreground for the page: the notification's text is redrawn (a language change). */
     data class Refresh(val spec: MailWatchSpec) : MailWatchEffect
+
+    /** The page takes the watch back: the native run stops (the page claimed it first, joined). */
+    data class HandToPage(val spec: MailWatchSpec) : MailWatchEffect
+
+    /** The page went and a sealed copy is there: the foreground stays, the native watcher starts. */
+    data object HandToNative : MailWatchEffect
 
     data class Leave(val reason: String) : MailWatchEffect
 
@@ -43,18 +76,62 @@ sealed interface MailWatchEffect {
 }
 
 /**
- * The one transition table. THE SERVICE NEVER OUTLIVES THE PAGE: the watcher lives in the page, so a
- * foreground held with no page would be a persistent notification promising a watch nobody runs.
+ * The one transition table. [armed] is whether a sealed copy exists (the user ticked "remember" AND
+ * turned the switch on - the page arms it only then, and every forget path erases it). [currentRun]
+ * is the id of the native run the service started last; [nativeAlive] whether a native run is
+ * going (a page that claimed it and then went leaves NATIVE with none - the next page-gone starts one);
+ * [persistent] the user's persistent-watch choice armed with the copy ("Connexion permanente"): off,
+ * the copy only serves the push path's check and NO persistent native watch is started or resumed.
+ *
+ * - THE PAGE WINS while it watches: a start hands the watch to it, from either state.
+ * - A page that goes leaves the watch to the native watcher when armed, else ends it.
+ * - NOTHING BUT A STOP, A FORGET OR ITS OWN END ENDS A NATIVE RUN: it is the watch with no page.
  */
-fun decideMailWatch(running: Boolean, command: MailWatchCommand): MailWatchEffect = when (command) {
-    is MailWatchCommand.Start ->
-        if (running) MailWatchEffect.Refresh(command.spec) else MailWatchEffect.EnterForeground(command.spec)
+fun decideMailWatch(
+    mode: MailWatchMode,
+    command: MailWatchCommand,
+    armed: Boolean,
+    currentRun: Long = 0,
+    nativeAlive: Boolean = true,
+    persistent: Boolean = true,
+): MailWatchEffect = when (command) {
+    is MailWatchCommand.Start -> when (mode) {
+        MailWatchMode.OFF -> MailWatchEffect.EnterForeground(command.spec, MailWatchMode.PAGE)
+        MailWatchMode.PAGE -> MailWatchEffect.Refresh(command.spec)
+        MailWatchMode.NATIVE -> MailWatchEffect.HandToPage(command.spec)
+    }
     is MailWatchCommand.Stop ->
-        if (running) MailWatchEffect.Leave(command.reason) else MailWatchEffect.Ignore("stop with no watch held (${command.reason})")
-    MailWatchCommand.PageGone ->
-        if (running) MailWatchEffect.Leave("the page is gone") else MailWatchEffect.Ignore("page gone with no watch held")
-    MailWatchCommand.TaskRemoved ->
-        if (running) MailWatchEffect.Leave("the task was removed from Recents") else MailWatchEffect.Ignore("task removed with no watch held")
+        if (mode != MailWatchMode.OFF) MailWatchEffect.Leave(command.reason) else MailWatchEffect.Ignore("stop with no watch held (${command.reason})")
+    MailWatchCommand.PageGone, MailWatchCommand.TaskRemoved -> {
+        val what = if (command == MailWatchCommand.PageGone) "the page is gone" else "the task was removed from Recents"
+        when (mode) {
+            MailWatchMode.PAGE -> when {
+                !armed -> MailWatchEffect.Leave("$what, nothing sealed")
+                !persistent -> MailWatchEffect.Leave("$what, the persistent watch is off")
+                else -> MailWatchEffect.HandToNative
+            }
+            MailWatchMode.NATIVE -> when {
+                nativeAlive -> MailWatchEffect.Ignore("$what - the native watcher runs without it")
+                armed && persistent -> MailWatchEffect.HandToNative
+                else -> MailWatchEffect.Leave("$what, no native run and no persistent watch armed")
+            }
+            MailWatchMode.OFF -> MailWatchEffect.Ignore("$what with no watch held")
+        }
+    }
+    is MailWatchCommand.Resume -> when {
+        mode != MailWatchMode.OFF -> MailWatchEffect.Ignore("resume while already watching")
+        !armed -> MailWatchEffect.Ignore("resume with nothing sealed")
+        !persistent -> MailWatchEffect.Ignore("resume with the persistent watch off - the copy serves the push check only")
+        else -> MailWatchEffect.EnterForeground(command.spec, MailWatchMode.NATIVE)
+    }
+    is MailWatchCommand.NativeEnded -> when {
+        mode != MailWatchMode.NATIVE -> MailWatchEffect.Ignore("a native end while not native (${command.reason})")
+        command.run != currentRun -> MailWatchEffect.Ignore("the end of an earlier native run (${command.reason})")
+        else -> MailWatchEffect.Leave(command.reason)
+    }
+    MailWatchCommand.Forgotten ->
+        if (mode == MailWatchMode.NATIVE) MailWatchEffect.Leave("the sealed copy is forgotten")
+        else MailWatchEffect.Ignore("forgotten - the page's watch (if any) is the page's to stop")
 }
 
 /** The tag every new-mail notification is posted under: its id is the message's, in its own space. */
@@ -112,7 +189,22 @@ fun mailSummaryOf(count: Long, title: String, body: String, publicTitle: String,
 
 /** What the page's bridge may ask, one JSON message each (`androidMailWatch.ts`). */
 enum class MailBridgeOp(val wire: String) {
-    START("start"), STOP("stop"), NOTIFY("notify"), SUMMARY("summary");
+    START("start"), STOP("stop"), NOTIFY("notify"), SUMMARY("summary"),
+
+    /** A new document: the page before it is gone (`PageGone`). */
+    PAGE("page"),
+
+    /** The page's watcher is about to run: the native run stops, joined, then `handed` answers. */
+    CLAIM("claim"),
+
+    /** Seal the password for the native watcher (lot 4b): only with "remember" ticked AND the switch on. */
+    ARM("arm"),
+
+    /** EVERY forget path: erase the sealed copy AND stop every native run, as one op (review B1). */
+    FORGET("forget"),
+
+    /** The page's watcher stopped: a push check may read the delta again (review minor 3). */
+    RELEASE("release");
 
     companion object {
         fun of(wire: String): MailBridgeOp? = entries.firstOrNull { it.wire == wire }
@@ -124,4 +216,20 @@ enum class MailBridgeOp(val wire: String) {
  * through - a frame inside the page (a mail's sandbox) never drives the service or posts a notice.
  */
 fun mailBridgeMessageAccepted(isMainFrame: Boolean, origin: String?, allowedOrigins: Set<String>): Boolean =
-    isMainFrame && origin != null && ("*" in allowedOrigins || origin in allowedOrigins)
+    isMainFrame && origin != null && origin in allowedOrigins
+
+/** The release app's one origin. */
+const val MAIL_BRIDGE_RELEASE_ORIGIN = "http://tauri.localhost"
+
+/**
+ * The origins the bridge listens to: the app's own, and in a DEBUG build the dev server's too
+ * (`devUrl`, and `TAURI_DEV_HOST`'s when a phone loads it over the network: [devHost]) - never a
+ * wildcard (review minor 8).
+ */
+fun mailBridgeOrigins(debug: Boolean, devHost: String?): Set<String> {
+    if (!debug) return setOf(MAIL_BRIDGE_RELEASE_ORIGIN)
+    val origins = linkedSetOf(MAIL_BRIDGE_RELEASE_ORIGIN, "http://127.0.0.1:1420", "http://localhost:1420")
+    val host = devHost?.trim().orEmpty()
+    if (host.isNotEmpty() && host.none { it == '/' || it == ':' || it.isWhitespace() }) origins += "http://$host:1420"
+    return origins
+}

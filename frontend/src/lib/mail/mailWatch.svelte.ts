@@ -2,6 +2,10 @@ import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import {
   NATIVE_MAIL_EVENT,
+  announceAndroidPageReplaced,
+  armAndroidMailWatch,
+  claimAndroidMailWatch,
+  releaseAndroidMailWatch,
   startAndroidMailService,
   stopAndroidMailService,
 } from '$lib/mobile/androidMailWatch';
@@ -17,7 +21,11 @@ import { currentMailClient, type MailClient } from './mailClient.svelte';
 import { postMailNotices } from './mailNotify';
 import type { MailSessionState } from './mailSession';
 import { MailWatcher, type CheckOutcome, type NewMail } from './mailWatcher';
-import { platformCursorStore, type MailCursorStore } from './mailWatchCursor';
+import {
+  eraseNativeMailPassword,
+  platformCursorStore,
+  type MailCursorStore,
+} from './mailWatchCursor';
 import { forgetMailNotificationsSwitch, mailNotificationsWanted } from './mailWatchSwitch.svelte';
 import { ZimbraSoapClient } from './soapClient';
 
@@ -33,8 +41,14 @@ import { ZimbraSoapClient } from './soapClient';
  *
  * - **Android**: the same, plus `MailWatchService` holding the foreground while it runs, so the
  *   watch survives the app leaving the screen (the persistent connection of D11). A stop is ALWAYS
- *   sent when the watch should not run - once at the document's start too, and on a `started` the
- *   page did not ask for - so a service a previous document left can never outlive its watcher.
+ *   sent when the watch should not run, and on a `started` for a page the page did not ask for.
+ *   **With no page, the NATIVE watcher (lot 4b)**: while the switch is on AND the password is
+ *   remembered, the page ARMS a Keystore-sealed copy of it (`arm`); when the page goes (a new
+ *   document says so with `page`), at boot and after the process is killed, the service runs the
+ *   native watcher from that copy. The page CLAIMS the watch before its own run starts (`claim`,
+ *   answered once the native run is joined), so one watcher runs at a time over the one cursor. A
+ *   fact READ false (the switch, the server, the mailbox ended, the password not remembered) erases
+ *   the copy (`eraseNativeMailPassword`).
  * - **iOS**: in the foreground it runs as anywhere; in the background iOS freezes the app, and the
  *   system's background refresh (`canari_ios.mm`, `BGAppRefreshTask`) asks the page for ONE check,
  *   when the system allows - best effort, no promise of immediacy (owner, 2026-11-27). The system is
@@ -66,6 +80,8 @@ export interface WatchFacts {
   wanted: boolean;
   state: MailSessionState['kind'];
   eligible: boolean;
+  /** Whether the open mailbox's password is remembered ("remember" ticked): `false` unless `ready`. */
+  remembered: boolean;
 }
 
 /** Whether the watcher runs under `facts`. Pure, for the test of the lifecycle. */
@@ -96,6 +112,20 @@ export function backgroundRefreshWanted(
   if (facts.state === 'signed_out')
     return previous !== null && previous !== 'signed_out' ? false : null;
   return facts.mailKnown ? true : null;
+}
+
+/**
+ * Whether Android's native watcher should hold a sealed copy of the password (lot 4b): the iOS flag's
+ * rule ({@link backgroundRefreshWanted}: only READ facts decide, an unknown one leaves it), plus the
+ * user's own "remember" - an open mailbox whose password is not remembered is a fact read false.
+ */
+export function nativeWatchWanted(
+  facts: WatchFacts,
+  previous: MailSessionState['kind'] | null
+): boolean | null {
+  const wanted = backgroundRefreshWanted(facts, previous);
+  if (wanted === true && facts.state === 'ready' && !facts.remembered) return false;
+  return wanted;
 }
 
 /** Whether the reader is looking at the Mail tab now: a new mail is then seen landing, not notified. */
@@ -171,8 +201,24 @@ export function pauseUntilRetry(ms: number, signal: AbortSignal): Promise<void> 
  * the others wait for the lock), or directly.
  */
 function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal): void {
+  if (isAndroidTauriRuntime()) {
+    // One watcher at a time over the one cursor: the native run is stopped and JOINED first.
+    void claimAndroidMailWatch().then(
+      () => {
+        if (!signal.aborted) watcher.start();
+      },
+      (err: unknown) => {
+        // Not started: a page run beside a native one would be two writers of one cursor.
+        Log.w(
+          'MAIL-WATCH',
+          `ERROR: the claim was not sent - the page watch does not start (${String(err)})`
+        );
+      }
+    );
+    return;
+  }
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-  if (!locks || isAndroidTauriRuntime() || isIosTauriRuntime()) {
+  if (!locks || isIosTauriRuntime()) {
     watcher.start();
     return;
   }
@@ -187,6 +233,27 @@ function runExclusive(userId: string, watcher: MailWatcher, signal: AbortSignal)
       if (signal.aborted) return;
       Log.w('MAIL-WATCH', `ERROR: the watch lock was not granted (${String(err)})`);
     });
+}
+
+/**
+ * Arms the native watcher's sealed copy for `client`, unless the decision moved on while the
+ * remembered password was read: `stillDecided` (the page's last decision is still this one) and the
+ * session's generation (no sign-out, closed account or new sign-in since) are re-read RIGHT BEFORE
+ * the arm is sent (review I3 of #4213). The native side orders an arm against a later forget on its
+ * own executor. `true` when sent.
+ */
+export async function armNativeCopyIfCurrent(
+  client: Pick<MailClient, 'userId' | 'session'>,
+  stillDecided: () => boolean
+): Promise<boolean> {
+  const generation = client.session.generation;
+  const remembered = await client.session.rememberedForNativeWatch();
+  if (!remembered) return false;
+  if (!stillDecided() || client.session.generation !== generation) {
+    Log.d('MAIL-WATCH', 'the native copy decision moved on - this arm is not sent');
+    return false;
+  }
+  return armAndroidMailWatch(client.userId, remembered.account, remembered.password);
 }
 
 /** Writes the iOS flag the background refresh reads. Logged; a failure is said, never thrown. */
@@ -233,9 +300,18 @@ export function watchMailNotifications(): void {
   let lastState: { client: MailClient; kind: MailSessionState['kind'] } | null = null;
   let lastWanted: { client: MailClient; wanted: boolean } | null = null;
   let lastFacts: WatchFacts | null = null;
+  /** The last native-copy decision acted on, keyed by what it was decided from (lot 4b). */
+  let lastNativeKey: string | null = null;
 
   const factsKey = (facts: WatchFacts) =>
     `${facts.mailOn}|${facts.wanted}|${facts.eligible}|${facts.state}`;
+
+  /** The page's run stopped: the native side may let a push check read again - unless a run took over. */
+  const releaseOnceStopped = (stopped: Promise<void>) => {
+    void stopped.then(() => {
+      if (!running) releaseAndroidMailWatch();
+    });
+  };
 
   const holdService = (run: boolean) => {
     if (!isAndroidTauriRuntime()) return;
@@ -263,6 +339,7 @@ export function watchMailNotifications(): void {
       running = null;
       ending.lock.abort();
       stopped = ending.watcher.stop(run ? 'another mailbox' : 'a fact turned false');
+      if (isAndroidTauriRuntime()) releaseOnceStopped(stopped);
     }
     if (run && !running && facts.client) {
       const watcher = watcherOf(facts.client);
@@ -288,6 +365,7 @@ export function watchMailNotifications(): void {
       // D8 erased the switch's key: the value this document read for it goes with it.
       forgetMailNotificationsSwitch(facts.client.userId);
     }
+    if (isAndroidTauriRuntime() && facts.client) applyNativeCopy(facts, previous, facts.client);
     if (isIosTauriRuntime()) {
       const flag = backgroundRefreshWanted(facts, previous);
       if (flag !== null && flag !== lastIosFlag) {
@@ -298,6 +376,24 @@ export function watchMailNotifications(): void {
     }
   };
 
+  /** Arms or erases the native watcher's sealed copy when what decides it changed (lot 4b). */
+  const applyNativeCopy = (
+    facts: WatchFacts,
+    previous: MailSessionState['kind'] | null,
+    client: MailClient
+  ) => {
+    const want = nativeWatchWanted(facts, previous);
+    if (want === null) return;
+    const key = `${client.userId}|${want}|${factsKey(facts)}|${facts.remembered}`;
+    if (key === lastNativeKey) return;
+    lastNativeKey = key;
+    if (!want) {
+      void eraseNativeMailPassword(client.userId);
+      return;
+    }
+    void armNativeCopyIfCurrent(client, () => lastNativeKey === key);
+  };
+
   runEndedListener = (client, reason) => {
     if (!running || running.client !== client || !lastFacts) return;
     Log.i('MAIL-WATCH', `the run ended by itself (${reason}) - released until a fact changes`);
@@ -306,6 +402,7 @@ export function watchMailNotifications(): void {
     ended.lock.abort();
     endedBy = { client, key: factsKey(lastFacts) };
     holdService(false);
+    if (isAndroidTauriRuntime()) releaseAndroidMailWatch();
   };
 
   $effect.root(() => {
@@ -318,25 +415,36 @@ export function watchMailNotifications(): void {
         wanted: client ? mailNotificationsWanted(client.userId) : false,
         state: client ? client.store.sessionState.kind : 'signed_out',
         eligible: client ? client.store.eligibility === 'eligible' : false,
+        remembered:
+          client?.store.sessionState.kind === 'ready'
+            ? client.store.sessionState.remembered
+            : false,
       };
       untrack(() => apply(facts));
     });
   });
 
   if (isAndroidTauriRuntime() && typeof window !== 'undefined') {
-    // A service a previous document of this process left holding the foreground has no watcher any
-    // more: told to stop once, now (the native side ignores a stop with nothing held).
-    stopAndroidMailService('a new document starts');
+    // The document before this one is gone: an armed watch goes native until this page claims it,
+    // an unarmed one ends (the native table, `decideMailWatch`).
+    announceAndroidPageReplaced();
     window.addEventListener(NATIVE_MAIL_EVENT, (event) => {
       const detail = (event as CustomEvent<{ kind?: string; code?: string }>).detail ?? {};
       Log.i(
         'MAIL-WATCH',
         `service: ${detail.kind ?? 'unreadable'}${detail.code ? ` (${detail.code})` : ''}`
       );
-      if (detail.kind === 'started' && !running) {
-        // A start that raced a stop: the watch it was for is gone, so it goes too.
+      if (detail.kind === 'started' && detail.code === 'page' && !running) {
+        // A page start that raced a stop: the watch it was for is gone, so it goes too. A NATIVE
+        // start is the watch with no page (boot, a restart) - this page claims it when it runs.
         serviceHeld = false;
         stopAndroidMailService('started with no watch running');
+        return;
+      }
+      if (detail.kind === 'armed' && detail.code === 'failed') {
+        // The copy was not sealed (a forget came first, the storage locked, a write failed): the
+        // next apply decides again rather than believing it armed.
+        lastNativeKey = null;
         return;
       }
       if (detail.kind === 'failed' || detail.kind === 'stopped') {

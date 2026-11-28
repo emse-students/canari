@@ -1,3 +1,4 @@
+import { SvelteDate } from 'svelte/reactivity';
 import { currentUserId, fetchMyProfile, type UserProfile } from '$lib/stores/user';
 import { authentikUrl } from '$lib/stores/auth';
 import { alumniLinkReminderDue, miconnectSourcesSettingsUrl } from './alumniLink';
@@ -33,7 +34,7 @@ export function followAlumniLinkReminder(): { readonly due: boolean; open: () =>
     };
   });
 
-  const due = $derived(!!profile && alumniLinkReminderDue(profile, new Date()) && !!target());
+  const due = $derived(!!profile && alumniLinkReminderDue(profile, new SvelteDate()) && !!target());
 
   return {
     get due() {

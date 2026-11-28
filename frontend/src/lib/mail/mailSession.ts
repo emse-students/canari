@@ -1,11 +1,12 @@
 import { Log } from '$lib/utils/Log';
-import { mailClassOf } from './eligibility';
+import { mailClassOf, normalizeMailAddress } from './eligibility';
 import { classifyMailFailure, MailError } from './mailErrors';
 import { eraseMailLocalData } from './mailLocalData';
 import type { MailAccount } from './mailTypes';
 import {
   forgetMailPassword,
   readRememberedMailPassword,
+  type RememberedMailPassword,
   rememberMailPassword,
 } from './sealedMailPassword';
 import type { HttpRequest, HttpResponse } from './http1';
@@ -101,9 +102,7 @@ function superseded(): MailError {
 }
 
 /** The address as Zimbra names it. */
-function normalized(address: string): string {
-  return address.trim().toLowerCase();
-}
+const normalized = normalizeMailAddress;
 
 export class MailSession {
   private token: string | null = null;
@@ -414,6 +413,32 @@ export class MailSession {
       });
     }
     return this.renewing;
+  }
+
+  /**
+   * The remembered password, for the Android native watcher's sealed copy (lot 4b), or `null`. Only
+   * from a `ready` mailbox whose password is remembered, opened under the device key held NOW, and
+   * for the open mailbox's own address - never another. Its `account` is the open mailbox's
+   * CANONICAL address (the server's `ready.account.address`, normalised: the one form the native
+   * cursor compares), never the spelling stored beside the password. The caller arms the copy only
+   * while the switch is on (`mailWatch.svelte.ts`).
+   */
+  async rememberedForNativeWatch(): Promise<RememberedMailPassword | null> {
+    const ready = this.current;
+    if (ready.kind !== 'ready' || !ready.remembered) return null;
+    const key = this.context.deviceKey();
+    if (!key) {
+      Log.d('MAIL', 'the native watch copy waits: the device key is not held');
+      return null;
+    }
+    const epoch = this.epoch;
+    const read = await readRememberedMailPassword(this.context.userId, key, this.store);
+    if (epoch !== this.epoch || read.kind !== 'opened') return null;
+    if (normalized(read.remembered.account) !== normalized(ready.account.address)) {
+      Log.w('MAIL', 'ERROR: the remembered password is for another mailbox - no native copy');
+      return null;
+    }
+    return { account: normalized(ready.account.address), password: read.remembered.password };
   }
 
   /**

@@ -2014,6 +2014,7 @@ pub fn run() {
             commands::mail_watch::mail_watch_cursor_read,
             commands::mail_watch::mail_watch_cursor_write,
             commands::mail_watch::mail_watch_forget,
+            commands::mail_watch::mail_watch_vault_erase,
             notify_native_message,
             record_read_elsewhere,
             cancel_conversation_notifications,

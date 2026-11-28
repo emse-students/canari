@@ -485,6 +485,28 @@ describe('MailSession and an account the school ended (D8)', () => {
   });
 });
 
+describe('MailSession.rememberedForNativeWatch (lot 4b)', () => {
+  it('hands the password over only from a ready, remembered mailbox with the device key held', async () => {
+    const server = mailbox();
+    const { s, lock } = session(server);
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+    await s.signIn(GOOD, false);
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+    await s.signIn(GOOD, true);
+    expect(await s.rememberedForNativeWatch()).toEqual({ account: ADDRESS, password: GOOD });
+    lock();
+    expect(await s.rememberedForNativeWatch()).toBeNull();
+  });
+
+  it('hands over the canonical address of the open mailbox, never the spelling stored beside the password', async () => {
+    const server = mailbox();
+    // The address the password was typed for, in another spelling than the server's.
+    const { s } = session(server, { address: 'Ada.Lovelace@ETU.emse.fr' });
+    await s.signIn(GOOD, true);
+    expect(await s.rememberedForNativeWatch()).toEqual({ account: ADDRESS, password: GOOD });
+  });
+});
+
 describe('MailSession.signOut', () => {
   it('forgets the password and the token before telling the server, then closes', async () => {
     const server = mailbox();

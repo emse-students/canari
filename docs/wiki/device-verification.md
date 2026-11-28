@@ -1097,6 +1097,10 @@ nothing and looks like a dead WebView rather than a wrong name.
    5. Kill and reopen the app. The same mail is not notified again.
    6. Read the mail in the webmail, then send nothing: no notification.
    7. Turn the switch off: the persistent notification goes.
+   8. **The native watcher (lot 4b).** Switch on, "remember" ticked. Close the app from Recents: the persistent notification stays (`MailWatchService ... HandToNative`). Send a mail: one notification. Reopen the app: `NativeMailWatcher` logs `stopping the native run`, then the page's watcher runs; the same mail is not notified again.
+   9. **Boot.** Reboot, unlock once, send a mail: one notification without opening Canari (`CanariBoot` then `resume (android.intent.action.BOOT_COMPLETED)`).
+   10. **Process killed.** With the native watcher running, `adb shell am kill fr.emse.canari` (or let the system kill it): read whether the service restarts (`Resume in OFF`) or the foreground start is refused on this Android version - write which in [mail-client-transport](mail-client-transport.md#as-built---lot-4b-the-native-android-watcher).
+   11. **Forget paths.** Sign out of the mailbox: `MailWatchService` leaves, and `mail_watch/vault_<id>.bin` is gone (`adb shell run-as fr.emse.canari ls files/../mail_watch` - read the real data dir in the log). Same for the switch off.
 2. **Battery (Mi 9T).** Follow the procedure in [mail-client-transport](mail-client-transport.md#battery-measurement-owed): 1 h switch off, then 1 h switch on, `dumpsys batterystats`. Write both numbers there.
 3. **iOS (iPhone 12).**
    1. Turn the switch on and background the app.
