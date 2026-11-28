@@ -216,6 +216,28 @@ take whose finger drifts neither turns the page nor loses its release; the conte
 selection and iOS callout are switched off on it. It buzzes (`settings.vibrationsEnabled`) on a photo
 and on the start of a take.
 
+### Slide to lock (owner, 2026-11-27)
+
+While a take is held, a padlock (aria-label `reels_shutter_lock`) appears LEFT of the shutter
+(`ReelShutter`). Lifting the finger while it is over the padlock (`overPadlock`, 12 px of slop, read at
+the lift from the pointer and the padlock's rectangle) sends `lock` INSTEAD of `release`: the take
+carries on, the capture state is `recording` with `locked: true`, and the shutter shows stop. A locked
+take ends by ONE tap on the stop button (`stop`), the 90 s cap (`limit`) or a camera failure; a lift or
+a system `pointercancel` afterwards decides nothing. Sliding back off the padlock before lifting locks
+nothing (the lift is a plain release); a tap is still a photo. Pointer events with capture, so mouse and
+touch behave alike; no timer is involved. The keyboard shutter only ever takes photos (Enter/Space is a
+tap), so it has no hold to lock, but Enter/Space on a locked take's stop ends it. ONLY THE FINGER THAT STARTED THE TAKE can lock it (`lockable`, recorded at `down`): a volume-key take
+plus a touch shows no padlock and never locks. While that finger travels more than 24 px left toward the
+padlock its vertical slide stops zooming (aiming is not a zoom), and a locked take keeps the zoom it had.
+BACK on a locked take ENDS AND KEEPS it (`stop`, like the cap), never dismisses it. The shutter forgets a
+followed pointer on `lostpointercapture` (a hold is ended as a cancelled touch, a would-be stop tap decides
+nothing) and when it goes disabled under one, so a stop tap racing the cap or a camera error cannot leave
+it dead; the lock is announced through a polite live line (`reels_shutter_locked`); a non-primary mouse
+button starts nothing. The padlock shows only while recording, when the gallery slot left of the shutter is
+empty, so the two never overlap. Charter: principle 2
+(the essential is never lost): a take no longer needs a thumb held for a minute and a half. Reading
+owed: [backlog](../../backlog.d/reading-owed-canareels-record-lock.md).
+
 **The ring fills to the server's cap and the take ends there.** `GET /api/posts/reel-limits` is the
 one copy of the 90 s, so the shutter (and the gallery) stay disabled until it has answered. The
 line under the shutter says WHY it has not, from the error's status (`classifyLimitsFault`; the

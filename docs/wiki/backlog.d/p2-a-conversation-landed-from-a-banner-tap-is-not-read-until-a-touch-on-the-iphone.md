@@ -1,6 +1,8 @@
 ## P2 - on the iPhone a conversation landed from a banner tap was not read until a touch (2026-11-26; fix built, reading owed)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Found on the iPhone 12, `1.8.2`, 2026-11-26 ([sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)):
 in an app process with no touch yet, a DM opened by a banner tap (from a killed state, then from the

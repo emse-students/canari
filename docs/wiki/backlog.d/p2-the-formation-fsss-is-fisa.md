@@ -1,6 +1,8 @@
 ## P2 - the formation FSSS is FISA: the production steps around the 1.8.3 deploy
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 The owner settled on 2026-11-26 that FSSS and FISA are the same population (the apprentices,
 "Formation d'Ingenieur Sous statut d'Apprenti"), that its name is FISA, and that ISTP is mentioned

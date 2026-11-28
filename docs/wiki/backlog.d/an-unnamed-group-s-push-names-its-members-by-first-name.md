@@ -1,6 +1,8 @@
 ## Read on both phones: a push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: BUILT (the native title, composed on the phone by one Rust rule held to the app's by
 `libs/contracts/unnamed-group-label.cases.json`); what is left is the reading below. The Rust and the

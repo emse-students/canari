@@ -1,6 +1,8 @@
 ## P2 - confirm in production that a Cercle top-up parked for a member who has never signed in is credited at their first sign-in
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built: Le Cercle parks a top-up for an unknown Canari id (`202`, migration 08) and applies it in the sign-in transaction; Canari records `parked` and never retries it ([cotisations](../cotisations.md#outbound-canari---cercle-balance_topup-webhook)).
 

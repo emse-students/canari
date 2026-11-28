@@ -12,6 +12,7 @@ import {
   hardwareShutterEvent,
   classifyLimitsFault,
   lensFlipAllowed,
+  overPadlock,
   formatTakeTime,
   pickReelRecorderMime,
   ringFraction,
@@ -302,5 +303,42 @@ describe('hardwareShutterEvent - a volume key is the white shutter (owner, 2026-
     expect(captureReducer(recording, hardwareShutterEvent('cancel', 50, false)!)).toEqual({
       kind: 'finishing',
     });
+  });
+});
+
+describe('slide to lock (owner, 2026-11-27)', () => {
+  it('a lock marks the take locked', () => {
+    expect(captureReducer(recording, { type: 'lock' })).toEqual({ ...recording, locked: true });
+  });
+
+  it('a locked take ignores the lift and a taken-away touch', () => {
+    const locked = captureReducer(recording, { type: 'lock' });
+    expect(captureReducer(locked, { type: 'release', at: 2 })).toBe(locked);
+    expect(captureReducer(locked, { type: 'cancel' })).toBe(locked);
+  });
+
+  it('a tap on stop ends a locked take and keeps it', () => {
+    const locked = captureReducer(recording, { type: 'lock' });
+    expect(captureReducer(locked, { type: 'stop' })).toEqual({ kind: 'finishing' });
+  });
+
+  it('the cap still ends a locked take', () => {
+    const locked = captureReducer(recording, { type: 'lock' });
+    expect(captureReducer(locked, { type: 'limit' })).toEqual({ kind: 'finishing' });
+  });
+
+  it('an unlocked take is untouched: release ends it, a lock outside a take decides nothing', () => {
+    expect(captureReducer(recording, { type: 'release', at: 2 })).toEqual({ kind: 'finishing' });
+    expect(captureReducer(pressing, { type: 'lock' })).toBe(pressing);
+    expect(captureReducer(ready, { type: 'stop' })).toBe(ready);
+  });
+
+  it('overPadlock reads the rectangle with its margin', () => {
+    const rect = { left: 10, right: 50, top: 10, bottom: 50 };
+    expect(overPadlock(30, 30, rect)).toBe(true);
+    expect(overPadlock(5, 30, rect)).toBe(false);
+    expect(overPadlock(5, 30, rect, 8)).toBe(true);
+    // Never laid out: nothing to be over, whatever the finger does.
+    expect(overPadlock(0, 0, { left: 0, right: 0, top: 0, bottom: 0 }, 12)).toBe(false);
   });
 });

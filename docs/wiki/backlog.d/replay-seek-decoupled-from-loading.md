@@ -1,5 +1,7 @@
 ## P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 

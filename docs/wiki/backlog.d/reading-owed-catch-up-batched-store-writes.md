@@ -1,6 +1,8 @@
 ## Reading owed - a catch-up writes its reactions and read marks once per conversation
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built 2026-11-28 (`perf/catch-up-batched-store-writes`): while a drain's window is open the reaction
 and read-mark writes are held and landed in one merge and one save per conversation at the close,

@@ -1,6 +1,8 @@
 ## P2 - The Alumni merge, Canari and MiConnect sides: deployed, the pre-1.8.3 merge repaired, and read
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 BUILT in `1.8.3` (D54, D55, D57; "As built" in
 [profiles-and-access](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)):

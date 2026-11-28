@@ -1,6 +1,8 @@
 ## P2 - MiGallery: an Alumni duplicate's account is transferred to the real account, then erased
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Code in the MiGallery repository; the entry lives here by the ecosystem convention. The design is
 D52-D54 in [profiles-and-access](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183).

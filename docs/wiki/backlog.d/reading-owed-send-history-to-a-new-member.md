@@ -1,6 +1,8 @@
 ## P2 - Reading owed - a member sends their history to a new group member (owner, 2026-11-25)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 **Built, covered by unit tests, never read across two devices** ([history-reconciliation](../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25); owner decision of 2026-11-25, item 5, [decisions](../decisions/owner-decisions-of-2026-11-25.md); charter principle 1). The cross-client rig drives only a DEPLOYED build, so it reads this once a pre-release carrying it serves dev.
 

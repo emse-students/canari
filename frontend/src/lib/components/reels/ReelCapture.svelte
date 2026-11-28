@@ -422,6 +422,15 @@
         void discardTakeAfterAsking();
         return;
       }
+      if (capture.kind === 'recording' && capture.locked) {
+        // A LOCKED take has no finger holding it: Back ends it and KEEPS it, as the cap does - the
+        // member filmed. This entry is spent, so it is re-armed here: finishing -> review arms
+        // nothing (only ready/photo -> review does), and a second Back would leave the page.
+        console.debug('[reel-capture] Back on a locked take: the take is ended and kept');
+        holdTakeEntry();
+        send({ type: 'stop' });
+        return;
+      }
       dismissTake();
     };
     pushHistoryOverlay(takeEntry);
@@ -1048,6 +1057,9 @@
             onrelease={(at) => send({ type: 'release', at })}
             oncancel={() => send({ type: 'cancel' })}
             onmove={onShutterMove}
+            locked={capture.kind === 'recording' && capture.locked === true}
+            onlock={() => send({ type: 'lock' })}
+            onstop={() => send({ type: 'stop' })}
           />
         </div>
         <div></div>

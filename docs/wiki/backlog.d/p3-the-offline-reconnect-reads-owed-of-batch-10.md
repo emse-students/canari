@@ -1,6 +1,8 @@
 ## P3 - Reading owed: the native chat socket's typed connect failure and the media bubble's redraw on reconnection (batch 10, 2026-11-25)
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Two fixes shipped compile- and unit-verified only; each is closed by one reading on a phone.
 

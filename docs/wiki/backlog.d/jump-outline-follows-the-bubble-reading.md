@@ -1,6 +1,8 @@
 ## P3 - read the jump outline on the web and both phones: it follows the bubble
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 The accent outline of a message reached by a jump (replied-to chip, pinned banner, poll shortcut, search hit) is drawn on the bubble element, with its own radius
 ([chat](../frontend/modules/chat.md#the-jump-outline-follows-the-bubble-2026-11-26)). The reading that
