@@ -225,8 +225,13 @@
     {lesson.open ? '?' : remaining}
   </span>
 
-  <!-- The two layers share the cell size, so an outline is placed in cells with `calc`, no measuring. -->
-  <div class="relative w-max [--ms-cell:2.5rem] sm:[--ms-cell:2.75rem]">
+  <!-- The two layers share the cell size, so an outline is placed in cells with `calc`, no measuring. THE CELLS ARE
+       BIG (owner mockup, 2026-11-28: 60 px on a phone, numbers in the display face): as wide as the screen allows
+       for this board's columns, capped at 3.75rem, so a 7-column pattern still fits a 360 px phone. -->
+  <div
+    class="[&_[data-cell]]:font-display relative w-max [--ms-cell:min(3.75rem,calc((100vw-2.5rem-var(--ms-cols)*1px)/var(--ms-cols)))] [&_[data-cell]]:text-2xl [&_[data-cell]_svg]:size-6"
+    style="--ms-cols: {board.width};"
+  >
     <div
       role="presentation"
       class="grid w-max gap-px"

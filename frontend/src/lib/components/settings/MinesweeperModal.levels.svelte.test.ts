@@ -52,7 +52,7 @@ const pill = () =>
 const cells = () => document.querySelectorAll('[data-cell]').length;
 /**
  * Picks a mode in the mode modal, as a player does: the pastille (unless the modal is already open, as it is
- * at a first game), the kind card, the level under Entrainement, then "Jouer".
+ * when the game was launched), the kind card, the level under Entrainement, then "Jouer".
  */
 async function pick(mode: string) {
   if (!document.querySelector('[data-testid="mode-modal"]')) {

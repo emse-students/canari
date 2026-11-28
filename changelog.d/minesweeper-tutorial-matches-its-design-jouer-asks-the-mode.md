@@ -1,0 +1,3 @@
+### Fixed - "Jouer" asks ranked or training, the scores show their day and hour, and the tutorial follows its design
+
+The mode modal opened by itself only at the very first game on a device, so anyone with a trace of history pressed "Jouer" and never saw it: arriving at `/games/play` now opens it, on the stored mode. The Games ranking shows the day AND the hour of each record. The tutorial path, a lesson and the solved screen are brought back to the owner's mockups (the bottom sheet, the celebration, the hint tag, the large call to action) ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#the-game-mode-modal-owner-2026-11-27)).

@@ -112,39 +112,9 @@
     label={m.minesweeper_path_tabs_label()}
   />
 
-  <div class="flex items-start gap-3">
-    <LePic size={56} mood={current ? 'happy' : 'neutral'} pose="rest" />
-    <p class="bg-cn-surface text-text-main flex-1 rounded-2xl px-3 py-2.5 text-sm">
-      {tab === 'basics' ? m.minesweeper_path_intro_basics() : m.minesweeper_path_intro_patterns()}
-    </p>
-  </div>
-
-  <section class="bg-cn-surface space-y-3 rounded-2xl p-3" data-testid="tutorial-continue">
-    {#if current && currentFamily}
-      {@const total = currentFamily.lessons.length}
-      {@const count = countDone(currentFamily.lessons, done)}
-      <div class="flex items-center gap-3">
-        <span class="text-text-muted text-sm font-semibold">{currentFamily.label()}</span>
-        <div
-          class="bg-cn-bg h-2.5 flex-1 overflow-hidden rounded-full"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={total}
-          aria-valuenow={count}
-          aria-label={currentFamily.label()}
-        >
-          <div class="bg-green-ok h-full rounded-full" style:width="{(count / total) * 100}%"></div>
-        </div>
-        <span class="text-text-main text-sm font-bold">{count} / {total}</span>
-      </div>
-      <Button href={resolve('/games/tutorial/[id]', { id: current.id })} class="w-full">
-        {m.minesweeper_path_continue({ name: shortName(current.title()) })}
-      </Button>
-    {:else}
-      <p class="text-text-main text-sm font-semibold">{m.minesweeper_path_all_done()}</p>
-      <Button href={resolve('/games/play')} class="w-full">{m.minesweeper_tutorial_play()}</Button>
-    {/if}
-  </section>
+  <p class="bg-cn-surface text-text-main rounded-2xl px-3 py-2.5 text-sm" data-testid="path-intro">
+    {tab === 'basics' ? m.minesweeper_path_intro_basics() : m.minesweeper_path_intro_patterns()}
+  </p>
 
   {#each families as family (family.key)}
     {@const count = countDone(family.lessons, done)}
@@ -206,6 +176,43 @@
       </ol>
     </section>
   {/each}
+
+  <!-- THE BOTTOM SHEET of the design (owner mockup, 2026-11-28): the family's progress and "Continuer" stay under the
+       thumb whatever the length of the path, clear of the tab bar (`--bottom-nav-reserve`, as the lesson's bar). -->
+  <section
+    class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 space-y-3 rounded-t-3xl p-3 shadow-lg md:bottom-0"
+    data-testid="tutorial-continue"
+  >
+    {#if current && currentFamily}
+      {@const total = currentFamily.lessons.length}
+      {@const count = countDone(currentFamily.lessons, done)}
+      <div class="flex items-center gap-3">
+        <span class="text-text-muted text-sm font-semibold">{currentFamily.label()}</span>
+        <div
+          class="bg-cn-bg h-2.5 flex-1 overflow-hidden rounded-full"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={count}
+          aria-label={currentFamily.label()}
+        >
+          <div class="bg-green-ok h-full rounded-full" style:width="{(count / total) * 100}%"></div>
+        </div>
+        <span class="text-text-main text-sm font-bold">{count} / {total}</span>
+      </div>
+      <Button
+        href={resolve('/games/tutorial/[id]', { id: current.id })}
+        class="font-display min-h-14 w-full text-lg font-bold"
+      >
+        {m.minesweeper_path_continue({ name: shortName(current.title()) })}
+      </Button>
+    {:else}
+      <p class="text-text-main text-sm font-semibold">{m.minesweeper_path_all_done()}</p>
+      <Button href={resolve('/games/play')} class="font-display min-h-14 w-full text-lg font-bold">
+        {m.minesweeper_tutorial_play()}
+      </Button>
+    {/if}
+  </section>
 </div>
 
 <style>

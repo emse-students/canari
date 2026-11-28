@@ -117,24 +117,31 @@
 
 {#if outcome === 'solved'}
   <section
-    class="bg-cn-surface flex flex-col items-center gap-4 rounded-2xl p-4 text-center"
+    class="bg-cn-surface relative flex flex-col items-center gap-4 overflow-hidden rounded-2xl p-4 text-center"
     data-testid="tutorial-solved"
   >
-    <LePic size={160} mood="happy" pose="flag" />
+    <!-- THE CELEBRATION of the design (owner mockup, 2026-11-28): a warm glow behind Le Pic and a few scraps of
+         confetti. Decoration only (aria-hidden), no counter, no streak: nothing here calls the player back. -->
+    <span class="solved-glow" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-a" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-b" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-c" aria-hidden="true"></span>
+    <span class="solved-confetti solved-confetti-d" aria-hidden="true"></span>
+    <LePic size={224} mood="happy" pose="flag" class="relative" />
     <span
-      class="bg-accent text-on-accent font-display rounded-full px-3 py-1 text-base font-bold"
+      class="bg-accent text-on-accent font-display relative rounded-full px-3 py-1 text-base font-bold"
       data-testid="tutorial-solved-name"
     >
       {shortName(lesson.title())}
     </span>
-    <h2 class="font-display text-text-main text-2xl font-bold">
+    <h2 class="font-display text-text-main relative text-3xl font-bold">
       {isPattern ? m.minesweeper_done_title_pattern() : m.minesweeper_done_title_lesson()}
     </h2>
-    <p class="text-text-muted text-sm" data-testid="tutorial-solved-line">
+    <p class="text-text-muted relative text-sm" data-testid="tutorial-solved-line">
       {lesson.hints.at(-1)?.text()}
     </p>
 
-    <div class="bg-cn-bg w-full space-y-2 rounded-2xl p-3 text-left">
+    <div class="bg-cn-bg relative w-full space-y-2 rounded-2xl p-3 text-left">
       <div class="flex items-center justify-between text-sm font-bold">
         <span class="text-text-main">{place.family.label()}</span>
         <span class="text-text-main" data-testid="tutorial-solved-progress">
@@ -161,19 +168,26 @@
       </p>
     </div>
 
-    <div class="flex w-full flex-col gap-2">
+    <div class="relative flex w-full flex-col gap-2.5">
       {#if place.next}
-        <Button href={nextHref} class="w-full" data-testid="tutorial-solved-next">
+        <Button
+          href={nextHref}
+          class="font-display min-h-14 w-full text-lg font-bold"
+          data-testid="tutorial-solved-next"
+        >
           {isPattern
             ? m.minesweeper_done_next_pattern({ name: shortName(place.next.title()) })
             : m.minesweeper_done_next_lesson({ name: shortName(place.next.title()) })}
         </Button>
       {:else}
-        <Button href={resolve('/games/play')} class="w-full">
+        <Button
+          href={resolve('/games/play')}
+          class="font-display min-h-14 w-full text-lg font-bold"
+        >
           {m.minesweeper_tutorial_play()}
         </Button>
       {/if}
-      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="w-full">
+      <Button href={tutorialPathHref(place.tab)} variant="ghost" class="min-h-12 w-full font-bold">
         {m.minesweeper_lesson_back()}
       </Button>
     </div>
@@ -219,12 +233,12 @@
             {m.minesweeper_tutorial_lost()}
           </p>
         {:else if hintStep !== null}
-          <p class="text-text-muted text-xs font-bold">
+          <p class="text-accent-text text-xs font-extrabold tracking-wider uppercase">
             {m.minesweeper_lesson_hint_tag({ n: String(hintStep + 1), total: String(stepCount) })}
           </p>
           <p data-testid="tutorial-hint">{lesson.hints[hintStep].text()}</p>
         {:else}
-          <p class="text-text-muted text-xs font-bold">
+          <p class="text-text-muted text-xs font-extrabold tracking-wider uppercase">
             {m.minesweeper_lesson_goal()}
           </p>
           <p data-testid="tutorial-goal">{lesson.body()}</p>
@@ -351,6 +365,56 @@
         0 0.3rem 0 color-mix(in srgb, var(--accent) 70%, black),
         0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
     }
+  }
+  /* THE SOLVED SCREEN'S GLOW AND CONFETTI: the accent and the status colours, nothing raw. */
+  .solved-glow {
+    position: absolute;
+    top: 7rem;
+    left: 50%;
+    width: 28rem;
+    height: 28rem;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: radial-gradient(
+      circle,
+      color-mix(in srgb, var(--accent) 28%, transparent),
+      transparent 65%
+    );
+    pointer-events: none;
+  }
+  .solved-confetti {
+    position: absolute;
+    width: 0.75rem;
+    height: 0.75rem;
+    pointer-events: none;
+  }
+  .solved-confetti-a {
+    top: 1.5rem;
+    left: 12%;
+    background: var(--accent);
+    transform: rotate(25deg);
+  }
+  .solved-confetti-b {
+    top: 1rem;
+    right: 14%;
+    background: var(--accent-icon);
+    transform: rotate(45deg);
+  }
+  .solved-confetti-c {
+    top: 9rem;
+    right: 8%;
+    width: 1rem;
+    height: 0.5rem;
+    background: var(--red-err);
+    transform: rotate(-30deg);
+  }
+  .solved-confetti-d {
+    top: 10rem;
+    left: 7%;
+    width: 0.625rem;
+    height: 1.125rem;
+    background: var(--green-ok);
+    transform: rotate(20deg);
   }
   @media (prefers-reduced-motion: reduce) {
     .lamp-pulse {

@@ -4,8 +4,8 @@
  * visible control besides the HUD is a floating leaderboard button. Pinned: no tab bar, the
  * trophy and the close button are Back links to the Games page (the one leaderboard, 2026-11-13;
  * the game is a page since 2026-11-25, so leaving it is navigation, never a callback), and the mode
- * button flips and persists what a short press does, and the mode modal (owner, 2026-11-27) opens by itself at
- * the first game on a device and afterwards from the pastille.
+ * button flips and persists what a short press does, and the mode modal (owner, 2026-11-27) opens by itself when
+ * the game is launched (`askMode`, set by the route, 2026-11-28) and afterwards from the pastille.
  */
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -31,7 +31,7 @@ const mounted: (() => void)[] = [];
 
 beforeEach(() => {
   localStorage.clear();
-  // A RETURNING player: a mode is stored, so the mode modal does not open by itself. The first-game tests clear it.
+  // A RETURNING player: a mode is stored. The modal opens only when the mount asks for it (`open(true)`), as the route does.
   localStorage.setItem('canari.minesweeper.unranked', '1');
   startChallenge.mockReset().mockRejectedValue(new Error('no server in this test'));
   vi.spyOn(console, 'debug').mockImplementation(() => {});
@@ -42,8 +42,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function open() {
-  const app = mount(MinesweeperModal, { target: document.body });
+/** `askMode` is what the `/games/play` route passes: the game was launched, so the mode is asked. */
+async function open(askMode = false) {
+  const app = mount(MinesweeperModal, { target: document.body, props: { askMode } });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
@@ -101,9 +102,9 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(byLabel('Fermer')).toBeNull();
   });
 
-  it('opens the mode modal BY ITSELF at the first game, with Entrainement on Debutant as the default', async () => {
+  it('opens the mode modal BY ITSELF when the game is launched, with Entrainement on Debutant as the default', async () => {
     localStorage.removeItem('canari.minesweeper.unranked');
-    await open();
+    await open(true);
     expect(modal()).not.toBeNull();
     expect(modal()!.textContent).toContain('Nouvelle partie');
     expect(kindCards().map((c) => c.dataset.mode)).toEqual(['ranked', 'training']);
@@ -124,12 +125,12 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(pill().textContent).toContain('Débutant');
   });
 
-  it('closes on the Android Back key and the game stays (reading item 13): the pastille modal and the first-game one', async () => {
+  it('closes on the Android Back key and the game stays (reading item 13): the pastille modal and the launch one', async () => {
     const stop = initHistoryOverlayStack();
     vi.spyOn(history, 'back').mockImplementation(() => {});
     try {
       localStorage.removeItem('canari.minesweeper.unranked');
-      await open();
+      await open(true);
       expect(modal()).not.toBeNull();
       window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
       flushSync();
@@ -148,7 +149,7 @@ describe('MinesweeperModal - full-screen chrome', () => {
     }
   });
 
-  it('does NOT open by itself once a mode is stored: the pastille opens it', async () => {
+  it('does NOT open by itself unless the game is launched: the pastille opens it', async () => {
     await open();
     expect(modal()).toBeNull();
     pill().click();
@@ -156,7 +157,7 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(modal()).not.toBeNull();
   });
 
-  it('stores NOTHING when the first-game modal is dismissed (Escape, scrim, cross, tutorial link)', async () => {
+  it('stores NOTHING when the launch modal is dismissed (Escape, scrim, cross, tutorial link)', async () => {
     for (const dismiss of [
       () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
       () =>
@@ -166,7 +167,7 @@ describe('MinesweeperModal - full-screen chrome', () => {
       () => document.querySelector<HTMLButtonElement>('button[aria-label="Fermer"]')?.click(),
     ]) {
       localStorage.clear();
-      await open();
+      await open(true);
       expect(modal()).not.toBeNull();
       dismiss();
       flushSync();
@@ -178,30 +179,35 @@ describe('MinesweeperModal - full-screen chrome', () => {
     }
   });
 
-  it('opens by itself on a fresh device only: a level, a settings or a stats key counts as history', async () => {
-    localStorage.clear();
-    await open();
-    expect(modal()).not.toBeNull();
-    for (const key of ['canari.minesweeper.level', 'canari.minesweeper.settings']) {
+  it('a launched game ASKS THE MODE whatever the device holds: a stored mode, a level, settings, stats (the "Jouer" that never asked, 2026-11-28)', async () => {
+    const histories: Record<string, string>[] = [
+      {},
+      { 'canari.minesweeper.unranked': '0' },
+      { 'canari.minesweeper.unranked': '1', 'canari.minesweeper.level': 'expert' },
+      { 'canari.minesweeper.settings': '{}', 'canari.minesweeper.stats': '{}' },
+      { 'canari.minesweeper.tutorial': '{"done":["flag"],"lampUsed":false}' },
+    ];
+    for (const history of histories) {
       while (mounted.length) mounted.pop()!();
       document.body.innerHTML = '';
       localStorage.clear();
-      localStorage.setItem(key, key.endsWith('level') ? 'expert' : '{}');
-      await open();
-      expect(modal()).toBeNull();
+      for (const [k, v] of Object.entries(history)) localStorage.setItem(k, v);
+      await open(true);
+      expect(modal(), JSON.stringify(history)).not.toBeNull();
     }
   });
 
-  it('a progress key of the tutorial alone is not history: the device is still new', async () => {
-    localStorage.clear();
-    localStorage.setItem('canari.minesweeper.tutorial', '{"done":["flag"],"lampUsed":false}');
-    await open();
-    expect(modal()).not.toBeNull();
+  it('the launch modal starts on the stored mode, so "Jouer" is one tap for a returning player', async () => {
+    localStorage.setItem('canari.minesweeper.unranked', '0');
+    await open(true);
+    expect(kindCards().find((c) => c.getAttribute('aria-checked') === 'true')?.dataset.mode).toBe(
+      'ranked'
+    );
   });
 
   it('never opens by itself over a game with mines placed', async () => {
     localStorage.clear();
-    await open();
+    await open(true);
     expect(modal()).not.toBeNull();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     flushSync();
@@ -214,9 +220,9 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(modal()).toBeNull();
   });
 
-  it('plays unranked at the first game with no challenge, and the mode is then locked', async () => {
+  it('plays unranked when the launch modal commits Entrainement, with no challenge, and the mode is then locked', async () => {
     localStorage.removeItem('canari.minesweeper.unranked');
-    await open();
+    await open(true);
     play().click();
     flushSync();
     expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');

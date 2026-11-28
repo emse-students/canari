@@ -34,7 +34,6 @@
   import {
     LEVEL_SPECS,
     loadMinesweeperLevel,
-    isFirstMinesweeperGame,
     loadMinesweeperUnranked,
     playModeOf,
     saveMinesweeperLevel,
@@ -85,6 +84,13 @@
   import { loadFlagPrimary, saveFlagPrimary } from '$lib/minesweeper/controls';
   import { m } from '$lib/paraglide/messages';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+
+  interface Props {
+    /** Open the mode modal at once: the game was launched (the route sets it), so the mode is asked, not assumed. */
+    askMode?: boolean;
+  }
+
+  let { askMode = false }: Props = $props();
 
   /** The settings sheet, opened from the gear beside the leaderboard button. */
   let showSettings = $state(false);
@@ -138,10 +144,6 @@
    * Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is
    * submitted. A newcomer plays unranked (owner, 2026-11-26): the ranked board is the barrier to entry.
    */
-  /**
-   * A FIRST GAME ON THIS DEVICE, read before the level loader below stores the level it resolves (which is history).
-   */
-  const firstGame = isFirstMinesweeperGame();
   let unranked = $state(loadMinesweeperUnranked());
 
   function toggleFlagPrimary() {
@@ -163,15 +165,16 @@
   const ModeGlyph = $derived(playModeIcon(mode));
 
   /**
-   * THE MODE MODAL (owner, 2026-11-27): opens by ITSELF only at the first game on this device - no mode stored
-   * yet - and afterwards from the pastille, before the first dig. One chooser, replacing the bottom sheet.
+   * THE MODE MODAL (owner, 2026-11-27): one chooser, replacing the bottom sheet. It opens by itself when the game
+   * is LAUNCHED (`askMode`, which the `/games/play` route sets: the "Jouer" of the Games page, the tutorial's
+   * game link) and from the pastille, before the first dig. It used to open only at the very first game on a
+   * device, so a player with any history never saw it when pressing "Jouer" (owner, 2026-11-28).
    */
-  let showModeModal = $state(firstGame);
+  let showModeModal = $state(untrack(() => askMode));
 
   /**
    * Closing the modal without a pick (Escape, the scrim, the cross, Back, the tutorial link) STORES NOTHING and keeps the
-   * default the game started with (owner decision, 2026-11-27). It never nags: the first open already stored the
-   * level, which makes every later open a later one (`isFirstMinesweeperGame`).
+   * default the game started with (owner decision, 2026-11-27); the pastille asks again whenever the player wants.
    */
   function dismissModeModal() {
     showModeModal = false;

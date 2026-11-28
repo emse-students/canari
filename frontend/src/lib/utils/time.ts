@@ -40,6 +40,19 @@ export function shortDate(dateStr: string): string {
 }
 
 /**
+ * The day AND the time of a record, in the reader's local time and locale: "25/11/26 14:30" (24 h locales) or
+ * "25/11/26 02:30 PM". For the Minesweeper ranking, where the day alone could not tell two records of one
+ * player apart (owner, 2026-11-28). The day is `shortDate`'s, the hour is the locale's own clock format.
+ */
+export function shortDateTime(dateStr: string): string {
+  const time = new Date(dateStr).toLocaleTimeString(intlLocale(), {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${shortDate(dateStr)} ${time}`;
+}
+
+/**
  * The option label of a calendar event a post can be linked to: "12 mai 2026 14:30 - Gala".
  * One implementation for the composer and the editor, which each carried a copy.
  */
