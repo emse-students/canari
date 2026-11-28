@@ -2,14 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
-import { QueryFailedError, Repository } from 'typeorm';
+import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { MailAlertDevice } from '../entities/mail-alert-device.entity';
 import { MailAlertToken } from '../entities/mail-alert-token.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { buildMailPushMessage, hashMailAlertToken } from '../utils/mail-alert';
-import { readMailPush, type MailPush } from '../utils/mail-push';
+import { readMailMode, readMailPush, type MailPush } from '../utils/mail-push';
 import { PUSH_DELIVERY_RECORDER, PushDeliveryTally } from '../utils/push-delivery-records';
 
 /**
@@ -36,6 +36,11 @@ function isTokenHashTaken(e: unknown): boolean {
     e instanceof QueryFailedError &&
     (e.driverError as { constraint?: unknown } | undefined)?.constraint === TOKEN_HASH_CONSTRAINT
   );
+}
+
+/** The advisory lock of one account's alert rows, released with the transaction. */
+async function lockAccount(manager: EntityManager, userId: string): Promise<void> {
+  await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`mail-alert:${userId}`]);
 }
 
 /** What a subscription refusal carries. */
@@ -126,8 +131,11 @@ export class MailAlertService {
     const tokenHash = hashMailAlertToken(token);
     try {
       await this.tokenRepo.manager.transaction(async (manager) => {
-        // The account's token row, LOCKED: a subscribe and an unsubscribe of one account serialise
-        // here, so "the last device left, the token goes" never races a device joining.
+        // ONE ACCOUNT AT A TIME: a transaction-scoped advisory lock per account serialises every
+        // subscribe and unsubscribe of it - including the FIRST subscribe, when there is no token row
+        // yet for `FOR UPDATE` to lock (two first subscribes would both read none and race).
+        await lockAccount(manager, userId);
+        // The account's token row, LOCKED as well (the same order everywhere).
         const current = await manager.findOne(MailAlertToken, {
           where: { userId },
           lock: { mode: 'pessimistic_write' },
@@ -155,6 +163,7 @@ export class MailAlertService {
     const who = `user=${cutUserId(userId)} device=${cutDeviceId(deviceId)}`;
     const remaining = await this.tokenRepo.manager.transaction(async (manager) => {
       // Locked first, as in `subscribe`: the count below is then the truth when it is acted on.
+      await lockAccount(manager, userId);
       await manager.findOne(MailAlertToken, {
         where: { userId },
         lock: { mode: 'pessimistic_write' },
@@ -199,6 +208,11 @@ export class MailAlertService {
     const mode = await readMailPush(this.tokenRepo.manager, this.logger);
     if (mode !== 'cloudflare') {
       this.logger.log('[MAIL_ALERT] alert dropped: mail_push=none');
+      return { status: 'off' };
+    }
+    if ((await readMailMode(this.tokenRepo.manager)) !== 'on') {
+      // The mail tab is off for everyone: no device may read a mailbox, so no push is sent.
+      this.logger.log('[MAIL_ALERT] alert dropped: mail_mode=off');
       return { status: 'off' };
     }
     const row = await this.tokenRepo.findOne({ where: { tokenHash: hashMailAlertToken(token) } });

@@ -26,15 +26,22 @@ const OTHER = 'fedcba9876543210fedcba9876543210';
  * An in-memory stand-in for the three tables and `platform_config.mail_push`, enough for the
  * service's reads and writes - each rule is asserted on the rows, never on the calls.
  */
-function fakeDb(mode: string | null = 'cloudflare') {
+function fakeDb(mode: string | null = 'cloudflare', mailMode = 'on') {
   const tokens: { userId: string; tokenHash: string }[] = [];
   const devices: { userId: string; deviceId: string }[] = [];
   const push: Partial<PushToken>[] = [];
+  const locks: string[] = [];
   const match = (row: Record<string, unknown>, where: Record<string, unknown>) =>
     Object.entries(where).every(([k, v]) => row[k] === v);
   const table = (entity: unknown) => (entity === MailAlertToken ? tokens : devices);
   const manager = {
-    query: jest.fn(async () => (mode === null ? [] : [{ mail_push: mode }])),
+    query: jest.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('pg_advisory_xact_lock')) {
+        locks.push(String(params?.[0]));
+        return [];
+      }
+      return mode === null ? [] : [{ mail_push: mode, mail_mode: mailMode }];
+    }),
     findOne: async (entity: unknown, { where }: { where: Record<string, unknown> }) =>
       (table(entity) as Record<string, unknown>[]).find((r) => match(r, where)) ?? null,
     upsert: async (entity: unknown, value: Record<string, string>, keys: string[]) => {
@@ -73,7 +80,7 @@ function fakeDb(mode: string | null = 'cloudflare') {
     repoOf<MailAlertDevice>(devices),
     repoOf<PushToken>(push as Record<string, unknown>[])
   );
-  return { service, tokens, devices, push };
+  return { service, tokens, devices, push, locks };
 }
 
 describe('mail alert - the pure rules', () => {
@@ -176,6 +183,10 @@ describe('MailAlertService', () => {
     expect(await db.service.unsubscribe('u1', 'd2')).toEqual({ remaining: 0 });
     expect(db.tokens).toEqual([]);
     expect(await db.service.unsubscribe('u1', 'd2')).toEqual({ remaining: 0 });
+    // Every subscribe and unsubscribe took the account's advisory lock first - the first subscribe
+    // too, when there was no token row to lock.
+    expect(db.locks.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(db.locks)).toEqual(new Set(['mail-alert:u1']));
   });
 
   it('answers whether a token read from the alert is the live one', async () => {
@@ -258,6 +269,12 @@ describe('MailAlertService', () => {
   it('an unknown token, the switch off, and a token with no device left push nothing', async () => {
     const off = fakeDb('none');
     expect(await off.service.alert(TOKEN)).toEqual({ status: 'off' });
+
+    // The mail tab off for everyone: a subscribed account's alert pushes nothing either.
+    const tabOff = fakeDb('cloudflare', 'off');
+    tabOff.push.push({ id: 'p9', userId: 'u9', deviceId: 'd9', token: 'f', platform: 'android' });
+    await tabOff.service.subscribe('u9', 'd9', TOKEN);
+    expect(await tabOff.service.alert(TOKEN)).toEqual({ status: 'off' });
 
     const db = fakeDb();
     expect(await db.service.alert(TOKEN)).toEqual({ status: 'unknown' });

@@ -58,12 +58,24 @@ export function registerMailSignOut(signOut: MailSignOut, release?: MailAlertRel
 export function startMailAlertRelease(bearer: string): void {
   const release = registeredRelease;
   if (!release) return;
-  const fetcher: AlertFetcher = (path, body) =>
-    fetch(`${deliveryUrl()}${path}`, {
+  // The leaving token, as it is: a sign-out cannot refresh it (the refresh is what may have failed,
+  // and a refresh racing the sign-out would mint a session for an account that is leaving). A token
+  // already expired is REFUSED: said at warn, and the rule is then left to the orphan repair - the
+  // subscription itself goes with the session's push rows server-side (register C34).
+  const fetcher: AlertFetcher = async (path, body) => {
+    const res = await fetch(`${deliveryUrl()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
       body: JSON.stringify(body),
     });
+    if (res.status === 401) {
+      Log.w(
+        'MAIL-ALERT',
+        `the release at sign-out was refused (401 on ${path}): the session had expired`
+      );
+    }
+    return res;
+  };
   releasing = release(fetcher).catch((err: unknown) => {
     Log.w('MAIL-ALERT', `ERROR: the alert release at sign-out failed (${String(err)})`);
   });

@@ -12,6 +12,7 @@ import { classifyMailFailure } from './mailErrors';
 import { canariMailContext } from './mailContext';
 import { MailSession, type MailContext, type MailSoap } from './mailSession';
 import { registerMailSignOut, type AlertFetcher } from './mailSignOut';
+import { quiesceMailAlertSync } from './mailAlertSync';
 import { MailStore } from './mailStore.svelte';
 import { ZimbraSoapClient } from './soapClient';
 
@@ -116,6 +117,9 @@ let unregister: (() => void) | null = null;
  * with: said, and left to the orphan repair.
  */
 async function releaseClientAlert(client: MailClient, fetcher: AlertFetcher): Promise<void> {
+  // Behind the alert's single flight: an `ensure` already running settles first, and none starts
+  // after - so nothing writes the rule once this release has removed it.
+  await quiesceMailAlertSync();
   if (client.session.state.kind !== 'ready') {
     Log.i(
       'MAIL-ALERT',

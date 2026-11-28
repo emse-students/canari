@@ -8,6 +8,7 @@ import {
   alertRuleName,
   httpMailAlertServer,
   isOurRule,
+  leaveMailAlert,
   MailAlertRulesMismatchError,
   MailAlertServerError,
   newAlertToken,
@@ -377,6 +378,113 @@ describe('syncMailAlert', () => {
     expect(devices.size).toBe(0);
     expect(box.rules().find((r) => isOurRule(r, DOMAIN))!.active).toBe(false);
     expect(box.writes).toHaveLength(1);
+    expect(readAlertRecord(USER, store)).toEqual({ v: 1, subscribed: false, optedOut: true });
+    // Switched off by the opt-out, the device leaves the user's disabled rule alone.
+    expect(await syncMailAlert(deps(box.mailbox, server, store), false)).toBe('unchanged');
+    expect(box.writes).toHaveLength(1);
+  });
+
+  it("the user's own 'on' in Canari AFTER the opt-out is the newer answer: the rule is re-enabled", async () => {
+    const box = fakeMailbox(USER_RULES);
+    const fake = fakeServer();
+    const store = memoryStore();
+    await syncMailAlert(deps(box.mailbox, fake.server, store), true);
+    box.set(box.rules().map((r) => (isOurRule(r, DOMAIN) ? { ...r, active: false } : r)));
+    expect(await syncMailAlert(deps(box.mailbox, fake.server, store, DEVICE, vi.fn()), true)).toBe(
+      'opted_out'
+    );
+    // The switch is on again only by the user's gesture since: the next sync wanting it overrides.
+    const optOut = vi.fn();
+    expect(await syncMailAlert(deps(box.mailbox, fake.server, store, DEVICE, optOut), true)).toBe(
+      'configured'
+    );
+    expect(optOut).not.toHaveBeenCalled();
+    const ours = box.rules().filter((r) => isOurRule(r, DOMAIN));
+    expect(ours).toHaveLength(1);
+    expect(ours[0].active).toBe(true);
+    expect(ruleToken(box.rules())).toBe(fake.token());
+    expect(box.rules().slice(0, -1)).toEqual(USER_RULES);
+    expect(readAlertRecord(USER, store)).toEqual({ v: 1, subscribed: true });
+  });
+
+  it('never compares our rule structurally: a Zimbra that reorders the test keys on read is fine', async () => {
+    const box = fakeMailbox(USER_RULES);
+    const reorder = (rules: FilterRule[]) =>
+      rules.map((rule) => {
+        const tests = (rule as any).filterTests?.map((group: any) => ({
+          ...group,
+          headerTest: group.headerTest?.map((t: Record<string, unknown>) =>
+            Object.fromEntries(Object.entries(t).sort(([a], [b]) => b.localeCompare(a)))
+          ),
+        }));
+        return tests ? { ...rule, filterTests: tests } : rule;
+      });
+    // The server answers each headerTest's keys in ITS order (here: reverse alphabetical), not ours.
+    box.mangleWrites(reorder);
+    box.set(reorder(USER_RULES));
+    const { server } = fakeServer();
+    const store = memoryStore();
+    expect(await syncMailAlert(deps(box.mailbox, server, store), true)).toBe('configured');
+    expect(await syncMailAlert(deps(box.mailbox, server, store), true)).toBe('unchanged');
+    expect(await syncMailAlert(deps(box.mailbox, server, store), false)).toBe('removed');
+    expect(box.rules().some((r) => isOurRule(r, DOMAIN))).toBe(false);
+  });
+
+  it('a mailbox that left ready unsubscribes server-side with no mailbox, and the next ready sync removes the rule', async () => {
+    const box = fakeMailbox(USER_RULES);
+    const fake = fakeServer();
+    const store = memoryStore();
+    await syncMailAlert(deps(box.mailbox, fake.server, store), true);
+    const reads = box.reads();
+    expect(
+      await leaveMailAlert(
+        { userId: USER, deviceId: DEVICE, server: fake.server, store },
+        'password_refused'
+      )
+    ).toBe('left');
+    expect(box.reads()).toBe(reads);
+    expect(fake.devices.size).toBe(0);
+    expect(fake.token()).toBeNull();
+    expect(readAlertRecord(USER, store)).toEqual({ v: 1, subscribed: false });
+    // Ready again, the push no longer wanted: the kept record makes the sync read and remove the rule.
+    expect(await syncMailAlert(deps(box.mailbox, fake.server, store), false)).toBe('repaired');
+    expect(box.rules()).toEqual(USER_RULES);
+  });
+
+  it('a closed account leaves with no record kept, and a device not subscribed only asks', async () => {
+    const box = fakeMailbox([]);
+    const fake = fakeServer();
+    const store = memoryStore();
+    await syncMailAlert(deps(box.mailbox, fake.server, store), true);
+    expect(
+      await leaveMailAlert(
+        { userId: USER, deviceId: DEVICE, server: fake.server, store },
+        'account_closed'
+      )
+    ).toBe('left');
+    expect(readAlertRecord(USER, store)).toBeNull();
+    expect(
+      await leaveMailAlert(
+        { userId: USER, deviceId: DEVICE, server: fake.server, store },
+        'mail_off'
+      )
+    ).toBe('unchanged');
+    expect(fake.server.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('a device that is not a phone, with none read and no record, asks the server nothing', async () => {
+    const box = fakeMailbox(USER_RULES);
+    const { server } = fakeServer('none');
+    const quiet = {
+      ...deps(box.mailbox, server, memoryStore()),
+      phone: false,
+      pushModeRead: 'none' as const,
+    };
+    expect(await syncMailAlert(quiet, false)).toBe('unchanged');
+    expect(server.state).not.toHaveBeenCalled();
+    // A phone still asks: it may have an orphan rule to repair.
+    expect(await syncMailAlert({ ...quiet, phone: true }, false)).toBe('unchanged');
+    expect(server.state).toHaveBeenCalledTimes(1);
   });
 
   it('a stale rule of ours is replaced, never duplicated', async () => {

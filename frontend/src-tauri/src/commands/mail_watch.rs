@@ -87,6 +87,7 @@ pub(crate) fn write_cursor(dir: &Path, user_id: &str, value: &str) -> Result<(),
 
 /// The lock file every cursor write of the App Group takes (mail lot 5): the page's writes here and
 /// the iOS notification extension's (`NotificationService.swift`, `MailPushRules.cursorLockFile`).
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) const CURSOR_LOCK_FILE: &str = "cursor.lock";
 
 /// The `highest` of a cursor text AS THE PAGE READS IT (`readMailWatchCursor`): `None` when it is
@@ -261,17 +262,39 @@ pub(crate) fn mail_watch_cursor_write(
 /// wanted only while the switch is on.
 #[tauri::command]
 pub(crate) fn mail_watch_forget(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
-    super::mail_push_secret::erase()
-        .inspect_err(|e| log::warn!("[MailWatch] the extension's password copy not erased: {e}"))?;
-    forget(&data_dir(&app)?, &user_id)
-        .inspect_err(|e| log::warn!("[MailWatch] not forgotten: {e}"))?;
+    // EVERY erase runs, whatever another answered: a Keychain refusal must not keep the cursor, nor
+    // the reverse. The errors are collected and returned together.
+    let mut errors: Vec<String> = Vec::new();
+    if let Err(e) = super::mail_push_secret::erase() {
+        log::warn!("[MailWatch] the extension's password copy not erased: {e}");
+        errors.push(format!("keychain: {e}"));
+    }
+    match data_dir(&app).and_then(|dir| forget(&dir, &user_id)) {
+        Ok(()) => {}
+        Err(e) => {
+            log::warn!("[MailWatch] not forgotten: {e}");
+            errors.push(format!("cursor: {e}"));
+        }
+    }
     // Lot 4 builds kept the iOS cursor in the app's data directory; lot 5 moved it to the App Group.
     // The old file is erased here too, so a forget leaves nothing of the account in either place.
     #[cfg(target_os = "ios")]
     {
-        let old = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        forget(&old, &user_id)
-            .inspect_err(|e| log::warn!("[MailWatch] the lot 4 cursor not erased: {e}"))?;
+        match app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())
+            .and_then(|old| forget(&old, &user_id))
+        {
+            Ok(()) => {}
+            Err(e) => {
+                log::warn!("[MailWatch] the lot 4 cursor not erased: {e}");
+                errors.push(format!("lot 4 cursor: {e}"));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
     }
     log::info!("[MailWatch] native mail watch state erased");
     Ok(())

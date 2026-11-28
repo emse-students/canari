@@ -1178,9 +1178,16 @@ export class InternalController {
           `left for the final pass to cut with their routes - a device re-admitted or demoted meanwhile`
       );
     }
-    // Mail lot 5 (D6): every device of the account forgets the school mailbox - told BEFORE its push
-    // registration goes below, since that registration is the only way to reach it.
-    await this.forgetMail(await this.pushTokenRepo.find({ where: { userId } }), 'account-erased');
+    // Mail lot 5 (D6): every device of the account forgets the school mailbox. The rows are READ
+    // here, before the registrations go below (their tokens are the only way to reach the devices),
+    // and the sends run AFTER this call answers, as the session end's do: FCM never runs inside the
+    // erasure's own call. A failure is logged per device by `sendMailForget`.
+    const forgetRows = await this.pushTokenRepo.find({ where: { userId } });
+    setImmediate(() => {
+      void this.forgetMail(forgetRows, 'account-erased').catch((e: unknown) =>
+        this.logger.error(`[INTERNAL_DELETE] user=${who} the mail forget threw: ${String(e)}`)
+      );
+    });
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,

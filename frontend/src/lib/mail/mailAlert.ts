@@ -181,6 +181,12 @@ export interface MailAlertRecord {
   v: 1;
   /** Whether this device subscribed with the server. */
   subscribed: boolean;
+  /**
+   * This device found the estate's rule DISABLED in the webmail and turned its switch off (an
+   * opt-out). The switch can only be on again by the user's own gesture in Canari, made after: that
+   * newer answer replaces the disabled rule with an active one.
+   */
+  optedOut?: true;
 }
 
 /** The record of `userId`, or `null` (none, or unreadable - logged). */
@@ -193,17 +199,29 @@ export function readAlertRecord(userId: string, store: Storage): MailAlertRecord
       Log.w('MAIL-ALERT', 'ERROR: the alert record is not one this build wrote - ignored');
       return null;
     }
-    return { v: 1, subscribed: parsed.subscribed };
+    return parsed.optedOut === true
+      ? { v: 1, subscribed: parsed.subscribed, optedOut: true }
+      : { v: 1, subscribed: parsed.subscribed };
   } catch (err) {
     Log.w('MAIL-ALERT', `ERROR: the alert record could not be read (${String(err)})`);
     return null;
   }
 }
 
-/** Writes the record (`null` removes it). */
-function writeAlertRecord(userId: string, subscribed: boolean | null, store: Storage): void {
+/** Writes the record (`null` removes it); `optedOut` marks a detected opt-out (see the record). */
+function writeAlertRecord(
+  userId: string,
+  subscribed: boolean | null,
+  store: Storage,
+  optedOut = false
+): void {
   if (subscribed === null) store.removeItem(ACCOUNT_KEY.mailAlert(userId));
-  else store.setItem(ACCOUNT_KEY.mailAlert(userId), JSON.stringify({ v: 1, subscribed }));
+  else {
+    const record: MailAlertRecord = optedOut
+      ? { v: 1, subscribed, optedOut }
+      : { v: 1, subscribed };
+    store.setItem(ACCOUNT_KEY.mailAlert(userId), JSON.stringify(record));
+  }
 }
 
 /** What Canari's server answers about the account's alert (`POST /api/mls/mail-alert/state`). */
@@ -283,6 +301,13 @@ export interface MailAlertDeps {
   store: Storage;
   /** Turns this device's notifications switch off: the user disabled the rule (an opt-out). */
   onOptOut?: () => void;
+  /**
+   * What this device read of the server's `mail_push` (`none` until read) and whether it is a phone:
+   * a device that is NOT a phone, with `none` read and no record, has nothing to sync and asks the
+   * server nothing. A phone still repairs an orphan rule.
+   */
+  pushModeRead?: 'none' | 'cloudflare';
+  phone?: boolean;
 }
 
 /** How many times a sync starts over when the rule list changed under it. */
@@ -358,6 +383,9 @@ async function syncOnce(deps: MailAlertDeps, want: boolean): Promise<MailAlertOu
     return 'no_device';
   }
   const record = readAlertRecord(userId, store);
+  if (!want && record === null && deps.phone === false && deps.pushModeRead === 'none') {
+    return 'unchanged';
+  }
   const state = await server.state(deviceId, null);
   if (want) return ensureAlert(deps, deviceId, record, state);
   if (record?.subscribed) return releaseAlert(deps, deviceId, state);
@@ -379,16 +407,23 @@ async function ensureAlert(
   }
   const rules = await readRules(mailbox);
   const current = ourRuleOf(rules, domain);
-  if (current && !current.active) {
-    // The user turned it off in the webmail: theirs to decide. Never re-enabled.
+  if (current && !current.active && !record?.optedOut) {
+    // The user turned it off in the webmail: theirs to decide, so this device's switch goes off and
+    // the rule is left as they set it. Only their own "on" in Canari, AFTER this, overrides it.
     if (record?.subscribed) await server.unsubscribe(deviceId);
-    writeAlertRecord(userId, null, store);
+    writeAlertRecord(userId, false, store, true);
     deps.onOptOut?.();
     Log.w('MAIL-ALERT', "the user disabled Canari's rule - respected, notifications turned off");
     return 'opted_out';
   }
+  // A disabled rule with the opt-out already seen: the switch is on again only by the user's own
+  // gesture since (the opt-out turned it off) - the newer answer. The guarded write below replaces
+  // the disabled rule with an active one.
+  const overriding = current !== null && !current.active;
+  if (overriding)
+    Log.i('MAIL-ALERT', 'turned on again after the webmail opt-out - the rule is re-enabled');
   const state = current ? await server.state(deviceId, current.token) : first;
-  if (current && state.tokenLive) {
+  if (current && !overriding && state.tokenLive) {
     if (state.deviceSubscribed && record?.subscribed) return 'unchanged';
     await server.subscribe(deviceId, current.token);
     writeAlertRecord(userId, true, store);
@@ -509,10 +544,10 @@ async function repairOrphanAlert(
 
 /**
  * THE SIGN-OUT HALF: takes this device out and removes the estate's rule when it was the last, WHILE
- * THE MAILBOX SESSION IS STILL OPEN - called by the mail sign-out and by Canari's logout / "forget
- * mail" before they end the session. A no-op when this device never subscribed. Never throws: a
- * failure is logged, and the rule is then left to the orphan repair of another device (or outlives
- * Canari - register C34).
+ * THE MAILBOX SESSION IS STILL OPEN - called by Canari's sign-out before it ends the mailbox session
+ * (`mailSignOut.ts`). A no-op when this device never subscribed. Never throws: a failure is logged,
+ * and the rule is then left to the orphan repair of another device (or outlives Canari - register
+ * C34); the push rows of an ended session cascade to the subscription server-side either way.
  */
 export async function releaseMailAlertBeforeSignOut(deps: MailAlertDeps): Promise<void> {
   if (!readAlertRecord(deps.userId, deps.store)?.subscribed) return;
@@ -522,6 +557,36 @@ export async function releaseMailAlertBeforeSignOut(deps: MailAlertDeps): Promis
   } catch (err) {
     Log.w('MAIL-ALERT', `ERROR: the alert was not released before the sign-out (${String(err)})`);
   }
+}
+
+/**
+ * A MAILBOX THAT LEFT `ready` FOR GOOD (its password refused, the account closed - D8, the mail tab
+ * off) with no Canari sign-out: this device's subscription is taken back SERVER-SIDE - the route needs
+ * the Canari session, not the mailbox - so the account's alerts stop reaching it (they answer
+ * `no_device` once no device is left). The rule cannot be read without a mailbox: it is removed by the
+ * next sync once a session is `ready` again (the record kept as `subscribed: false` is what makes
+ * that sync read the rules), or by a sign-out's release. A closed account keeps no record (D8 erased
+ * the mailbox's data, and the mailbox itself is gone).
+ */
+export async function leaveMailAlert(
+  deps: Pick<MailAlertDeps, 'userId' | 'deviceId' | 'server' | 'store'>,
+  cause: 'password_refused' | 'account_closed' | 'mail_off'
+): Promise<MailAlertOutcome> {
+  const { userId, deviceId, server, store } = deps;
+  if (!deviceId) return 'no_device';
+  const state = await server.state(deviceId, null);
+  const keep = cause === 'account_closed' ? null : false;
+  if (!state.deviceSubscribed) {
+    if (readAlertRecord(userId, store)?.subscribed) writeAlertRecord(userId, keep, store);
+    return 'unchanged';
+  }
+  const { remaining } = await server.unsubscribe(deviceId);
+  writeAlertRecord(userId, keep, store);
+  Log.i(
+    'MAIL-ALERT',
+    `the mailbox left (${cause}): this device is unsubscribed, ${remaining} device(s) remain`
+  );
+  return 'left';
 }
 
 /** The production {@link MailAlertServer}: the delivery service's routes, with the session. */

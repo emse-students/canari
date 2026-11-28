@@ -38,6 +38,40 @@ export function setMailNotificationsWanted(
   if (on) store.setItem(ACCOUNT_KEY.mailNotifications(userId), '1');
   else store.removeItem(ACCOUNT_KEY.mailNotifications(userId));
   values.set(userId, on);
+  // Turned on again: the user's newer answer than a webmail opt-out (mail lot 5) - its line goes.
+  if (on) webmailOptOut.set(userId, false);
+}
+
+/**
+ * THE WEBMAIL OPT-OUT (mail lot 5): this device found Canari's filter rule DISABLED in the webmail
+ * and turned the switch off. The settings row says so until the user turns it on again - which is
+ * the newer answer, and re-enables the rule (`mailAlert.ts`). Read from the alert record (its
+ * `optedOut`) until this document notes one itself.
+ */
+const webmailOptOut = new SvelteMap<string, boolean>();
+
+/** Whether the switch of `userId` is off because the rule was disabled in the webmail. */
+export function mailWebmailOptOut(userId: string, store: Storage = localStorage): boolean {
+  const known = webmailOptOut.get(userId);
+  if (known !== undefined) return known;
+  let seen = false;
+  try {
+    const raw = store.getItem(ACCOUNT_KEY.mailAlert(userId));
+    seen = raw !== null && (JSON.parse(raw) as { optedOut?: unknown }).optedOut === true;
+  } catch (err) {
+    Log.w(
+      'MAIL-WATCH',
+      `ERROR: the alert record could not be read for the opt-out (${String(err)})`
+    );
+  }
+  webmailOptOut.set(userId, seen);
+  return seen;
+}
+
+/** Notes the webmail opt-out of `userId` and turns the switch off. */
+export function noteMailWebmailOptOut(userId: string, store: Storage = localStorage): void {
+  setMailNotificationsWanted(userId, false, store);
+  webmailOptOut.set(userId, true);
 }
 
 /**
@@ -47,6 +81,7 @@ export function setMailNotificationsWanted(
 export function forgetMailNotificationsSwitch(userId: string): void {
   values.delete(userId);
   persistent.delete(userId);
+  webmailOptOut.delete(userId);
 }
 
 /**

@@ -28,6 +28,9 @@ vi.mock('./connect', () => ({ mailStreamOpener: vi.fn(), platformTransport: vi.f
 vi.mock('./mailClient.svelte', () => ({ currentMailClient: () => null }));
 vi.mock('./mailNotify', () => ({ postMailNotices: vi.fn() }));
 vi.mock('./soapClient', () => ({ ZimbraSoapClient: vi.fn() }));
+vi.mock('$lib/services/PushNotificationService', () => ({
+  onPushRegistered: vi.fn(() => () => {}),
+}));
 vi.mock('$lib/utils/apiUrl', () => ({
   gatewayUrl: () => 'https://example.invalid',
   deliveryUrl: () => 'https://example.invalid',
@@ -37,6 +40,7 @@ import type { MailClient } from './mailClient.svelte';
 import type { MailSessionState } from './mailSession';
 import { armAndroidMailWatch } from '$lib/mobile/androidMailWatch';
 import {
+  alertLeaveCause,
   armNativeCopyIfCurrent,
   nativeWatchPersists,
   backgroundRefresh,
@@ -338,5 +342,31 @@ describe('armNativeCopyIfCurrent (review I3: no stale arm)', () => {
     const client = sessionWith((session) => (session.generation = 2));
     expect(await armNativeCopyIfCurrent(client, () => true, true)).toBe(false);
     expect(armAndroidMailWatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('alertLeaveCause (mail lot 5)', () => {
+  const account = { name: 'ada@etu.emse.fr' } as never;
+  it('names the causes that take the device out, and only those', () => {
+    expect(alertLeaveCause({ kind: 'closed', account: null }, true, true)).toBe('account_closed');
+    expect(
+      alertLeaveCause(
+        { kind: 'needs_password', account: null, reason: 'password_refused' },
+        true,
+        true
+      )
+    ).toBe('password_refused');
+    expect(alertLeaveCause({ kind: 'signed_out' }, false, true)).toBe('mail_off');
+    // May open again by itself: no leave.
+    expect(
+      alertLeaveCause(
+        { kind: 'needs_password', account: null, reason: 'device_locked' },
+        true,
+        true
+      )
+    ).toBeNull();
+    expect(alertLeaveCause({ kind: 'signed_out' }, false, false)).toBeNull();
+    expect(alertLeaveCause({ kind: 'unavailable', account: null }, true, true)).toBeNull();
+    expect(alertLeaveCause({ kind: 'ready', account, remembered: true }, false, true)).toBeNull();
   });
 });

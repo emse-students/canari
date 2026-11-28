@@ -4212,25 +4212,22 @@ extension NotificationService {
   /// One Zimbra JSON SOAP call: the answer's `Body`, or nil with the fault's code when Zimbra
   /// answered one (nil and nil: a transport failure) - each logged.
   private func mailCall(_ body: [String: Any], token: String?) -> (body: [String: Any]?, fault: String?) {
-    var envelope: [String: Any] = ["Body": body]
-    if let token = token {
-      envelope["Header"] = ["context": ["_jsns": "urn:zimbra", "authToken": ["_content": token]]]
-    }
-    guard let url = URL(string: MailPushRules.soapUrl),
-      let payload = try? JSONSerialization.data(withJSONObject: envelope)
-    else { return (nil, nil) }
-    var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-    req.httpMethod = "POST"
-    req.httpBody = payload
-    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.timeoutInterval = 8.0
+    guard let req = Self.mailRequest(body, token: token) else { return (nil, nil) }
     let sem = DispatchSemaphore(value: 0)
-    var answer: (Data, Int)?
-    URLSession.shared.dataTask(with: req) { data, response, _ in
-      if let data = data, let http = response as? HTTPURLResponse { answer = (data, http.statusCode) }
+    let box = MailAnswerBox()
+    let task = URLSession.shared.dataTask(with: req) { data, response, _ in
+      if let data = data, let http = response as? HTTPURLResponse {
+        box.put((data, http.statusCode))
+      }
       sem.signal()
-    }.resume()
-    _ = sem.wait(timeout: .now() + 9.0)
+    }
+    task.resume()
+    let waited = sem.wait(timeout: .now() + 9.0)
+    // Closed under the box's lock: a completion arriving after the timeout writes nothing.
+    let answer = box.close()
+    if waited == .timedOut {
+      task.cancel()
+    }
     guard let (data, status) = answer else {
       NseLog.log.error("[CanariNSE] [MAIL] ERROR the mailbox did not answer")
       return (nil, nil)
@@ -4272,10 +4269,53 @@ extension NotificationService {
   }
 
   /// Ends the session this process opened (its token stops working). Best effort, said when it fails.
+  /// Ends the Zimbra session FIRE AND FORGET: the content handoff never waits for it (the extension
+  /// may be suspended right after - the session then expires on its own, said either way).
   private func mailEndSession(_ token: String) {
     let body: [String: Any] = ["EndSessionRequest": ["_jsns": "urn:zimbraAccount", "logoff": "1"]]
-    if mailCall(body, token: token).body == nil {
-      NseLog.log.notice("[CanariNSE] [MAIL] the session was not ended - it expires on its own")
+    guard let req = Self.mailRequest(body, token: token) else { return }
+    URLSession.shared.dataTask(with: req) { _, response, _ in
+      let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+      NseLog.log.notice("[CanariNSE] [MAIL] session end answered status=\(status, privacy: .public)")
+    }.resume()
+  }
+
+  /// The JSON SOAP request of `body` (with the session `token` when there is one); nil when the URL
+  /// or the body cannot be built.
+  private static func mailRequest(_ body: [String: Any], token: String?) -> URLRequest? {
+    var envelope: [String: Any] = ["Body": body]
+    if let token = token {
+      envelope["Header"] = ["context": ["_jsns": "urn:zimbra", "authToken": ["_content": token]]]
     }
+    guard let url = URL(string: MailPushRules.soapUrl),
+      let payload = try? JSONSerialization.data(withJSONObject: envelope)
+    else { return nil }
+    var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+    req.httpMethod = "POST"
+    req.httpBody = payload
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.timeoutInterval = 8.0
+    return req
+  }
+}
+
+/// One SOAP answer, handed from URLSession's queue to the waiting extension thread under a lock:
+/// once the waiter closed it (answered or timed out), a late completion writes nothing.
+private final class MailAnswerBox {
+  private let lock = NSLock()
+  private var value: (Data, Int)?
+  private var closed = false
+
+  func put(_ answer: (Data, Int)) {
+    lock.lock()
+    defer { lock.unlock() }
+    if !closed { value = answer }
+  }
+
+  func close() -> (Data, Int)? {
+    lock.lock()
+    defer { lock.unlock() }
+    closed = true
+    return value
   }
 }

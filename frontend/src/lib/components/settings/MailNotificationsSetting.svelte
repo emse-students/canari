@@ -19,6 +19,7 @@
   import {
     mailNotificationsWanted,
     mailPersistentWanted,
+    mailWebmailOptOut,
     setMailNotificationsWanted,
     setMailPersistentWanted,
   } from '$lib/mail/mailWatchSwitch.svelte';
@@ -30,6 +31,8 @@
   const client = $derived(mailTabVisible() ? currentMailClient() : null);
   const shown = $derived(client !== null && client.store.eligibility === 'eligible');
   const on = $derived(client ? mailNotificationsWanted(client.userId) : false);
+  /** Off because Canari's rule was disabled in the webmail (lot 5): said until turned on again. */
+  const optedOut = $derived(client !== null && !on && mailWebmailOptOut(client.userId));
   let busy = $state(false);
   let blocked = $state(false);
 
@@ -94,6 +97,11 @@
           setMailPersistentWanted(client.userId, next);
         }}
       />
+    {/if}
+    {#if optedOut}
+      <p class="text-text-muted text-xs font-medium" role="status" data-mail-webmail-opt-out>
+        {m.mail_notif_setting_webmail_opt_out()}
+      </p>
     {/if}
     {#if blocked}
       <p class="text-text-muted text-xs font-medium" role="status">

@@ -1359,9 +1359,12 @@ milliseconds between the re-read and the write is the residual window; the read-
 it visible.
 
 **A rule the user disabled is an opt-out.** A rule of ours found `active: false` is the user's
-answer in the webmail: it is never re-enabled; the device turns its notification preference for the
-account off (`onOptOut` -> `setMailNotificationsWanted(false)`, logged) and leaves the rule as the
-user set it.
+answer in the webmail: the device turns its notification preference for the account off
+(`onOptOut` -> `noteMailWebmailOptOut`, logged), leaves the rule as the user set it, and keeps the
+fact in its record (`optedOut`); the settings row says "Notifications rapides désactivées depuis le
+webmail". The switch can then only be on again by the user's own gesture in Canari, made AFTER the
+opt-out was seen: that is the newer answer, and the guarded write replaces the disabled rule with an
+active one (a new token). Neither answer snaps the other back.
 
 The device registers the token with the server (`POST /api/mls/mail-alert/subscribe`, one live
 token per account, one row per device, the device rows cascading with `push_token`) BEFORE writing
@@ -1376,14 +1379,32 @@ collides (`UQ_mail_alert_token_hash`) is a typed 409 `mail_alert_token_taken`, a
 new one (at most three). The device keeps one fact (`ACCOUNT_KEY.mailAlert`, a D8 key:
 `{v:1, subscribed}`); nothing of the user's is saved, because nothing of the user's is overwritten.
 
-**The rule is released at every sign-out the device makes while a mailbox session is open**
-(`releaseMailAlertBeforeSignOut`): the mail sign-out runs the release BEFORE it ends the session,
-and a Canari logout starts it with the access token still in hand (`startMailAlertRelease`, first
-thing in `clearAuthUnderway`) and awaits it before the mailbox signs out. What cannot be released -
-the app uninstalled, the device revoked, the account erased with no mailbox session - stays on the
-member's account (register C34): its notices reach a token the server no longer knows, answered
-`unknown` or `no_device` and COUNTED in the log (`orphanAlerts`), never pushed. Any later device of
-the account that finds nobody listening removes it.
+**When the rule and the subscription go.** There is no separate mail sign-out: the mailbox session
+ends with the Canari sign-out (`mailSignOut.ts`), and only then can the rule be released:
+
+- **A Canari sign-out with the mailbox `ready`**: `startMailAlertRelease` runs first in
+  `clearAuthUnderway`, with the leaving access token as it is (a sign-out does not refresh it); the
+  release first QUIESCES the alert's single flight (`quiesceMailAlertSync`: the task in flight
+  settles, none starts until the mailbox closes), then `releaseMailAlertBeforeSignOut` unsubscribes
+  and removes the rule when this device was the last; the mailbox signs out after it. An access token
+  already expired is refused (401, said at warn): the rule then stays for the orphan repair, and the
+  subscription goes anyway with the session's push rows (the device rows cascade server-side).
+- **A mailbox that leaves `ready` with no Canari sign-out** - its password refused
+  (`needs_password`/`password_refused`), the account closed (D8), the mail tab off - is a LEAVE
+  (`leaveMailAlert`, through the same scheduler): this device is unsubscribed SERVER-SIDE, which
+  needs the Canari session and no mailbox, and the iOS extension's copy is erased. The account's
+  alerts then answer `no_device` once no device is left, and no push reaches the device. The rule
+  itself cannot be read without a mailbox: it is removed by the next sync once a session is `ready`
+  again and the push is not wanted (the record kept as `subscribed: false` makes that sync read the
+  rules - a closed account keeps none, its mailbox being gone), or by a later sign-out's release.
+- **What nothing can clean** - the app uninstalled, the device revoked, the account erased with no
+  mailbox session - stays on the member's account (register C34): its notices reach a token the
+  server no longer knows, answered `unknown` or `no_device` and COUNTED in the log (`orphanAlerts`),
+  never pushed. Any later device of the account that finds nobody listening removes it.
+
+A subscription the server refused with `push_not_registered` (the push registration not done yet)
+runs once more when the registration completes (`onPushRegistered`), not only at the next fact. A
+device that is not a phone, with `none` read and no record, does not even ask `/mail-alert/state`.
 Every step is decided from durable facts (the rules Zimbra answers, the server's state, the device's
 record), single-flight, and retried at the next change of a fact, never on a timer.
 
@@ -1407,9 +1428,11 @@ as every public location - so a flood of guesses at the secret from one address 
 Worker; Cloudflare's Workers share egress addresses, so the key bounds a client, not a tenant, and
 the Worker's retry covers a 429 from a neighbour; Nest: a per-token throttle of 30/min) refuses a
 wrong or unset secret with 401 (an unset one at error), a malformed token with 400, and answers
-`off`, `unknown`, `no_device` (the token row is then deleted by account AND hash) or `pushed {sent,
-failed}`. Subscribe and unsubscribe lock the account's token row (`pessimistic_write`), so a count
-and the delete it decides are one transaction. The push is EMPTY: on iOS an
+`off` (the switch at `none`, or the mail tab off: `mail_mode` not `on`), `unknown`, `no_device` (the
+token row is then deleted by account AND hash) or `pushed {sent, failed}`. Subscribe and unsubscribe
+take a per-account advisory lock (`pg_advisory_xact_lock`) and then the token row
+(`pessimistic_write`), so the FIRST subscribe - with no row yet to lock - is serialised too, and a
+count and the delete it decides are one transaction. The push is EMPTY: on iOS an
 alert titled `Canari` with a generic "Nouveau mail" body and `mutable-content: 1`, so the extension
 runs; on Android a high-priority data message `{type:'mail'}`. The token is stored HASHED
 (`mail_alert_token.tokenHash`, sha256); the account erasure deletes it.
@@ -1434,7 +1457,11 @@ runs; on Android a high-priority data message `{type:'mail'}`. The token is stor
   the Keychain item from the extension and logs it - Android's `REFUSED`: a refused password retried
   at every push could lock the school account; the app writes a new copy after its next sign-in. No
   item, another account, a failed read: the server's generic "Nouveau mail" stays, logged at error -
-  a stated degraded display. The Keychain write and erase are serialised in the page
+  a stated degraded display. The extension's Zimbra calls wait at most 9 s and CANCEL the request
+  past it (a late answer is dropped under a lock); its session end is fire and forget, so the
+  content handoff never waits for it. The Keychain item is also erased whenever a sync answers that
+  no push can reach this device (`off`, `unconfigured`, an opt-out, no device). The Keychain write
+  and erase are serialised in the page
   (`mailPushSecret.ts`, one queue), and a write re-checks that "remember" still holds in its turn.
 - **Android** (`CanariFirebaseMessagingService.kt` -> `MailPushHandoff.kt`, routing in
   `mail/MailPush.kt`): the push is ONE `NativeMailWatcher.checkOnce` (lot 4b) - the inbox above the
@@ -1480,7 +1507,10 @@ forget carries `registration`, the first 32 hex of `sha256("canari-mail-forget|"
 from its RAW secret (`sha256` hex, then the same digest) and forgets only if they match or it is
 signed out (Kotlin `forgetApplies`, Rust `forget_applies`, one vector in `mailPushSecret.test.ts`).
 `scope: device` (an owner's revocation) and `scope: account` (an erasure) forget unconditionally,
-as before. On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls
+as before. The erasure, like the session end, reads its rows first and sends after answering
+(`setImmediate`). On Android the CURRENT secret is `CanariFirebaseMessagingService.retrievePushSecret`
+(the pending file first, WP-NOTIF-1): the Keystore alone holds the previous registration's secret
+until the next process start, and would have ignored a forget meant for this device. On iOS the app's silent-frame hook (`canari_push.mm`, allowlisted) calls
 `canari_mail_forget(userId, scope, registration)`, which reads the App Group's
 `push_secret.txt` and the sign-out mark: the Keychain item goes when it names that account, and
 the shared cursor goes. On Android it goes to `NativeMailWatcher.forget(context, userId)` (lot 4b)

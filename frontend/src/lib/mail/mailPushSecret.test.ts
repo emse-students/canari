@@ -78,6 +78,18 @@ describe('the mail push secret, across Rust, Swift and the page', () => {
     expect(kotlin).toContain('const val MAIL_PUSH_TYPE = "mail"');
   });
 
+  it('Android compares the forget with the CURRENT push secret, the pending file included', () => {
+    // `PushSecretKeystore.retrieve` alone answers the PREVIOUS registration's secret until the next
+    // process start (`pending_push_secret.txt` wins, WP-NOTIF-1): a forget meant for this device would
+    // be ignored. `retrievePushSecret` reads the file first.
+    const handoff = readFileSync(
+      resolve(root, 'gen/android/app/src/main/java/fr/emse/canari/MailPushHandoff.kt'),
+      'utf8'
+    );
+    expect(handoff).toContain('CanariFirebaseMessagingService.retrievePushSecret(context)');
+    expect(handoff).not.toMatch(/PushSecretKeystore\.retrieve\(/);
+  });
+
   it('the forget of an ended session names its registration the same way on all three sides', () => {
     // sha256("canari-mail-forget|" + hex(sha256(raw)))[0..32] - the server from the stored hash,
     // the devices from the raw secret they hold.

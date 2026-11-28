@@ -59,7 +59,12 @@ object MailPushHandoff {
             }
             is MailPushRoute.Forget -> {
                 val signedOut = PushRegistrationEnd.isSignedOut(context)
-                val secret = if (route.registration == null || signedOut) null else PushSecretKeystore.retrieve(context)
+                // The CURRENT secret: `retrievePushSecret` reads `pending_push_secret.txt` first (the
+                // registration of THIS process writes it, the Keystore holds the previous one until the
+                // next process start - WP-NOTIF-1). The Keystore alone would answer the previous
+                // registration's secret, and a forget meant for this device would be ignored.
+                val secret = if (route.registration == null || signedOut) null
+                else CanariFirebaseMessagingService.retrievePushSecret(context)
                 if (!forgetApplies(route, secret, signedOut)) {
                     // An ended session that is not this device's current one: it signed in again.
                     Log.i(TAG, "mail-forget: another registration ended (secretRead=${secret != null}) - the mailbox stays")

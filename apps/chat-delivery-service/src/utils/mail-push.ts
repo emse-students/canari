@@ -12,7 +12,7 @@ import type { EntityManager } from 'typeorm';
  *
  * - `none`: no server takes part. The alert hook pushes nothing and the subscription routes refuse.
  *   The default.
- * - `cloudflare`: the account's Zimbra new-mail alert, received by Cloudflare's Email Worker, becomes
+ * - `cloudflare`: the notice of the account's own filter rule, received by Cloudflare's Email Worker, becomes
  *   an EMPTY push to the account's subscribed devices.
  */
 export type MailPush = 'none' | 'cloudflare';
@@ -50,4 +50,22 @@ export async function readMailPush(manager: EntityManager, logger: Logger): Prom
     return value as MailPush;
   }
   throw new Error(`platform_config.mail_push holds an unknown value: ${String(value)}`);
+}
+
+/** The mail tab's server switch (`platform_config.mail_mode`, core-service migration 033). */
+export type MailMode = 'off' | 'on';
+
+/**
+ * `platform_config.mail_mode` as the database holds it RIGHT NOW: the alert hook pushes nothing while
+ * the mail tab is off (no device may read a mailbox then). Absent row: `off`, the column's default.
+ * A value outside the two, and a failed query, THROW - never guessed.
+ */
+export async function readMailMode(manager: EntityManager): Promise<MailMode> {
+  const rows: { mail_mode?: unknown }[] = await manager.query(
+    `SELECT mail_mode FROM platform_config WHERE id = 1 LIMIT 1`
+  );
+  if (rows.length === 0) return 'off';
+  const value = rows[0]?.mail_mode;
+  if (value === 'off' || value === 'on') return value;
+  throw new Error(`platform_config.mail_mode holds an unknown value: ${String(value)}`);
 }
