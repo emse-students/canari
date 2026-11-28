@@ -10,6 +10,7 @@
   } from '$lib/video/loudnessPlayback';
   import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { m } from '$lib/paraglide/messages';
+  import { scrubTimeAt, scrubTimeForKey } from '$lib/utils/audio/scrub';
   import {
     barCountForWidth,
     computeWaveformPeaks,
@@ -183,13 +184,56 @@
     });
   }
 
-  function seekTo(value: string) {
-    if (!audioEl) return;
-    const next = Number(value);
-    if (Number.isFinite(next)) {
-      audioEl.currentTime = next;
-      currentTime = next;
+  /** The scrubber's own element: its box is what a press position is measured against. */
+  let stripEl = $state<HTMLDivElement | null>(null);
+  /** A finger or mouse is down on the strip: the element's own `timeupdate` must not fight it. */
+  let scrubbing = false;
+
+  /** Moves the playhead - playing or paused, the note carries on from there. */
+  function seekTo(seconds: number) {
+    if (!audioEl || !(duration > 0)) return;
+    const next = Math.min(duration, Math.max(0, seconds));
+    audioEl.currentTime = next;
+    currentTime = next;
+  }
+
+  function seekToPointer(clientX: number) {
+    if (!stripEl) return;
+    seekTo(scrubTimeAt(clientX, stripEl.getBoundingClientRect(), duration));
+  }
+
+  function onScrubDown(e: PointerEvent) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    scrubbing = true;
+    try {
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    } catch (err) {
+      console.debug('[voice] pointer capture refused', err);
     }
+    seekToPointer(e.clientX);
+  }
+
+  function onScrubMove(e: PointerEvent) {
+    if (scrubbing) seekToPointer(e.clientX);
+  }
+
+  function onScrubEnd(e: PointerEvent) {
+    if (!scrubbing) return;
+    scrubbing = false;
+    try {
+      (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+    } catch (err) {
+      console.debug('[voice] pointer release refused', err);
+    }
+  }
+
+  function onScrubKey(e: KeyboardEvent) {
+    const next = scrubTimeForKey(e.key, currentTime, duration);
+    // The bubble toggles its info on Enter and Space: no key typed on the scrubber reaches it.
+    e.stopPropagation();
+    if (next === null) return;
+    e.preventDefault();
+    seekTo(next);
   }
 
   function cycleSpeed() {
@@ -266,7 +310,7 @@
       }
     }}
     ontimeupdate={() => {
-      currentTime = audioEl?.currentTime ?? 0;
+      if (!scrubbing) currentTime = audioEl?.currentTime ?? 0;
     }}
     onplay={() => {
       isPlaying = true;
@@ -320,30 +364,40 @@
     </button>
 
     <!--
-      THE WAVEFORM, AND THE SLIDER IS STILL A REAL `input[type=range]` UNDERNEATH IT.
+      THE WAVEFORM IS THE SCRUBBER: a `role="slider"` on pointer events, touch and mouse alike.
 
-      The bars are the visual and carry no interaction at all (`pointer-events-none`); the control
-      is a transparent native range stretched over them. That is not a trick to save code - it is
-      what keeps dragging, tapping, arrow keys, Home/End, the screen-reader value announcement and
-      the touch target correct without any of them being re-implemented, which is where a
-      hand-rolled scrubber loses a user who cannot use a pointer. The input comes FIRST in the DOM
-      so the bars can wear its focus ring as a `peer`.
+      It used to be a transparent native `input[type=range]` over the bars, and inside a bubble that
+      cannot work: the bubble reads every press as its own - held, it opens the actions sheet; dragged
+      sideways, it is a reply swipe whose `touchmove` claim cancels the stroke - so a finger on the
+      waveform moved the message, not the playhead (owner, 1.8.2). `data-scrub` tells the bubble the
+      press is the scrubber's (`pressOwnedByScrub`), `touch-action: none` keeps the engine from
+      scrolling under a horizontal drag, and pointer capture keeps the drag when the finger leaves
+      the strip. Arrow keys, Home and End are handled here and the value is announced through the
+      `aria-value*` attributes - the two things the native input gave for free.
     -->
     <div class="flex min-w-0 flex-1 flex-col justify-center gap-1.5 pt-1">
-      <div class="relative h-8 w-full" bind:clientWidth={stripWidth}>
-        <input
-          type="range"
-          min="0"
-          max={Math.max(duration, 1)}
-          step="0.01"
-          value={Math.min(currentTime, duration || 0)}
-          onclick={(e) => e.stopPropagation()}
-          oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
-          class="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 outline-none"
-          aria-label={m.msg_playback_position_label()}
-        />
+      <div
+        bind:this={stripEl}
+        bind:clientWidth={stripWidth}
+        role="slider"
+        tabindex="0"
+        data-scrub
+        aria-label={m.msg_playback_position_label()}
+        aria-orientation="horizontal"
+        aria-valuemin={0}
+        aria-valuemax={Math.round(duration)}
+        aria-valuenow={Math.round(Math.min(currentTime, duration || 0))}
+        aria-valuetext={`${formatTime(currentTime)} / ${formatTime(duration)}`}
+        onpointerdown={onScrubDown}
+        onpointermove={onScrubMove}
+        onpointerup={onScrubEnd}
+        onpointercancel={onScrubEnd}
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={onScrubKey}
+        class="focus-visible:ring-accent/50 relative h-8 w-full cursor-pointer touch-none rounded-lg outline-none focus-visible:ring-2"
+      >
         <div
-          class="peer-focus-visible:ring-accent/50 pointer-events-none flex h-full w-full items-center gap-[2px] rounded-lg peer-focus-visible:ring-2"
+          class="pointer-events-none flex h-full w-full items-center gap-[2px]"
           aria-hidden="true"
         >
           {#each bars as bar, index (index)}
