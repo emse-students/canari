@@ -1,6 +1,8 @@
 ## P2 - Reading owed - "Tester l'envoi" in a form's preview, and the two form entries built in 1.8.2
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 What is built, in three parts:
 

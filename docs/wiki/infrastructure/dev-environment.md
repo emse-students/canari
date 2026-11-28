@@ -80,13 +80,13 @@ first version of this file carried were unnecessary. Exactly two bindings differ
 
 | | production | dev | why it is published at all |
 |---|---|---|---|
-| `edge` (the frontend's until 2026-10-17, [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) | `FRONTEND_HOST_PORT`, loopback only | `3080`, loopback only | the host nginx (and dev's tunnel relay) reaches Nginx through the host |
+| `edge` (the frontend's until 2026-10-17, [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) | `FRONTEND_HOST_PORT`, loopback only | `3080`, loopback only | the host nginx reaches Nginx through the host |
 | `garage` API / admin | `19010` / `19011`, loopback only | `19100` / `19101`, loopback only | tooling (`garage` CLI) attaches from the host |
 
 Two details the compose files do not say plainly. Production's frontend port is `8080` on the BOX but
 `${FRONTEND_HOST_PORT:-80}` in `docker-compose.prod.yml` - the value comes from the generated `.env`,
 so reading the file alone gives `80`. And production binds it on every interface while dev binds it
-to `127.0.0.1`; dev is the stricter of the two, deliberately, since nothing but the tunnel has any
+to `127.0.0.1`; dev is the stricter of the two, deliberately, since nothing but the host's nginx has any
 business reaching it.
 
 **ALL THREE ARE `computed` MANIFEST ROWS, AND THAT IS THE ONLY DISPOSITION THAT WORKS HERE.** The
@@ -124,7 +124,7 @@ short of.
 
 Six services in the dev compose file set `NODE_ENV: production` - the four NestJS ones plus
 `frontend` and `frontend-ssr` - and each is PINNED there rather than inherited from `.env` the way
-production allows. Dev is a live HTTPS environment behind the same tunnel and the same Nginx as
+production allows. Dev is a live HTTPS environment behind the same Cloudflare edge (a proxied record straight to the school host since 2026-11-28, no longer a tunnel) and the same Nginx as
 production; running it in development mode would make it a different program, which defeats the
 reason it exists.
 
@@ -698,7 +698,7 @@ if ever needed (`git show a8ac1828:.github/workflows/cd-dev.yml`).
 **ALL THREE ARE DONE. The list is kept because each one records HOW, and the how is what a rebuild
 would need.**
 
-1. **The tunnel INGRESS rule: DONE 2026-09-02**, `dev.canari-emse.fr` -> the dev estate's loopback port
+1. **The tunnel INGRESS rule: DONE 2026-09-02** (superseded 2026-11-28: the name now resolves straight to the school host, [cloudflare-edge](cloudflare-edge.md#topology); the step is kept for its method), `dev.canari-emse.fr` -> the dev estate's loopback port
    (it had pointed at production's `8080`, which is why the name served production until that
    moment). Performed through the API, and the shape is the reusable part: GET
    `/accounts/{acct}/cfd_tunnel/{tunnel}/configurations`, **save the whole config to a file first**,

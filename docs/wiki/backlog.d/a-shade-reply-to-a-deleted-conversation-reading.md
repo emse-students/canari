@@ -1,6 +1,8 @@
 ## The Mi 9T reading of a shade reply to a deleted conversation is owed
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 Built 2026-11-26: a conversation the member deleted is recorded (`deleted_conversations`), and a reply
 typed in the notification shade for it is adopted as a failed bubble with Delete in a recreated

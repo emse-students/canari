@@ -1,6 +1,8 @@
 ## Reading owed - P2 - a DM push whose catch-up could not reach the server becomes its real text once the network is back, on the Mi 9T
 
-target: 1.8.3
+target: 1.8.4
+
+_2026-11-28: moved to 1.8.4 when 1.8.3 shipped._
 
 _2026-11-27: moved to 1.8.3 when 1.8.2 shipped._
 
