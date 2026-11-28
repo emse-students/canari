@@ -52,6 +52,38 @@ const marks = (kind?: string) => [
 const counter = () =>
   document.querySelector('[data-testid="tutorial-counter"]')!.textContent?.trim();
 
+describe('the mine counter is shown only when the lesson gives a count (owner, 2026-11-28)', () => {
+  it('is hidden on an open lesson (1-1 and every pattern whose total is unknown)', () => {
+    for (const id of ['one_one', 'one_two', 'one_two_one']) {
+      open(id);
+      expect(document.querySelector('[data-testid="tutorial-counter"]'), id).toBeNull();
+      while (mounted.length) mounted.pop()!();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('is shown on a lesson with a known count, and reads what is left', () => {
+    open('counter');
+    expect(counter()).toBe('1');
+    expect(
+      document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
+    ).toBe('Mines restantes : 1');
+  });
+
+  it('is derived from the lesson data: it is shown exactly on the lessons that are not open', () => {
+    const shown = [...LESSONS, ...PATTERNS].filter((l) => l.open !== true).map((l) => l.id);
+    expect(shown.sort()).toEqual(
+      ['autoflag', 'chord', 'combinations', 'counter', 'flag', 'mine_counting', 'reveal'].sort()
+    );
+    for (const id of shown) {
+      open(id);
+      expect(document.querySelector('[data-testid="tutorial-counter"]'), id).not.toBeNull();
+      while (mounted.length) mounted.pop()!();
+      document.body.innerHTML = '';
+    }
+  });
+});
+
 describe('MinesweeperMiniGrid', () => {
   it('draws the lesson picture: 9 cells for the flag lesson, the numbers open', () => {
     open('flag');
@@ -164,12 +196,9 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('draws an OPEN grid as a window: the fog is dotted and not playable, the counter reads "?"', () => {
+  it('draws an OPEN grid as a window: the fog is dotted and not playable, and there is no mine counter', () => {
     const { onLost } = open('one_two');
-    expect(counter()).toBe('?');
-    expect(
-      document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
-    ).toBe('Nombre de mines inconnu');
+    expect(document.querySelector('[data-testid="tutorial-counter"]')).toBeNull();
     // The end of the hidden row is the picture's continuation, and hides a mine.
     expect(cell(4).getAttribute('data-hint')).toBe('far');
     cell(4).click();

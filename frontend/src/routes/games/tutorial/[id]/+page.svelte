@@ -10,7 +10,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import MinesweeperLessonRunner from '$lib/components/games/MinesweeperLessonRunner.svelte';
-  import { locateLesson, tutorialPathHref } from '$lib/minesweeper/tutorial/path';
+  import { locateLesson } from '$lib/minesweeper/tutorial/path';
   import { m } from '$lib/paraglide/messages';
 
   const lessonId = $derived(page.params.id ?? '');
@@ -22,17 +22,18 @@
 </script>
 
 <PageContainer width="reading">
-  <PageHeader
-    title={place ? place.lesson.title() : m.minesweeper_tutorial_title()}
-    backHref={place ? tutorialPathHref(place.tab) : resolve('/games/tutorial')}
-    backLabel={m.minesweeper_lesson_back()}
-  />
-
+  <!-- A lesson draws its OWN header (family label, title, position, back arrow: owner mockup, 2026-11-28); only the
+       "no such lesson" page keeps the shared one. -->
   {#if place}
     {#key place.lesson.id}
       <MinesweeperLessonRunner {place} />
     {/key}
   {:else}
+    <PageHeader
+      title={m.minesweeper_tutorial_title()}
+      backHref={resolve('/games/tutorial')}
+      backLabel={m.minesweeper_lesson_back()}
+    />
     <section class="bg-cn-surface space-y-3 rounded-2xl p-4" data-testid="tutorial-missing">
       <p class="text-text-main text-sm">{m.minesweeper_lesson_missing()}</p>
       <Button href={resolve('/games/tutorial')}>{m.minesweeper_lesson_back()}</Button>

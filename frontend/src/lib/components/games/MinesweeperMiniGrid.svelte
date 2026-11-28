@@ -213,17 +213,21 @@
 </script>
 
 <div class="flex flex-col items-center gap-3">
-  <span
-    role="img"
-    aria-label={lesson.open
-      ? m.minesweeper_tutorial_counter_unknown()
-      : m.minesweeper_tutorial_counter({ n: String(remaining) })}
-    class="text-text-main flex items-center gap-1.5 text-sm font-bold"
-    data-testid="tutorial-counter"
-  >
-    <Bomb size={16} class="text-cn-dark" />
-    {lesson.open ? '?' : remaining}
-  </span>
+  <!-- THE MINE COUNTER, ONLY WHEN THE LESSON GIVES A COUNT (owner, 2026-11-28: "le nombre de bombes est parfois important").
+       An open grid is a window on a larger board whose total is unknown, so it shows nothing instead of a "?";
+       a closed one - the "Le compteur de mines" lesson, the counting patterns - shows what is left, since its
+       reasoning uses the total. Derived from the lesson data (`open`), never from a list of names. -->
+  {#if !lesson.open}
+    <span
+      role="img"
+      aria-label={m.minesweeper_tutorial_counter({ n: String(remaining) })}
+      class="text-text-main flex items-center gap-1.5 text-sm font-bold"
+      data-testid="tutorial-counter"
+    >
+      <Bomb size={16} class="text-cn-dark" />
+      {remaining}
+    </span>
+  {/if}
 
   <!-- The two layers share the cell size, so an outline is placed in cells with `calc`, no measuring. THE CELLS ARE
        BIG (owner mockup, 2026-11-28: 60 px on a phone, numbers in the display face): as wide as the screen allows

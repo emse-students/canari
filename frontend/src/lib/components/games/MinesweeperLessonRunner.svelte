@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronRight, RotateCcw } from '@lucide/svelte';
+  import { ArrowLeft, ChevronRight, RotateCcw } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import Button from '$lib/components/ui/Button.svelte';
   import LePic, { type PicMood, type PicPose } from '$lib/components/games/LePic.svelte';
@@ -134,9 +134,9 @@
     >
       {shortName(lesson.title())}
     </span>
-    <h2 class="font-display text-text-main relative text-3xl font-bold">
+    <h1 class="font-display text-text-main relative text-3xl font-bold">
       {isPattern ? m.minesweeper_done_title_pattern() : m.minesweeper_done_title_lesson()}
-    </h2>
+    </h1>
     <p class="text-text-muted relative text-sm" data-testid="tutorial-solved-line">
       {lesson.hints.at(-1)?.text()}
     </p>
@@ -195,17 +195,36 @@
   </section>
 {:else}
   <section class="space-y-4">
-    <div class="flex items-center gap-3">
-      <p class="text-text-muted text-sm font-semibold" data-testid="tutorial-progress">
-        {place.family.label()} · {m.minesweeper_lesson_position({
-          n: String(place.indexInFamily + 1),
-          total: String(familyTotal),
-        })}
-      </p>
-      <div
-        class="grid flex-1 gap-1"
-        style:grid-template-columns="repeat({familyTotal}, minmax(0, 1fr))"
-      >
+    <!-- THE LESSON'S HEADER (owner mockup, 2026-11-28, chosen over the old line): a back arrow, the family in small bold
+         type over the lesson's own title, the position on the right, and one segment per lesson of the family under it
+         (done green, this one yellow). Sentence case: the capitals of the mockup are refused by the typography audit. -->
+    <header class="space-y-2.5">
+      <div class="flex items-center gap-2">
+        <Button
+          href={tutorialPathHref(place.tab)}
+          variant="ghost"
+          icon
+          aria-label={m.minesweeper_lesson_back()}
+          data-testid="tutorial-back"
+        >
+          <ArrowLeft size={24} strokeWidth={2.6} />
+        </Button>
+        <div class="flex min-w-0 flex-1 flex-col">
+          <span class="text-text-muted text-xs font-extrabold" data-testid="tutorial-family">
+            {place.family.label()}
+          </span>
+          <h1 class="font-display text-text-main text-xl leading-tight font-bold">
+            {lesson.title()}
+          </h1>
+        </div>
+        <span class="text-text-muted text-sm font-extrabold" data-testid="tutorial-progress">
+          {m.minesweeper_lesson_position({
+            n: String(place.indexInFamily + 1),
+            total: String(familyTotal),
+          })}
+        </span>
+      </div>
+      <div class="grid gap-1" style:grid-template-columns="repeat({familyTotal}, minmax(0, 1fr))">
         {#each place.family.lessons as other, i (other.id)}
           <span
             class="h-1.5 rounded-full {done.has(other.id)
@@ -216,7 +235,7 @@
           ></span>
         {/each}
       </div>
-    </div>
+    </header>
 
     <div class="flex items-end gap-2">
       <LePic size={96} {mood} {pose} />
@@ -261,7 +280,7 @@
 
     <!-- What the three outlines mean: the colour is the whole message, so it is said once, under the grid. -->
     <ul
-      class="text-text-muted flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs font-semibold"
+      class="text-text-muted flex items-center justify-center gap-x-3.5 text-xs font-bold"
       data-testid="tutorial-legend"
     >
       <li class="flex items-center gap-1.5">
@@ -278,11 +297,14 @@
       </li>
     </ul>
 
-    <!-- THE BOTTOM BAR STAYS CLEAR OF THE TAB BAR (iPhone reading, 2026-11-27: the old buttons sat under the floating
-         bar until the page was scrolled): it sticks above `--bottom-nav-reserve`, the shell's one measure of what the bar
-         covers (the native bar overwrites it with its measured inset), and to the screen edge where there is no bar. -->
+    <!-- THE BOTTOM BAR IS FULL-BLEED AND PINNED (owner mockup, 2026-11-28), ABOVE the tab bar and never under it: it sits
+         at `--bottom-nav-reserve`, the shell's one measure of what the bar covers (the bar's height plus the home-indicator
+         strip; the native bar overwrites it with its measured inset), and at the screen edge where there is no bar.
+         From `md` the shell has a 6rem sidebar on the left (`md:pl-[6rem]`), which the bar clears. The spacer keeps the last
+         line of the page from ending under it. -->
+    <div class="h-40" aria-hidden="true"></div>
     <div
-      class="bg-cn-surface sticky bottom-(--bottom-nav-reserve) z-10 flex items-center justify-around gap-2 rounded-2xl px-2 py-3 md:bottom-0"
+      class="bg-cn-surface border-cn-border fixed inset-x-0 bottom-(--bottom-nav-reserve) z-10 flex h-40 items-center justify-around gap-2 border-t px-3 pb-2 md:bottom-0 md:left-24"
       data-testid="tutorial-bottom-bar"
     >
       <Button
