@@ -5553,6 +5553,8 @@
   "reels_camera_torch_off": "Éteindre le flash",
   "reels_shutter_capture": "Photo (toucher) ou vidéo (maintenir)",
   "reels_shutter_stop": "Arrêter l'enregistrement",
+  "reels_shutter_lock": "Verrouiller l'enregistrement : glisser vers le cadenas",
+  "reels_shutter_locked": "Enregistrement verrouillé",
   "reels_capture_gallery": "Choisir une vidéo dans la galerie",
   "reels_capture_record_error": "L'enregistrement a échoué. Réessayez.",
   "reels_capture_no_microphone": "Micro indisponible : photos uniquement. Autorisez le micro pour filmer.",
